@@ -240,6 +240,10 @@ const API_BASE_URL =
     window.location.protocol === "file:"
         ? "http://127.0.0.1:8000"
         : "";
+const API_PATH_PREFIX =
+    window.location.protocol === "file:"
+        ? ""
+        : "/api";
 
 async function uploadPdfToBackend(file) {
     if (!file) {
@@ -267,7 +271,7 @@ async function uploadPdfToBackend(file) {
         );
 
         const response = await fetch(
-            `${API_BASE_URL}/api/upload-pdf`,
+            `${API_BASE_URL}${API_PATH_PREFIX}/upload-pdf`,
             {
                 method: "POST",
                 body: formData
@@ -1144,7 +1148,7 @@ if (payBtn) {
             // ==================================================
 
             fetch(
-                `${API_BASE_URL}/api/print-order`,
+                `${API_BASE_URL}${API_PATH_PREFIX}/print-order`,
                 {
                     method: "POST",
 
