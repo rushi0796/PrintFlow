@@ -236,6 +236,11 @@ async function clearSavedPdfFile() {
 // REAL PDF BACKEND UPLOAD
 // ======================================================
 
+const API_BASE_URL =
+    window.location.protocol === "file:"
+        ? "http://127.0.0.1:8000"
+        : "";
+
 async function uploadPdfToBackend(file) {
     if (!file) {
         console.error(
@@ -262,7 +267,7 @@ async function uploadPdfToBackend(file) {
         );
 
         const response = await fetch(
-            "http://127.0.0.1:8000/upload-pdf",
+            `${API_BASE_URL}/api/upload-pdf`,
             {
                 method: "POST",
                 body: formData
@@ -1139,7 +1144,7 @@ if (payBtn) {
             // ==================================================
 
             fetch(
-                "http://127.0.0.1:8000/print-order",
+                `${API_BASE_URL}/api/print-order`,
                 {
                     method: "POST",
 

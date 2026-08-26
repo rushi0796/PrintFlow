@@ -1,3 +1,4 @@
+import os
 import shutil
 from pathlib import Path
 from uuid import uuid4
@@ -16,7 +17,11 @@ app.add_middleware(
 )
 
 BASE_DIR = Path(__file__).resolve().parent
-UPLOAD_DIR = BASE_DIR / "uploads"
+UPLOAD_DIR = (
+    Path("/tmp/printflow-uploads")
+    if os.environ.get("VERCEL")
+    else BASE_DIR / "uploads"
+)
 UPLOAD_DIR.mkdir(exist_ok=True)
 
 @app.get("/")
