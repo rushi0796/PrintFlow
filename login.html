@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>PrintFlow - Login</title>
+
+    <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+
+    <div class="container">
+
+        <div class="icon">🖨️</div>
+
+        <h1>PrintFlow</h1>
+
+        <p class="subtitle">Smart & Fast Xerox Printing</p>
+
+        <p class="description">Login with your mobile number to continue.</p>
+
+        <!-- Step 1: Mobile Input Form -->
+        <form id="mobileForm" action="javascript:void(0);" onsubmit="return false;">
+            <div id="mobileSection">
+                <input
+                    type="tel"
+                    id="mobileNumber"
+                    placeholder="Enter Mobile Number"
+                    maxlength="10"
+                    autocomplete="tel"
+                    enterkeyhint="go"
+                >
+
+                <button type="button" id="sendOtpBtn">
+                    Send OTP
+                </button>
+
+                <!-- Inline Success Message below Send OTP button -->
+                <div id="sendOtpSuccessMsg" class="success-text-anim" style="display: none; margin-top: 10px; font-size: 14px; color: #16a34a;">
+                    ✓ OTP sent successfully
+                </div>
+            </div>
+        </form>
+
+        <!-- Step 2: 4-Box OTP Verification Form -->
+        <div id="otpSection" style="display: none;">
+            <p class="otp-sent-text">Enter 4-digit OTP sent to your phone</p>
+
+            <form id="otpForm" action="javascript:void(0);" onsubmit="return false;">
+                <div class="otp-box-container" id="otpBoxContainer">
+                    <input type="text" class="otp-box" maxlength="1" inputmode="numeric" pattern="[0-9]*" autocomplete="one-time-code" enterkeyhint="done">
+                    <input type="text" class="otp-box" maxlength="1" inputmode="numeric" pattern="[0-9]*" enterkeyhint="done">
+                    <input type="text" class="otp-box" maxlength="1" inputmode="numeric" pattern="[0-9]*" enterkeyhint="done">
+                    <input type="text" class="otp-box" maxlength="1" inputmode="numeric" pattern="[0-9]*" enterkeyhint="done">
+                </div>
+
+                <!-- Inline Animated Error Message below OTP boxes & above Verify OTP button -->
+                <div id="otpErrorMsg" class="otp-error-msg" style="display: none;">
+                    Invalid OTP. Please try again.
+                </div>
+
+                <!-- Hidden input for backward compatibility -->
+                <input type="hidden" id="otpInput" maxlength="4">
+
+                <button type="button" id="verifyOtpBtn">
+                    Verify OTP
+                </button>
+            </form>
+
+            <!-- Resend OTP Section -->
+            <div class="resend-container">
+                <span id="resendTimer">Resend OTP in 30s</span>
+                <button type="button" id="resendBtn" class="resend-btn" style="display: none;">Resend OTP</button>
+            </div>
+
+            <!-- Inline Resend Success Message -->
+            <div id="resendSuccessMsg" class="success-text-anim" style="display: none; margin-top: 10px; font-size: 14px; color: #16a34a; text-align: center;">
+                ✓ OTP resent successfully
+            </div>
+        </div>
+
+    </div>
+
+<script type="text/javascript">
+    window.msg91Ready = false;
+
+    var configuration = {
+        widgetId: "36686b654e49383431323836",
+        tokenAuth: "559394TpZLWk3u6a854b09P1",
+        exposeMethods: true,
+        success: function (data) {
+            console.log("MSG91 Success Callback:", data);
+        },
+        failure: function (error) {
+            console.error("MSG91 Failure Callback:", error);
+        }
+    };
+
+    function onMsg91Loaded() {
+        if (typeof initSendOTP === 'function') {
+            try {
+                initSendOTP(configuration);
+            } catch (e) {
+                console.error("initSendOTP error:", e);
+            }
+        }
+        var checkTimer = setInterval(function () {
+            if (typeof window.sendOtp === 'function') {
+                clearInterval(checkTimer);
+                window.msg91Ready = true;
+                window.dispatchEvent(new Event('msg91-ready'));
+            }
+        }, 50);
+    }
+</script>
+<script
+    type="text/javascript"
+    src="https://verify.msg91.com/otp-provider.js"
+    onload="onMsg91Loaded()">
+</script>
+
+<script src="login.js"></script>
+
+</body>
+
+</html>

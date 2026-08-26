@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PrintFlow - Home</title>
+
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="container">
+
+    <div class="logo">🖨️</div>
+
+    <h1>Upload PDF</h1>
+
+    <p class="description">
+        Select your PDF document to print.
+    </p>
+
+    <input
+        type="file"
+        id="pdfFile"
+        accept=".pdf"
+        style="display: none;"
+        onchange="if(window.handleFileSelection) window.handleFileSelection(event);"
+    >
+
+    <button type="button" id="choosePdfBtn" onclick="var el=document.getElementById('pdfFile'); if(el){ el.value=''; el.click(); }">
+        📄 Choose PDF
+    </button>
+
+    <p id="fileName">
+        No PDF Selected
+    </p>
+    <p id="pageCount"></p>
+
+    <button type="button" id="continueBtn">
+        Continue
+    </button>
+
+    <!-- Inline Validation Error Message below Continue button -->
+    <div id="pdfErrorMsg" class="otp-error-msg" style="display: none; margin-top: 18px; margin-bottom: 0;">
+        📄 Please select a PDF file first
+    </div>
+
+</div>
+
+<script src="script.js"></script>
+
+</body>
+</html>

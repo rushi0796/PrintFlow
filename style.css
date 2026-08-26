@@ -1,0 +1,579 @@
+/* ======================================================
+   PRINTFLOW - VIBRANT MULTI-COLOR PALETTE DESIGN SYSTEM
+   ====================================================== */
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+    font-family: 'Plus Jakarta Sans', 'Segoe UI', system-ui, -apple-system, sans-serif;
+}
+
+html, body {
+    width: 100%;
+    min-height: 100vh;
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    background: linear-gradient(135deg, #fff7ed 0%, #ffedd5 35%, #fef3c7 70%, #ffe4e6 100%);
+    min-height: 100vh;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    padding: 20px;
+    position: relative;
+    overflow-x: hidden;
+    color: #431407;
+}
+
+/* Ambient Decorative Background Glow Blobs */
+body::before {
+    content: '';
+    position: absolute;
+    width: 380px;
+    height: 380px;
+    top: -80px;
+    left: -80px;
+    background: radial-gradient(circle, rgba(249, 115, 22, 0.35) 0%, rgba(244, 63, 94, 0.2) 60%, transparent 100%);
+    filter: blur(70px);
+    border-radius: 50%;
+    pointer-events: none;
+    z-index: 0;
+}
+
+body::after {
+    content: '';
+    position: absolute;
+    width: 420px;
+    height: 420px;
+    bottom: -100px;
+    right: -100px;
+    background: radial-gradient(circle, rgba(20, 184, 166, 0.3) 0%, rgba(234, 179, 8, 0.2) 60%, transparent 100%);
+    filter: blur(80px);
+    border-radius: 50%;
+    pointer-events: none;
+    z-index: 0;
+}
+
+/* Glassmorphic Elevated Card */
+.container {
+    width: 410px;
+    max-width: calc(100vw - 32px);
+    margin: auto;
+    background: rgba(255, 251, 245, 0.95);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    padding: 38px 32px;
+    border-radius: 24px;
+    border: 1px solid rgba(251, 146, 60, 0.3);
+    box-shadow: 0 20px 40px -15px rgba(234, 88, 12, 0.18), 0 10px 20px -5px rgba(0, 0, 0, 0.04);
+    text-align: center;
+    position: relative;
+    z-index: 1;
+    animation: cardAppear 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes cardAppear {
+    0% {
+        opacity: 0;
+        transform: translateY(20px) scale(0.98);
+    }
+    100% {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+    }
+}
+
+/* Logo Ring Container */
+.logo, .icon {
+    font-size: 48px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 82px;
+    height: 82px;
+    background: linear-gradient(135deg, #ffedd5 0%, #ffe4e6 100%);
+    border-radius: 22px;
+    margin-bottom: 18px;
+    box-shadow: 0 10px 25px -5px rgba(234, 88, 12, 0.25);
+    border: 1px solid rgba(244, 63, 94, 0.3);
+    transition: transform 0.3s ease, box-shadow 0.3s ease;
+}
+
+.logo:hover, .icon:hover {
+    transform: translateY(-3px) scale(1.04);
+    box-shadow: 0 14px 30px -4px rgba(234, 88, 12, 0.35);
+}
+
+/* Typography */
+h1 {
+    font-size: 26px;
+    font-weight: 800;
+    background: linear-gradient(135deg, #ea580c 0%, #f43f5e 50%, #d97706 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    margin-bottom: 6px;
+    letter-spacing: -0.5px;
+}
+
+h2 {
+    font-size: 22px;
+    font-weight: 700;
+    color: #431407;
+    margin-bottom: 10px;
+}
+
+h3 {
+    font-size: 15px;
+    font-weight: 700;
+    color: #7c2d12;
+    margin: 18px 0 10px 0;
+    text-align: left;
+}
+
+.subtitle {
+    color: #c2410c;
+    font-size: 15px;
+    font-weight: 600;
+    margin-bottom: 8px;
+}
+
+.description {
+    color: #78350f;
+    font-size: 14px;
+    line-height: 1.5;
+    margin-bottom: 22px;
+}
+
+/* Form Inputs */
+input[type="tel"], input[type="text"], input[type="number"] {
+    width: 100%;
+    padding: 15px 18px;
+    margin-bottom: 18px;
+    border: 1.5px solid #fdba74;
+    border-radius: 14px;
+    font-size: 15px;
+    color: #431407;
+    background: #fffbf5;
+    transition: all 0.25s ease-in-out;
+    outline: none;
+}
+
+input:focus {
+    border-color: #f97316;
+    background: #ffffff;
+    box-shadow: 0 0 0 4px rgba(249, 115, 22, 0.2);
+}
+
+/* Vibrant Multi-Color Buttons */
+button {
+    width: 100%;
+    padding: 15px 22px;
+    background: linear-gradient(135deg, #f97316 0%, #fb923c 50%, #f43f5e 100%);
+    color: white;
+    border: none;
+    border-radius: 14px;
+    font-size: 16px;
+    font-weight: 700;
+    cursor: pointer;
+    box-shadow: 0 8px 20px -4px rgba(234, 88, 12, 0.4);
+    transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+    position: relative;
+    overflow: hidden;
+}
+
+button:hover {
+    background: linear-gradient(135deg, #ea580c 0%, #f97316 50%, #e11d48 100%);
+    box-shadow: 0 12px 25px -4px rgba(234, 88, 12, 0.5);
+    transform: translateY(-2px);
+}
+
+button:active {
+    transform: translateY(0) scale(0.98);
+}
+
+button:disabled {
+    background: linear-gradient(135deg, #cbd5e1 0%, #e2e8f0 100%);
+    box-shadow: none;
+    cursor: not-allowed;
+    transform: none;
+}
+
+/* Secondary Back Button (Teal Accent) */
+.secondary-btn {
+    background: linear-gradient(135deg, #0d9488 0%, #14b8a6 100%) !important;
+    color: white !important;
+    box-shadow: 0 6px 16px -4px rgba(13, 148, 136, 0.35) !important;
+}
+
+.secondary-btn:hover {
+    background: linear-gradient(135deg, #0f766e 0%, #0d9488 100%) !important;
+    box-shadow: 0 10px 20px -4px rgba(13, 148, 136, 0.45) !important;
+}
+
+/* Non-Overlapping Button Row Layout */
+.button-row {
+    display: flex;
+    gap: 12px;
+    margin-top: 22px;
+    width: 100%;
+}
+
+.button-row button {
+    flex: 1;
+    padding: 15px 16px;
+    font-size: 15px;
+    border-radius: 14px;
+    margin: 0 !important;
+}
+
+/* 4-Box OTP UI */
+.otp-sent-text {
+    color: #78350f;
+    font-size: 14px;
+    font-weight: 500;
+    margin-bottom: 16px;
+}
+
+.otp-box-container {
+    display: flex;
+    justify-content: center;
+    gap: 12px;
+    margin-bottom: 20px;
+    position: relative;
+}
+
+.otp-box {
+    width: 54px;
+    height: 58px;
+    text-align: center;
+    font-size: 24px;
+    font-weight: 700;
+    color: #431407;
+    border: 2px solid #fdba74;
+    border-radius: 14px;
+    background: #fffbf5;
+    transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+    margin-bottom: 0;
+    padding: 0;
+}
+
+.otp-box:focus {
+    border-color: #f97316 !important;
+    background: #ffffff !important;
+    box-shadow: 0 0 0 4px rgba(249, 115, 22, 0.25) !important;
+    transform: translateY(-2px);
+}
+
+.otp-box.error {
+    border-color: #dc2626 !important;
+    background: #fff1f2 !important;
+    color: #dc2626 !important;
+}
+
+.otp-box-container.shake {
+    animation: shakeBox 0.4s ease-in-out;
+}
+
+@keyframes shakeBox {
+    0%, 100% { transform: translateX(0); }
+    20%, 60% { transform: translateX(-6px); }
+    40%, 80% { transform: translateX(6px); }
+}
+
+/* Resend OTP Controls */
+.resend-container {
+    margin-top: 18px;
+    font-size: 14px;
+    color: #78350f;
+}
+
+.resend-btn {
+    background: none !important;
+    border: none !important;
+    color: #ea580c !important;
+    font-weight: 700;
+    font-size: 14px;
+    padding: 0 !important;
+    width: auto !important;
+    display: inline !important;
+    cursor: pointer;
+    text-decoration: underline;
+    box-shadow: none !important;
+    transform: none !important;
+}
+
+.resend-btn:hover {
+    background: none !important;
+    color: #c2410c !important;
+}
+
+/* Inline Animated Error Message */
+.otp-error-msg {
+    color: #dc2626;
+    background: #fff1f2;
+    border: 1px solid #fca5a5;
+    padding: 10px 14px;
+    border-radius: 12px;
+    font-size: 14px;
+    font-weight: 600;
+    margin-bottom: 18px;
+    text-align: center;
+    animation: errorFadeSlide 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes errorFadeSlide {
+    0% {
+        opacity: 0;
+        transform: translateY(-6px);
+    }
+    100% {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* ======================================================
+   PREMIUM FINTECH OTP SUCCESS ANIMATION SEQUENCE
+   ====================================================== */
+
+.otp-box.circle-morph {
+    border-radius: 50% !important;
+    border-color: #22c55e !important;
+    background: #f0fdf4 !important;
+    color: #16a34a !important;
+    animation: circleMorph 0.35s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+}
+
+.otp-box.circle-morph:nth-child(1) { animation-delay: 0.0s; }
+.otp-box.circle-morph:nth-child(2) { animation-delay: 0.08s; }
+.otp-box.circle-morph:nth-child(3) { animation-delay: 0.16s; }
+.otp-box.circle-morph:nth-child(4) { animation-delay: 0.24s; }
+
+@keyframes circleMorph {
+    0% {
+        border-radius: 14px;
+        transform: scale(1);
+    }
+    50% {
+        border-radius: 50%;
+        transform: scale(1.18);
+        border-color: #22c55e;
+    }
+    100% {
+        border-radius: 50%;
+        transform: scale(1);
+    }
+}
+
+.otp-box.circle-orbit-1 { animation: orbitMove1 0.45s cubic-bezier(0.4, 0, 0.2, 1) forwards; }
+.otp-box.circle-orbit-2 { animation: orbitMove2 0.45s cubic-bezier(0.4, 0, 0.2, 1) forwards; }
+.otp-box.circle-orbit-3 { animation: orbitMove3 0.45s cubic-bezier(0.4, 0, 0.2, 1) forwards; }
+.otp-box.circle-orbit-4 { animation: orbitMove4 0.45s cubic-bezier(0.4, 0, 0.2, 1) forwards; }
+
+@keyframes orbitMove1 {
+    0% { transform: translate(0, 0) rotate(0deg); opacity: 1; }
+    50% { transform: translate(45px, -15px) rotate(180deg); opacity: 0.8; }
+    100% { transform: translate(99px, 0) rotate(360deg) scale(0.1); opacity: 0; }
+}
+
+@keyframes orbitMove2 {
+    0% { transform: translate(0, 0) rotate(0deg); opacity: 1; }
+    50% { transform: translate(18px, -10px) rotate(180deg); opacity: 0.8; }
+    100% { transform: translate(33px, 0) rotate(360deg) scale(0.1); opacity: 0; }
+}
+
+@keyframes orbitMove3 {
+    0% { transform: translate(0, 0) rotate(0deg); opacity: 1; }
+    50% { transform: translate(-18px, -10px) rotate(180deg); opacity: 0.8; }
+    100% { transform: translate(-33px, 0) rotate(360deg) scale(0.1); opacity: 0; }
+}
+
+@keyframes orbitMove4 {
+    0% { transform: translate(0, 0) rotate(0deg); opacity: 1; }
+    50% { transform: translate(-45px, -15px) rotate(180deg); opacity: 0.8; }
+    100% { transform: translate(-99px, 0) rotate(360deg) scale(0.1); opacity: 0; }
+}
+
+.merged-success-badge {
+    width: 68px;
+    height: 68px;
+    background: linear-gradient(135deg, #15803d 0%, #22c55e 100%);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin: 10px auto;
+    color: white;
+    box-shadow: 0 0 30px rgba(34, 197, 94, 0.5), 0 10px 22px rgba(21, 128, 61, 0.35);
+    animation: badgePop 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+}
+
+@keyframes badgePop {
+    0% {
+        transform: scale(0) rotate(-180deg);
+        opacity: 0;
+    }
+    60% {
+        transform: scale(1.2) rotate(10deg);
+        opacity: 1;
+    }
+    100% {
+        transform: scale(1) rotate(0deg);
+        opacity: 1;
+    }
+}
+
+.checkmark-svg {
+    width: 36px;
+    height: 36px;
+    stroke: white;
+    stroke-width: 3.5;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    fill: none;
+    stroke-dasharray: 50;
+    stroke-dashoffset: 50;
+    animation: strokeDraw 0.4s ease-in-out 0.15s forwards;
+}
+
+@keyframes strokeDraw {
+    to {
+        stroke-dashoffset: 0;
+    }
+}
+
+.success-text-anim {
+    color: #15803d;
+    font-size: 17px;
+    font-weight: 800;
+    margin-top: 14px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    letter-spacing: -0.3px;
+    animation: textFadeUp 0.4s ease-out forwards;
+}
+
+@keyframes textFadeUp {
+    0% {
+        opacity: 0;
+        transform: translateY(12px);
+    }
+    100% {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* Summary & Status Cards */
+.summary, .status-box {
+    background: linear-gradient(135deg, #fff7ed 0%, #ffedd5 100%);
+    border: 1px solid #fed7aa;
+    border-radius: 18px;
+    padding: 22px;
+    margin: 20px 0;
+    text-align: left;
+}
+
+.summary h3 {
+    margin-top: 0;
+    margin-bottom: 12px;
+    color: #ea580c;
+    font-size: 16px;
+}
+
+.summary p, .status-box p {
+    margin: 10px 0;
+    color: #7c2d12;
+    font-size: 14px;
+}
+
+#fileName {
+    margin: 16px 0;
+    padding: 12px 16px;
+    background: #fff7ed;
+    border: 1px dashed #fdba74;
+    border-radius: 12px;
+    color: #c2410c;
+    font-weight: 700;
+    font-size: 14px;
+    word-break: break-all;
+}
+
+#totalPrice {
+    margin: 20px 0 10px 0;
+    font-size: 24px;
+    font-weight: 800;
+    color: #ea580c;
+}
+
+/* Radio Group Options */
+.radio-option {
+    display: flex;
+    gap: 12px;
+    margin: 8px 0 16px 0;
+}
+
+.radio-option label {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 12px 14px;
+    background: #fffbf5;
+    border: 1.5px solid #fed7aa;
+    border-radius: 12px;
+    font-size: 14px;
+    font-weight: 600;
+    color: #7c2d12;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.radio-option label:hover {
+    border-color: #fb923c;
+    background: #fff7ed;
+}
+
+.radio-option input[type="radio"] {
+    margin-right: 8px;
+    accent-color: #f97316;
+}
+
+/* Responsive Mobile Adjustments */
+@media (max-width: 480px) {
+    .container {
+        padding: 30px 22px;
+        border-radius: 20px;
+    }
+
+    .button-row {
+        flex-direction: row;
+        gap: 10px;
+    }
+
+    .button-row button {
+        padding: 13px 10px;
+        font-size: 14px;
+    }
+
+    .otp-box {
+        width: 46px;
+        height: 52px;
+        font-size: 20px;
+    }
+
+    .logo, .icon {
+        width: 72px;
+        height: 72px;
+        font-size: 40px;
+    }
+
+    h1 {
+        font-size: 23px;
+    }
+}

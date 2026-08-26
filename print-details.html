@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Print Details - PrintFlow</title>
+
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="container">
+
+    <div class="logo">🖨️</div>
+
+    <h1>Print Details</h1>
+    <p id="fileName">No file selected</p>
+    <p id="pageCount"></p>
+
+    <p class="description">
+        Select copies and print settings for your document.
+    </p>
+
+    <h3>No. of Copies</h3>
+    <input type="number" id="copies" value="1" min="1">
+
+    <h3>Print Side</h3>
+    <div class="radio-option">
+        <label>
+            <input type="radio" name="printSide" value="single">
+            Single Side
+        </label>
+        <label>
+            <input type="radio" name="printSide" value="double" checked>
+            Double Side
+        </label>
+    </div>
+
+    <h3>Page Orientation</h3>
+    <div class="radio-option">
+        <label>
+            <input type="radio" name="orientation" value="portrait" checked>
+            Portrait
+        </label>
+        <label>
+            <input type="radio" name="orientation" value="landscape">
+            Landscape
+        </label>
+    </div>
+
+    <h2 id="totalPrice">
+        Total: ₹2
+    </h2>
+
+    <div class="button-row">
+        <button type="button" id="backBtn" class="secondary-btn">← Back</button>
+        <button type="button" id="paymentBtn">Continue to Payment</button>
+    </div>
+
+</div>
+
+<script src="script.js"></script>
+
+</body>
+</html>

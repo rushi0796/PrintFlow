@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PrintFlow - Login</title>
+
+    <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+
+    <div class="container">
+
+        <div class="logo">
+            🖨️
+        </div>
+
+        <h1>PrintFlow</h1>
+
+        <p class="subtitle">
+            Smart & Fast Xerox Printing
+        </p>
+
+        <p class="description">
+            Login with your mobile number to continue.
+        </p>
+
+        <input
+            type="tel"
+            id="phone"
+            placeholder="Enter Mobile Number"
+            maxlength="10"
+        >
+
+        <button id="sendOtpBtn">
+            Send OTP
+        </button>
+
+        <div id="otpSection" style="display:none;">
+
+            <input
+                type="text"
+                id="otp"
+                placeholder="Enter OTP"
+                maxlength="6"
+            >
+
+            <button id="verifyOtpBtn">
+                Verify OTP
+            </button>
+
+        </div>
+
+    </div>
+
+    <script src="script.js"></script>
+
+</body>
+</html>
