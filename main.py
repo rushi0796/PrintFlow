@@ -76,11 +76,16 @@ async def upload_pdf(file: UploadFile = File(...)):
                 buffer
             )
 
+        try:
+            returned_path = str(file_path.relative_to(BASE_DIR))
+        except ValueError:
+            returned_path = file_path.name
+
         return {
             "status": "success",
             "message": "PDF uploaded successfully",
             "file_name": file.filename,
-            "file_path": str(file_path.relative_to(BASE_DIR))
+            "file_path": returned_path
         }
 
     except HTTPException:
