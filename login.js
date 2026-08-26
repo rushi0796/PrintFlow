@@ -128,12 +128,11 @@ function handleSendOtp() {
         function (response) {
             console.log("MSG91 OTP request successful", response);
             isSendingOtp = false;
-            isOtpSent = true;
+            isOtpSent = false;
 
-            // Permanently disable Send OTP button post-success to prevent duplicate sends
             if (sendOtpBtn) {
-                sendOtpBtn.disabled = true;
-                sendOtpBtn.innerText = "OTP Sent";
+                sendOtpBtn.disabled = false;
+                sendOtpBtn.innerText = "Send OTP Again";
             }
 
             // Display inline success message below button
