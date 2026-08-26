@@ -6,5 +6,6 @@ app = FastAPI()
 
 
 @app.get("/")
+@app.get("/api/health")
 def health_endpoint():
     return health()

@@ -6,5 +6,6 @@ app = FastAPI()
 
 
 @app.post("/")
+@app.post("/api/upload-pdf")
 async def upload_pdf_endpoint(file: UploadFile = File(...)):
     return await upload_pdf(file)
