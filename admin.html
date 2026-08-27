@@ -24,6 +24,70 @@
             margin: 0 auto;
         }
 
+        body.admin-locked .admin-wrapper {
+            display: none;
+        }
+
+        .admin-lock {
+            width: min(420px, 100%);
+            margin: 12vh auto 0;
+            padding: 32px 26px;
+            background: rgba(255, 255, 255, 0.92);
+            border: 1px solid rgba(254, 215, 170, 0.8);
+            border-radius: 20px;
+            box-shadow: 0 16px 35px rgba(124, 45, 18, 0.12);
+            text-align: center;
+        }
+
+        body:not(.admin-locked) .admin-lock {
+            display: none;
+        }
+
+        .admin-lock-icon {
+            font-size: 42px;
+            margin-bottom: 12px;
+        }
+
+        .admin-lock h1 {
+            margin: 0 0 8px;
+            color: #7c2d12;
+            font-size: 24px;
+        }
+
+        .admin-lock p {
+            margin: 0 0 20px;
+            color: #78350f;
+            font-size: 14px;
+        }
+
+        .admin-lock input {
+            width: 100%;
+            margin-bottom: 12px;
+        }
+
+        .admin-lock-error {
+            min-height: 20px;
+            margin: 10px 0 0 !important;
+            color: #dc2626 !important;
+            font-size: 13px !important;
+            font-weight: 700;
+        }
+
+        .lock-portal-btn {
+            width: auto;
+            padding: 10px 14px;
+            background: #fff1f2;
+            color: #be123c;
+            box-shadow: none;
+            font-size: 13px;
+        }
+
+        .lock-portal-btn:hover {
+            background: #ffe4e6;
+            color: #9f1239;
+            box-shadow: none;
+        }
+
         .admin-header {
             display: flex;
             justify-content: space-between;
@@ -319,7 +383,18 @@
         }
     </style>
 </head>
-<body>
+<body class="admin-locked">
+
+<section class="admin-lock" aria-labelledby="adminLockTitle">
+    <div class="admin-lock-icon" aria-hidden="true">🔒</div>
+    <h1 id="adminLockTitle">Admin Portal Locked</h1>
+    <p>Enter the admin access code to view the print queue.</p>
+    <form id="adminLockForm">
+        <input type="password" id="adminAccessCode" placeholder="Admin access code" autocomplete="current-password" required>
+        <button type="submit">Unlock Portal</button>
+    </form>
+    <p id="adminLockError" class="admin-lock-error" role="alert"></p>
+</section>
 
 <div class="admin-wrapper">
 
@@ -333,9 +408,14 @@
             </div>
         </div>
 
-        <button type="button" id="refreshOrdersBtn" class="secondary-btn" style="width: auto; padding: 10px 18px;">
+            <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: flex-end;">
+                <button type="button" id="lockPortalBtn" class="lock-portal-btn">
+                    🔒 Lock Portal
+                </button>
+                <button type="button" id="refreshOrdersBtn" class="secondary-btn" style="width: auto; padding: 10px 18px;">
             🔄 Refresh Queue
-        </button>
+                </button>
+            </div>
     </div>
 
     <!-- Stats Cards -->
@@ -404,7 +484,7 @@
 
 </div>
 
-<script src="script.js"></script>
+<script src="script.js?v=admin-lock-1"></script>
 
 </body>
 </html>

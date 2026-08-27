@@ -595,6 +595,49 @@ if (payBtn) {
 // ADMIN DASHBOARD LOGIC (admin.html)
 // ==========================
 
+const adminLockForm = document.getElementById("adminLockForm");
+const adminAccessCode = document.getElementById("adminAccessCode");
+const adminLockError = document.getElementById("adminLockError");
+const lockPortalBtn = document.getElementById("lockPortalBtn");
+const ADMIN_ACCESS_CODE = "PrintFlow@2026";
+let adminPortalUnlocked = sessionStorage.getItem("printflowAdminUnlocked") === "true";
+
+function setAdminLockState(isUnlocked) {
+    adminPortalUnlocked = isUnlocked;
+    document.body.classList.toggle("admin-locked", !isUnlocked);
+    if (isUnlocked) {
+        sessionStorage.setItem("printflowAdminUnlocked", "true");
+    } else {
+        sessionStorage.removeItem("printflowAdminUnlocked");
+    }
+}
+
+if (adminLockForm) {
+    setAdminLockState(adminPortalUnlocked);
+    adminLockForm.addEventListener("submit", function (event) {
+        event.preventDefault();
+        if (adminAccessCode && adminAccessCode.value === ADMIN_ACCESS_CODE) {
+            if (adminLockError) adminLockError.textContent = "";
+            adminAccessCode.value = "";
+            setAdminLockState(true);
+            fetchAdminOrders();
+            return;
+        }
+        if (adminLockError) adminLockError.textContent = "Incorrect admin access code.";
+        if (adminAccessCode) {
+            adminAccessCode.value = "";
+            adminAccessCode.focus();
+        }
+    });
+}
+
+if (lockPortalBtn) {
+    lockPortalBtn.addEventListener("click", function () {
+        setAdminLockState(false);
+        if (adminAccessCode) adminAccessCode.focus();
+    });
+}
+
 const adminOrdersTableBody = document.getElementById("adminOrdersTableBody");
 const refreshOrdersBtn = document.getElementById("refreshOrdersBtn");
 const adminSearchInput = document.getElementById("adminSearchInput");
@@ -606,7 +649,7 @@ const pendingOrdersCount = document.getElementById("pendingOrdersCount");
 let allAdminOrders = [];
 
 async function fetchAdminOrders() {
-    if (!adminOrdersTableBody) return;
+    if (!adminOrdersTableBody || !adminPortalUnlocked) return;
 
     try {
         const res = await fetch(apiUrl("/api/orders", "/api/orders"));
@@ -729,7 +772,7 @@ if (adminSearchInput) {
 }
 
 // Initial admin order fetch if on admin.html
-if (adminOrdersTableBody) {
+if (adminOrdersTableBody && adminPortalUnlocked) {
     fetchAdminOrders();
     setInterval(fetchAdminOrders, 10000); // Auto-refresh admin queue every 10s
 }
