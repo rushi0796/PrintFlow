@@ -7,6 +7,10 @@
 
     <link rel="stylesheet" href="style.css">
     <style>
+        html {
+            overflow-x: hidden;
+        }
+
         body {
             background: linear-gradient(135deg, #fff7ed 0%, #ffedd5 50%, #fef3c7 100%);
             min-height: 100vh;
@@ -15,6 +19,8 @@
 
         .admin-wrapper {
             max-width: 1100px;
+            width: 100%;
+            min-width: 0;
             margin: 0 auto;
         }
 
@@ -93,6 +99,7 @@
             border: 1.5px solid #fed7aa;
             box-shadow: 0 10px 30px rgba(234, 88, 12, 0.08);
             padding: 24px;
+            min-width: 0;
         }
 
         .panel-toolbar {
@@ -195,6 +202,121 @@
             font-size: 12px;
             font-weight: 700;
         }
+
+        .table-scroll {
+            overflow-x: auto;
+            -webkit-overflow-scrolling: touch;
+            min-width: 0;
+        }
+
+        @media (max-width: 700px) {
+            body {
+                padding: 12px 10px;
+            }
+
+            .admin-header {
+                align-items: stretch;
+                flex-direction: column;
+                gap: 16px;
+                padding: 18px;
+                border-radius: 16px;
+            }
+
+            .admin-title h1 {
+                font-size: 21px;
+            }
+
+            .admin-header .secondary-btn {
+                width: 100% !important;
+            }
+
+            .stats-grid {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+                gap: 10px;
+                margin-bottom: 14px;
+            }
+
+            .stat-card {
+                min-width: 0;
+                padding: 14px 12px;
+                gap: 10px;
+                border-radius: 14px;
+            }
+
+            .stat-icon {
+                width: 38px;
+                height: 38px;
+                flex: 0 0 38px;
+                font-size: 19px;
+                border-radius: 11px;
+            }
+
+            .stat-info h4 {
+                font-size: 10px;
+                letter-spacing: 0;
+            }
+
+            .stat-info p {
+                font-size: 20px;
+            }
+
+            .orders-panel {
+                padding: 14px;
+                border-radius: 16px;
+            }
+
+            .panel-toolbar {
+                align-items: stretch;
+                flex-direction: column;
+                gap: 12px;
+                margin-bottom: 14px;
+            }
+
+            .search-box {
+                width: 100%;
+                min-height: 44px;
+                margin-bottom: 0;
+            }
+
+            .admin-table {
+                min-width: 850px;
+            }
+
+            .admin-table th,
+            .admin-table td {
+                padding: 12px 10px;
+            }
+
+            .action-btn-row {
+                flex-wrap: wrap;
+                min-width: 170px;
+            }
+
+            .btn-print,
+            .btn-download,
+            .btn-complete {
+                min-height: 36px;
+                padding: 8px 10px;
+            }
+        }
+
+        @media (min-width: 701px) and (max-width: 960px) {
+            body {
+                padding: 18px 14px;
+            }
+
+            .admin-header {
+                padding: 18px 20px;
+            }
+
+            .orders-panel {
+                padding: 18px;
+            }
+
+            .admin-table {
+                min-width: 850px;
+            }
+        }
     </style>
 </head>
 <body>
@@ -256,7 +378,7 @@
             <input type="text" id="adminSearchInput" class="search-box" placeholder="Search by mobile or file name...">
         </div>
 
-        <div style="overflow-x: auto;">
+        <div class="table-scroll">
             <table class="admin-table">
                 <thead>
                     <tr>
