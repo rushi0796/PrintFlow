@@ -1,4 +1,5 @@
 import os
+import json
 import shutil
 from pathlib import Path
 from uuid import uuid4
@@ -25,12 +26,31 @@ UPLOAD_DIR = (
     else BASE_DIR / "uploads"
 )
 UPLOAD_DIR.mkdir(exist_ok=True)
+ORDER_FILE = (
+    Path("/tmp/printflow-orders.json")
+    if os.environ.get("VERCEL")
+    else BASE_DIR / "orders" / "orders.json"
+)
 
 # Serve uploaded PDF files statically for download & printing in Admin Dashboard
 app.mount("/uploads", StaticFiles(directory=str(UPLOAD_DIR)), name="uploads")
 
 # In-memory orders database for Admin Dashboard
-orders_db = []
+def load_orders():
+    try:
+        if ORDER_FILE.exists():
+            return json.loads(ORDER_FILE.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        pass
+    return []
+
+
+def save_orders(orders):
+    ORDER_FILE.parent.mkdir(exist_ok=True)
+    ORDER_FILE.write_text(json.dumps(orders), encoding="utf-8")
+
+
+orders_db = load_orders()
 
 @app.get("/")
 def home():
@@ -64,6 +84,7 @@ class PaytmOrderRequest(BaseModel):
 
 @app.get("/api/orders")
 def get_all_orders():
+    orders_db[:] = load_orders()
     return {
         "status": "success",
         "total_orders": len(orders_db),
@@ -72,6 +93,7 @@ def get_all_orders():
 
 @app.post("/print-order")
 def create_print_order(order: PrintOrder):
+    orders_db[:] = load_orders()
     order_id = f"PF-{uuid4().hex[:6].upper()}"
     new_order = {
         "order_id": order_id,
@@ -88,6 +110,7 @@ def create_print_order(order: PrintOrder):
         "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     }
     orders_db.insert(0, new_order)
+    save_orders(orders_db)
 
     # Simulated WhatsApp / SMS Alert Trigger
     send_notification(
@@ -103,9 +126,11 @@ def create_print_order(order: PrintOrder):
 
 @app.post("/api/orders/{order_id}/complete")
 def complete_order(order_id: str):
+    orders_db[:] = load_orders()
     for order in orders_db:
         if order["order_id"] == order_id:
             order["status"] = "Completed"
+            save_orders(orders_db)
             # Send Notification on completion
             send_notification(
                 order["customer_mobile"],
