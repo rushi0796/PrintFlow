@@ -4,6 +4,36 @@
 
 const DB_NAME = "PrintFlowDB";
 const STORE_NAME = "pdfStore";
+const PRICE_PER_PAGE = 2;
+
+function getValidPageCount(value) {
+    const count = Number(value);
+
+    return Number.isInteger(count) && count > 0
+        ? count
+        : null;
+}
+
+async function countPdfPages(file) {
+    if (!window.pdfjsLib) {
+        throw new Error("PDF parser is unavailable.");
+    }
+
+    window.pdfjsLib.GlobalWorkerOptions.workerSrc =
+        "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+
+    const loadingTask = window.pdfjsLib.getDocument({
+        data: await file.arrayBuffer()
+    });
+    const pdf = await loadingTask.promise;
+    const count = getValidPageCount(pdf.numPages);
+
+    if (!count) {
+        throw new Error("PDF has no readable pages.");
+    }
+
+    return count;
+}
 
 // ======================================================
 // INDEXEDDB
@@ -463,6 +493,8 @@ window.handleFileSelection =
 
             window.selectedPdfFile =
                 null;
+            window.pdfPageCount = null;
+            localStorage.removeItem("pageCount");
 
             if (nameDisplay) {
                 nameDisplay.textContent =
@@ -483,6 +515,14 @@ window.handleFileSelection =
 
         window.selectedPdfFile =
             selectedFile;
+        window.pdfPageCount = null;
+
+        if (pageCount) {
+            pageCount.textContent =
+                "Counting pages...";
+        }
+
+        localStorage.removeItem("pageCount");
 
 
         // ==================================================
@@ -495,6 +535,40 @@ window.handleFileSelection =
         }
 
         hidePdfError();
+
+        try {
+            const actualPageCount =
+                await countPdfPages(selectedFile);
+
+            window.pdfPageCount = actualPageCount;
+            localStorage.setItem(
+                "pageCount",
+                String(actualPageCount)
+            );
+
+            if (pageCount) {
+                pageCount.textContent =
+                    actualPageCount + " pages";
+            }
+        } catch (error) {
+            console.error(
+                "Could not count PDF pages:",
+                error
+            );
+
+            window.selectedPdfFile = null;
+            window.pdfPageCount = null;
+
+            if (pageCount) {
+                pageCount.textContent = "";
+            }
+
+            showPdfError(
+                "📄 Could not read PDF pages. Please select another PDF."
+            );
+
+            return;
+        }
 
 
         // ==================================================
@@ -623,6 +697,18 @@ if (continueBtn) {
 
                 showPdfError(
                     "📄 Please select a PDF file first"
+                );
+
+                return;
+            }
+
+            const actualPageCount =
+                getValidPageCount(window.pdfPageCount) ||
+                getValidPageCount(localStorage.getItem("pageCount"));
+
+            if (!actualPageCount) {
+                showPdfError(
+                    "📄 Please wait for PDF pages to finish counting."
                 );
 
                 return;
@@ -781,7 +867,7 @@ if (printDetailsFileName) {
 
     getSavedPdfFile()
         .then(
-            (selectedFile) => {
+            async (selectedFile) => {
 
                 console.log(
                     "REAL PDF available on Print Details:",
@@ -792,6 +878,45 @@ if (printDetailsFileName) {
 
                     window.selectedPdfFile =
                         selectedFile;
+
+                    if (pageCount) {
+                        pageCount.textContent =
+                            "Counting pages...";
+                    }
+
+                    try {
+                        const actualPageCount =
+                            await countPdfPages(selectedFile);
+
+                        window.pdfPageCount = actualPageCount;
+                        localStorage.setItem(
+                            "pageCount",
+                            String(actualPageCount)
+                        );
+
+                        if (pageCount) {
+                            pageCount.textContent =
+                                actualPageCount + " pages";
+                        }
+
+                        if (typeof updateTotalPrice === "function") {
+                            updateTotalPrice();
+                        }
+                    } catch (error) {
+                        console.error(
+                            "Could not count PDF pages on Print Details:",
+                            error
+                        );
+
+                        if (pageCount) {
+                            pageCount.textContent =
+                                "Could not read PDF pages.";
+                        }
+
+                        if (typeof updateTotalPrice === "function") {
+                            updateTotalPrice();
+                        }
+                    }
                 }
             }
         );
@@ -829,19 +954,36 @@ if (
     function updateTotalPrice() {
 
         const copies =
-            Number(
-                copiesBox.value
-            ) || 1;
+            Math.max(
+                1,
+                parseInt(copiesBox.value, 10) || 1
+            );
+        const actualPageCount =
+            getValidPageCount(window.pdfPageCount) ||
+            getValidPageCount(localStorage.getItem("pageCount"));
 
-        const pricePerCopy =
-            2;
+        if (!actualPageCount) {
+            totalPriceBox.textContent =
+                "Total: --";
+
+            if (paymentBtn) {
+                paymentBtn.disabled = true;
+            }
+
+            return;
+        }
 
         totalPriceBox.textContent =
             "Total: ₹" +
             (
+                actualPageCount *
                 copies *
-                pricePerCopy
+                PRICE_PER_PAGE
             );
+
+        if (paymentBtn) {
+            paymentBtn.disabled = false;
+        }
     }
 
 
@@ -871,8 +1013,18 @@ if (paymentBtn) {
                     ? copiesBox.value
                     : 1;
 
+            const actualPageCount =
+                getValidPageCount(window.pdfPageCount) ||
+                getValidPageCount(localStorage.getItem("pageCount"));
+
+            if (!actualPageCount) {
+                return;
+            }
+
             const amount =
-                Number(copies) * 2;
+                Number(copies) *
+                actualPageCount *
+                PRICE_PER_PAGE;
 
 
             localStorage.setItem(
