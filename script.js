@@ -1,9 +1,12 @@
 // ======================================================
-   PRINTFLOW - FULL APP & ADMIN DASHBOARD LOGIC
-   ======================================================
+// PRINTFLOW - FULL APP & ADMIN DASHBOARD LOGIC
+// ======================================================
 
 const DB_NAME = "PrintFlowDB";
 const STORE_NAME = "pdfStore";
+const isLocalDevelopment = ["localhost", "127.0.0.1"].includes(window.location.hostname) || window.location.protocol === "file:";
+const API_BASE = isLocalDevelopment ? "http://127.0.0.1:8000" : "";
+const apiUrl = (localPath, productionPath = localPath) => `${API_BASE}${isLocalDevelopment ? localPath : productionPath}`;
 
 // Initialize PDF.js worker if available
 if (typeof pdfjsLib !== "undefined") {
@@ -126,7 +129,7 @@ async function uploadPdfToBackend(file) {
 
     try {
         console.log("Uploading PDF:", file?.name);
-        const response = await fetch("http://127.0.0.1:8000/upload-pdf", {
+        const response = await fetch(apiUrl("/upload-pdf", "/api/upload-pdf"), {
             method: "POST",
             body: formData
         });
@@ -517,7 +520,7 @@ if (payBtn) {
             const orientationVal = localStorage.getItem("orientation") || "portrait";
             const mobileVal = localStorage.getItem("mobileNumber") || "+919876543210";
 
-            await fetch("http://127.0.0.1:8000/print-order", {
+            await fetch(apiUrl("/print-order", "/api/print-order"), {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
@@ -534,7 +537,7 @@ if (payBtn) {
             });
 
             // Trigger Paytm Order API
-            const orderRes = await fetch("http://127.0.0.1:8000/create-paytm-order", {
+            const orderRes = await fetch(apiUrl("/create-paytm-order", "/api/create-paytm-order"), {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
@@ -606,7 +609,7 @@ async function fetchAdminOrders() {
     if (!adminOrdersTableBody) return;
 
     try {
-        const res = await fetch("http://127.0.0.1:8000/api/orders");
+        const res = await fetch(apiUrl("/api/orders", "/api/orders"));
         const data = await res.json();
 
         if (data && data.orders) {
@@ -659,7 +662,7 @@ function renderAdminOrders(orders) {
     let html = "";
     orders.forEach(order => {
         const isPending = order.status === "Pending";
-        const fileUrl = order.file_path ? `http://127.0.0.1:8000${order.file_path}` : "#";
+        const fileUrl = order.file_path ? `${API_BASE}${order.file_path}` : "#";
 
         html += `
             <tr>
@@ -698,7 +701,7 @@ window.printOrderFile = function (fileUrl) {
 
 window.markOrderCompleted = async function (orderId) {
     try {
-        const res = await fetch(`http://127.0.0.1:8000/api/orders/${orderId}/complete`, {
+        const res = await fetch(apiUrl(`/api/orders/${orderId}/complete`, `/api/orders/${orderId}/complete`), {
             method: "POST"
         });
         const data = await res.json();
