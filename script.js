@@ -7,6 +7,16 @@ const STORE_NAME = "pdfStore";
 const isLocalDevelopment = ["localhost", "127.0.0.1"].includes(window.location.hostname) || window.location.protocol === "file:";
 const API_BASE = isLocalDevelopment ? "http://127.0.0.1:8000" : "";
 const apiUrl = (localPath, productionPath = localPath) => `${API_BASE}${isLocalDevelopment ? localPath : productionPath}`;
+const orderUpdateChannel = typeof BroadcastChannel !== "undefined"
+    ? new BroadcastChannel("printflow-order-updates")
+    : null;
+
+function publishOrderUpdate(order) {
+    if (!order) return;
+    const message = { order, updatedAt: Date.now() };
+    if (orderUpdateChannel) orderUpdateChannel.postMessage(message);
+    localStorage.setItem("printflowOrderUpdated", JSON.stringify(message));
+}
 
 // Initialize PDF.js worker if available
 if (typeof pdfjsLib !== "undefined") {
@@ -526,7 +536,7 @@ if (payBtn) {
             const orientationVal = localStorage.getItem("orientation") || "portrait";
             const mobileVal = localStorage.getItem("mobileNumber") || "+919876543210";
 
-            await fetch(apiUrl("/print-order", "/api/print-order"), {
+            const printResponse = await fetch(apiUrl("/print-order", "/api/print-order"), {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
@@ -541,6 +551,11 @@ if (payBtn) {
                     file_path: uploadedPath
                 })
             });
+            if (!printResponse.ok) {
+                throw new Error(`Order creation failed with HTTP ${printResponse.status}`);
+            }
+            const printData = await printResponse.json();
+            publishOrderUpdate(printData.order);
 
             // Trigger Paytm Order API
             const orderRes = await fetch(apiUrl("/create-paytm-order", "/api/create-paytm-order"), {
@@ -664,6 +679,30 @@ const totalPagesPrinted = document.getElementById("totalPagesPrinted");
 const pendingOrdersCount = document.getElementById("pendingOrdersCount");
 
 let allAdminOrders = [];
+
+function handleOrderUpdate(message) {
+    if (!adminPortalUnlocked || !message || !message.order) return;
+    const incomingOrder = message.order;
+    allAdminOrders = [
+        incomingOrder,
+        ...allAdminOrders.filter(order => order.order_id !== incomingOrder.order_id)
+    ];
+    renderAdminOrders(allAdminOrders);
+}
+
+if (orderUpdateChannel) {
+    orderUpdateChannel.addEventListener("message", event => handleOrderUpdate(event.data));
+}
+
+window.addEventListener("storage", event => {
+    if (event.key === "printflowOrderUpdated" && event.newValue) {
+        try {
+            handleOrderUpdate(JSON.parse(event.newValue));
+        } catch (error) {
+            console.warn("Order update event error:", error);
+        }
+    }
+});
 
 async function fetchAdminOrders() {
     if (!adminOrdersTableBody || !adminPortalUnlocked) return;
@@ -791,7 +830,7 @@ if (adminSearchInput) {
 // Initial admin order fetch if on admin.html
 if (adminOrdersTableBody && adminPortalUnlocked) {
     fetchAdminOrders();
-    setInterval(fetchAdminOrders, 10000); // Auto-refresh admin queue every 10s
+    setInterval(fetchAdminOrders, 2000); // Keep the admin queue current while the portal is open.
 }
 
 // =======================
