@@ -31,12 +31,17 @@
         📄 Choose PDF
     </button>
 
-    <p id="fileName">
+    <!-- PDF First Page Preview Thumbnail Container -->
+    <div id="pdfPreviewContainer" style="display: none; margin-top: 14px; text-align: center;">
+        <canvas id="pdfCanvas" style="max-width: 140px; max-height: 180px; border-radius: 10px; border: 2px solid #fed7aa; box-shadow: 0 4px 12px rgba(234, 88, 12, 0.12); margin-bottom: 8px;"></canvas>
+    </div>
+
+    <p id="fileName" style="font-weight: 700; color: #1e293b; margin-top: 10px;">
         No PDF Selected
     </p>
-    <p id="pageCount"></p>
+    <p id="pageCount" style="font-size: 13px; font-weight: 600; color: #ea580c; margin-top: 4px; display: none;"></p>
 
-    <button type="button" id="continueBtn">
+    <button type="button" id="continueBtn" style="margin-top: 18px;">
         Continue
     </button>
 

@@ -1,4 +1,14 @@
 {
+  "rewrites": [
+    {
+      "source": "/customer",
+      "destination": "/login.html"
+    },
+    {
+      "source": "/admin",
+      "destination": "/admin.html"
+    }
+  ],
   "functions": {
     "api/*.py": {
       "maxDuration": 30

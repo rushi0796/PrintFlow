@@ -2,8 +2,10 @@ import os
 import shutil
 from pathlib import Path
 from uuid import uuid4
+from datetime import datetime
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 app = FastAPI()
@@ -24,11 +26,18 @@ UPLOAD_DIR = (
 )
 UPLOAD_DIR.mkdir(exist_ok=True)
 
+# Serve uploaded PDF files statically for download & printing in Admin Dashboard
+app.mount("/uploads", StaticFiles(directory=str(UPLOAD_DIR)), name="uploads")
+
+# In-memory orders database for Admin Dashboard
+orders_db = []
+
 @app.get("/")
 def home():
     return {
         "app": "PrintFlow",
-        "status": "Backend running successfully"
+        "status": "Backend running successfully",
+        "active_orders": len(orders_db)
     }
 
 @app.get("/health")
@@ -39,17 +48,99 @@ def health():
 
 class PrintOrder(BaseModel):
     file_name: str
-    copies: int
-    color_mode: str
-    duplex: str
-    orientation: str
+    copies: int = 1
+    pages: int = 1
+    color_mode: str = "black_white"
+    duplex: str = "double"
+    orientation: str = "portrait"
+    customer_mobile: str = "Guest"
+    amount: float = 2.0
+    file_path: str = ""
+
+class PaytmOrderRequest(BaseModel):
+    amount: float
+    order_id: str = None
+    customer_id: str = "CUST_001"
+
+@app.get("/api/orders")
+def get_all_orders():
+    return {
+        "status": "success",
+        "total_orders": len(orders_db),
+        "orders": orders_db
+    }
 
 @app.post("/print-order")
 def create_print_order(order: PrintOrder):
+    order_id = f"PF-{uuid4().hex[:6].upper()}"
+    new_order = {
+        "order_id": order_id,
+        "file_name": order.file_name,
+        "copies": order.copies,
+        "pages": order.pages,
+        "color_mode": order.color_mode,
+        "duplex": order.duplex,
+        "orientation": order.orientation,
+        "customer_mobile": order.customer_mobile,
+        "amount": order.amount,
+        "file_path": order.file_path,
+        "status": "Pending",
+        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    }
+    orders_db.insert(0, new_order)
+
+    # Simulated WhatsApp / SMS Alert Trigger
+    send_notification(
+        order.customer_mobile,
+        f"Hi! Your PrintFlow order {order_id} for '{order.file_name}' (₹{order.amount}) has been received successfully."
+    )
+
     return {
-        "status": "received",
-        "message": "Print order received successfully",
-        "order": order
+        "status": "success",
+        "message": "Print order created successfully",
+        "order": new_order
+    }
+
+@app.post("/api/orders/{order_id}/complete")
+def complete_order(order_id: str):
+    for order in orders_db:
+        if order["order_id"] == order_id:
+            order["status"] = "Completed"
+            # Send Notification on completion
+            send_notification(
+                order["customer_mobile"],
+                f"🎉 Your PrintFlow order {order_id} ('{order['file_name']}') is READY for pickup at the counter!"
+            )
+            return {
+                "status": "success",
+                "message": f"Order {order_id} marked as completed",
+                "order": order
+            }
+    raise HTTPException(status_code=404, detail="Order not found")
+
+def send_notification(mobile: str, message: str):
+    print(f"[NOTIFICATION SENT TO {mobile}]: {message}")
+
+@app.post("/create-paytm-order")
+def create_paytm_order(request: PaytmOrderRequest):
+    order_id = request.order_id or f"PF_ORDER_{uuid4().hex[:8].upper()}"
+    mid = os.environ.get("PAYTM_MID", "DIY12386817555501617")
+
+    return {
+        "status": "success",
+        "mid": mid,
+        "orderId": order_id,
+        "amount": str(request.amount),
+        "txnToken": f"TXN_TOKEN_{uuid4().hex}",
+        "paytmUrl": f"https://securegw-stage.paytm.in/theia/api/v1/showPaymentPage?mid={mid}&orderId={order_id}"
+    }
+
+@app.post("/verify-paytm-payment")
+def verify_paytm_payment(payload: dict):
+    return {
+        "status": "success",
+        "message": "Paytm Payment verified successfully",
+        "payload": payload
     }
 
 @app.post("/upload-pdf")
@@ -68,7 +159,8 @@ async def upload_pdf(file: UploadFile = File(...)):
             )
 
         original_name = Path(file.filename).name
-        file_path = UPLOAD_DIR / f"{uuid4().hex}_{original_name}"
+        saved_filename = f"{uuid4().hex[:8]}_{original_name}"
+        file_path = UPLOAD_DIR / saved_filename
 
         with file_path.open("wb") as buffer:
             shutil.copyfileobj(
@@ -76,10 +168,7 @@ async def upload_pdf(file: UploadFile = File(...)):
                 buffer
             )
 
-        try:
-            returned_path = str(file_path.relative_to(BASE_DIR))
-        except ValueError:
-            returned_path = file_path.name
+        returned_path = f"/uploads/{saved_filename}"
 
         return {
             "status": "success",

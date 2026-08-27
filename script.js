@@ -1,1432 +1,759 @@
 // ======================================================
-// PRINTFLOW - PDF PERSISTENCE & APP LOGIC
-// ======================================================
+   PRINTFLOW - FULL APP & ADMIN DASHBOARD LOGIC
+   ======================================================
 
 const DB_NAME = "PrintFlowDB";
 const STORE_NAME = "pdfStore";
-const PRICE_PER_PAGE = 2;
 
-function getValidPageCount(value) {
-    const count = Number(value);
-
-    return Number.isInteger(count) && count > 0
-        ? count
-        : null;
+// Initialize PDF.js worker if available
+if (typeof pdfjsLib !== "undefined") {
+    pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
 }
 
-async function countPdfPages(file) {
-    if (!window.pdfjsLib) {
-        throw new Error("PDF parser is unavailable.");
-    }
-
-    window.pdfjsLib.GlobalWorkerOptions.workerSrc =
-        "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
-
-    const loadingTask = window.pdfjsLib.getDocument({
-        data: await file.arrayBuffer()
-    });
-    const pdf = await loadingTask.promise;
-    const count = getValidPageCount(pdf.numPages);
-
-    if (!count) {
-        throw new Error("PDF has no readable pages.");
-    }
-
-    return count;
-}
-
-// ======================================================
-// INDEXEDDB
-// ======================================================
-
+// Open / initialize IndexedDB for robust multi-megabyte PDF file storage
 function openPdfDB() {
     return new Promise((resolve) => {
         if (!window.indexedDB) {
-            console.error("IndexedDB is not supported.");
             resolve(null);
             return;
         }
-
         const request = indexedDB.open(DB_NAME, 1);
-
-        request.onupgradeneeded = (event) => {
-            const db = event.target.result;
-
+        request.onupgradeneeded = (e) => {
+            const db = e.target.result;
             if (!db.objectStoreNames.contains(STORE_NAME)) {
                 db.createObjectStore(STORE_NAME);
             }
         };
-
-        request.onsuccess = (event) => {
-            resolve(event.target.result);
-        };
-
-        request.onerror = () => {
-            console.error("IndexedDB open failed:", request.error);
+        request.onsuccess = (e) => resolve(e.target.result);
+        request.onerror = (e) => {
+            console.warn("IndexedDB open note:", e.target.error);
             resolve(null);
         };
     });
 }
 
+// Save selected PDF File object directly to IndexedDB, resolving ONLY after tx.oncomplete
+function savePdfFile(file) {
+    if (!file) return Promise.resolve(null);
+    return new Promise((resolve) => {
+        try {
+            console.log("Saving PDF to IndexedDB:", file?.name);
+            localStorage.setItem("fileName", file.name);
+            localStorage.setItem("fileSize", String(file.size));
+            localStorage.setItem("fileType", file.type || "application/pdf");
+            localStorage.setItem("fileLastModified", String(file.lastModified));
 
-// ======================================================
-// SAVE REAL PDF FILE
-// ======================================================
+            // Read DataURL for fallback
+            const reader = new FileReader();
+            reader.onload = function (e) {
+                try {
+                    sessionStorage.setItem("pdfDataUrl", e.target.result);
+                } catch (err) {
+                    console.warn("sessionStorage quota note:", err);
+                }
+            };
+            reader.readAsDataURL(file);
 
-async function savePdfFile(file) {
-    if (!file) {
-        return false;
-    }
+            // Store File object directly in IndexedDB and WAIT for transaction completion
+            openPdfDB().then(db => {
+                if (!db) {
+                    resolve(file);
+                    return;
+                }
+                const tx = db.transaction(STORE_NAME, "readwrite");
+                const store = tx.objectStore(STORE_NAME);
+                const putReq = store.put(file, "currentPdf");
 
-    try {
-        // Save metadata
-        localStorage.setItem("fileName", file.name);
-        localStorage.setItem("fileSize", String(file.size));
-        localStorage.setItem(
-            "fileType",
-            file.type || "application/pdf"
-        );
-        localStorage.setItem(
-            "fileLastModified",
-            String(file.lastModified)
-        );
+                putReq.onsuccess = () => {
+                    console.log("PDF successfully stored in IndexedDB");
+                };
 
-        const db = await openPdfDB();
+                tx.oncomplete = () => {
+                    resolve(file);
+                };
 
-        if (!db) {
-            return false;
+                tx.onerror = (e) => {
+                    console.warn("IndexedDB transaction error:", e.target.error);
+                    resolve(file);
+                };
+            }).catch(err => {
+                console.warn("IndexedDB open error:", err);
+                resolve(file);
+            });
+        } catch (err) {
+            console.error("Error saving PDF file metadata:", err);
+            resolve(file);
         }
-
-        return await new Promise((resolve) => {
-            const transaction = db.transaction(
-                STORE_NAME,
-                "readwrite"
-            );
-
-            const store = transaction.objectStore(
-                STORE_NAME
-            );
-
-            const request = store.put(
-                file,
-                "currentPdf"
-            );
-
-            request.onerror = () => {
-                console.error(
-                    "PDF IndexedDB save failed:",
-                    request.error
-                );
-            };
-
-            transaction.oncomplete = () => {
-                console.log(
-                    "REAL PDF successfully saved:",
-                    file.name
-                );
-
-                resolve(true);
-            };
-
-            transaction.onerror = () => {
-                console.error(
-                    "PDF IndexedDB transaction failed:",
-                    transaction.error
-                );
-
-                resolve(false);
-            };
-
-            transaction.onabort = () => {
-                console.error(
-                    "PDF IndexedDB transaction aborted."
-                );
-
-                resolve(false);
-            };
-        });
-
-    } catch (error) {
-        console.error(
-            "Error saving PDF:",
-            error
-        );
-
-        return false;
-    }
+    });
 }
 
-
-// ======================================================
-// GET SAVED PDF
-// ======================================================
-
+// Retrieve PDF File object from IndexedDB
 async function getSavedPdfFile() {
     try {
         const db = await openPdfDB();
-
-        if (!db) {
-            return null;
-        }
-
-        return await new Promise((resolve) => {
-            const transaction = db.transaction(
-                STORE_NAME,
-                "readonly"
-            );
-
-            const store = transaction.objectStore(
-                STORE_NAME
-            );
-
-            const request = store.get(
-                "currentPdf"
-            );
-
-            request.onsuccess = () => {
-                const file = request.result || null;
-
-                console.log(
-                    "PDF retrieved from IndexedDB:",
-                    file
-                );
-
-                resolve(file);
-            };
-
-            request.onerror = () => {
-                console.error(
-                    "PDF retrieval failed:",
-                    request.error
-                );
-
-                resolve(null);
-            };
+        if (!db) return null;
+        return new Promise((resolve) => {
+            const tx = db.transaction(STORE_NAME, "readonly");
+            const store = tx.objectStore(STORE_NAME);
+            const request = store.get("currentPdf");
+            request.onsuccess = () => resolve(request.result);
+            request.onerror = () => resolve(null);
         });
-
-    } catch (error) {
-        console.error(
-            "Could not retrieve PDF:",
-            error
-        );
-
+    } catch (err) {
+        console.warn("Could not retrieve file from IndexedDB:", err);
         return null;
     }
 }
 
-
-// ======================================================
-// CLEAR SAVED PDF
-// ======================================================
-
+// Clear PDF file from IndexedDB
 async function clearSavedPdfFile() {
     try {
         const db = await openPdfDB();
-
-        if (!db) {
-            return;
-        }
-
-        await new Promise((resolve) => {
-            const transaction = db.transaction(
-                STORE_NAME,
-                "readwrite"
-            );
-
-            const store = transaction.objectStore(
-                STORE_NAME
-            );
-
-            store.delete("currentPdf");
-
-            transaction.oncomplete = () => {
-                resolve();
-            };
-
-            transaction.onerror = () => {
-                console.warn(
-                    "Could not clear saved PDF:",
-                    transaction.error
-                );
-
-                resolve();
-            };
-        });
-
-    } catch (error) {
-        console.warn(
-            "Error clearing PDF:",
-            error
-        );
+        if (!db) return;
+        const tx = db.transaction(STORE_NAME, "readwrite");
+        const store = tx.objectStore(STORE_NAME);
+        store.delete("currentPdf");
+    } catch (err) {
+        console.warn("Error clearing IndexedDB:", err);
     }
 }
 
-
-// ======================================================
-// REAL PDF BACKEND UPLOAD
-// ======================================================
-
-const API_BASE_URL =
-    window.location.protocol === "file:"
-        ? "http://127.0.0.1:8000"
-        : "";
-const API_PATH_PREFIX =
-    window.location.protocol === "file:"
-        ? ""
-        : "/api";
-
+// Send real PDF File object using FormData to FastAPI backend and return structured result
 async function uploadPdfToBackend(file) {
-    if (!file) {
-        console.error(
-            "No PDF File object provided."
-        );
-
-        return null;
-    }
+    if (!file) return { success: false, error: "No file provided" };
+    const formData = new FormData();
+    formData.append("file", file);
 
     try {
-        const formData = new FormData();
-
-        formData.append(
-            "file",
-            file,
-            file.name
-        );
-
-        console.log(
-            "Uploading REAL PDF:",
-            file.name,
-            file.size,
-            "bytes"
-        );
-
-        const response = await fetch(
-            `${API_BASE_URL}${API_PATH_PREFIX}/upload-pdf`,
-            {
-                method: "POST",
-                body: formData
-            }
-        );
+        console.log("Uploading PDF:", file?.name);
+        const response = await fetch("http://127.0.0.1:8000/upload-pdf", {
+            method: "POST",
+            body: formData
+        });
 
         if (!response.ok) {
-            console.error(
-                "PDF backend upload failed:",
-                response.status,
-                response.statusText
-            );
-
-            return null;
+            console.warn("Backend upload failed with HTTP status:", response.status);
+            return { success: false, error: "HTTP error " + response.status };
         }
 
         const data = await response.json();
+        console.log("Backend upload response:", data);
 
-        console.log(
-            "PDF backend upload response:",
-            data
-        );
-
-        if (
-            data &&
-            data.file_path
-        ) {
-            localStorage.setItem(
-                "backendFilePath",
-                data.file_path
-            );
+        if (data && (data.status === "success" || data.file_path)) {
+            if (data.file_path) {
+                localStorage.setItem("backendFilePath", data.file_path);
+            }
+            return { success: true, data: data };
+        } else {
+            return { success: false, error: data?.message || "Invalid upload response" };
         }
-
-        return data;
-
-    } catch (error) {
-        console.error(
-            "PDF upload request failed:",
-            error
-        );
-
-        return null;
+    } catch (err) {
+        console.warn("Backend upload network error:", err);
+        return { success: false, error: err.message || "Network error" };
     }
 }
 
+// Render First Page Thumbnail & Count Pages using PDF.js
+function renderPdfPreviewAndCount(file) {
+    if (!file || typeof pdfjsLib === "undefined") return;
 
-// ======================================================
-// PDF UPLOAD PAGE - home.html
-// ======================================================
+    const reader = new FileReader();
+    reader.onload = function (e) {
+        const typedarray = new Uint8Array(e.target.result);
+        pdfjsLib.getDocument(typedarray).promise.then(function (pdf) {
+            console.log("PDF loaded. Total Pages:", pdf.numPages);
+            localStorage.setItem("pdfPageCount", String(pdf.numPages));
 
-const choosePdfBtn =
-    document.getElementById("choosePdfBtn");
+            const pageCountElem = document.getElementById("pageCount");
+            if (pageCountElem) {
+                pageCountElem.textContent = `📄 ${pdf.numPages} ${pdf.numPages === 1 ? 'Page' : 'Pages'} detected`;
+                pageCountElem.style.display = "block";
+            }
 
-const pdfFile =
-    document.getElementById("pdfFile");
+            // Render first page thumbnail onto canvas
+            pdf.getPage(1).then(function (page) {
+                const canvas = document.getElementById("pdfCanvas");
+                const previewContainer = document.getElementById("pdfPreviewContainer");
+                if (canvas && previewContainer) {
+                    const viewport = page.getViewport({ scale: 0.5 });
+                    const context = canvas.getContext("2d");
+                    canvas.height = viewport.height;
+                    canvas.width = viewport.width;
 
-const fileName =
-    document.getElementById("fileName");
-
-const pageCount =
-    document.getElementById("pageCount");
-
-const continueBtn =
-    document.getElementById("continueBtn");
-
-const pdfErrorMsg =
-    document.getElementById("pdfErrorMsg");
-
-
-// ======================================================
-// PDF ERROR MESSAGE
-// ======================================================
-
-function showPdfError(message) {
-    if (!pdfErrorMsg) {
-        return;
-    }
-
-    pdfErrorMsg.textContent =
-        message ||
-        "📄 Please select a PDF file first";
-
-    pdfErrorMsg.style.display =
-        "block";
+                    const renderContext = {
+                        canvasContext: context,
+                        viewport: viewport
+                    };
+                    page.render(renderContext).promise.then(function () {
+                        previewContainer.style.display = "block";
+                    });
+                }
+            });
+        }).catch(function (err) {
+            console.warn("PDF.js render note:", err);
+        });
+    };
+    reader.readAsArrayBuffer(file);
 }
 
+// ==========================
+// PDF UPLOAD PAGE (home.html)
+// ==========================
+
+const choosePdfBtn = document.getElementById("choosePdfBtn");
+const pdfFile = document.getElementById("pdfFile");
+const fileName = document.getElementById("fileName");
+const pageCountDisplay = document.getElementById("pageCount");
+const continueBtn = document.getElementById("continueBtn");
+const pdfErrorMsg = document.getElementById("pdfErrorMsg");
+
+function showPdfError(msg) {
+    if (pdfErrorMsg) {
+        pdfErrorMsg.textContent = msg || "📄 Please select a PDF file first";
+        pdfErrorMsg.style.display = "block";
+    }
+}
 
 function hidePdfError() {
-    if (!pdfErrorMsg) {
+    if (pdfErrorMsg) {
+        pdfErrorMsg.style.display = "none";
+    }
+}
+
+// Restore filename display on load if previously selected
+if (fileName) {
+    const savedName = localStorage.getItem("fileName");
+    const savedPages = localStorage.getItem("pdfPageCount");
+    if (savedName && savedName !== "No PDF Selected" && savedName !== "No file selected") {
+        fileName.textContent = savedName;
+    }
+    if (savedPages && pageCountDisplay) {
+        pageCountDisplay.textContent = `📄 ${savedPages} Pages detected`;
+        pageCountDisplay.style.display = "block";
+    }
+}
+
+// File Selection Handler
+window.handleFileSelection = function (event) {
+    const input = document.getElementById("pdfFile");
+    const file = (event && event.target && event.target.files && event.target.files[0]) || (input && input.files && input.files[0]);
+    const nameDisplay = document.getElementById("fileName");
+
+    if (!file) {
+        if (!window.selectedPdfFile && !localStorage.getItem("fileName")) {
+            if (nameDisplay) nameDisplay.textContent = "No PDF Selected";
+        }
         return;
     }
 
-    pdfErrorMsg.style.display =
-        "none";
-}
+    console.log("Selected file:", file);
 
+    // Validate PDF file extension / MIME type
+    const isPdf = file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
 
-// ======================================================
-// RESTORE FILENAME
-// ======================================================
-
-if (fileName) {
-    const savedName =
-        localStorage.getItem("fileName");
-
-    if (
-        savedName &&
-        savedName !== "No PDF Selected" &&
-        savedName !== "No file selected"
-    ) {
-        fileName.textContent =
-            savedName;
+    if (!isPdf) {
+        if (input) input.value = "";
+        window.selectedPdfFile = null;
+        if (nameDisplay) nameDisplay.textContent = "No PDF Selected";
+        showPdfError("📄 Please select a valid PDF file (.pdf)");
+        return;
     }
+
+    // Valid PDF selected - Store REAL File object in global state
+    window.selectedPdfFile = file;
+
+    // Immediately update DOM text display to show actual selected filename
+    if (nameDisplay) {
+        nameDisplay.textContent = file.name;
+    }
+
+    hidePdfError();
+    renderPdfPreviewAndCount(file);
+    savePdfFile(file);
+};
+
+if (choosePdfBtn && pdfFile) {
+    choosePdfBtn.addEventListener("click", function () {
+        try {
+            pdfFile.value = "";
+            pdfFile.click();
+        } catch (err) {
+            console.warn("pdfFile click note:", err);
+        }
+    });
+
+    pdfFile.addEventListener("change", window.handleFileSelection);
+    pdfFile.addEventListener("input", window.handleFileSelection);
 }
 
+if (continueBtn) {
+    continueBtn.addEventListener("click", async function (e) {
+        if (e && e.preventDefault) e.preventDefault();
 
-// ======================================================
-// FILE SELECTION
-// ======================================================
+        const input = document.getElementById("pdfFile");
+        const selectedFile = window.selectedPdfFile || ((input && input.files && input.files.length > 0) ? input.files[0] : null);
+        const storedName = localStorage.getItem("fileName");
+        const hasValidStoredName = storedName && storedName !== "No PDF Selected" && storedName !== "No file selected";
 
-window.handleFileSelection =
-    async function (event) {
+        console.log("Selected REAL PDF:", selectedFile);
 
-        const input =
-            document.getElementById(
-                "pdfFile"
-            );
-
-        const selectedFile =
-            (
-                event &&
-                event.target &&
-                event.target.files &&
-                event.target.files[0]
-            ) ||
-            (
-                input &&
-                input.files &&
-                input.files[0]
-            );
-
-        const nameDisplay =
-            document.getElementById(
-                "fileName"
-            );
-
-        // User cancelled picker
-        if (!selectedFile) {
+        if (!selectedFile && !hasValidStoredName) {
+            showPdfError("📄 Please select a PDF file first");
             return;
-        }
-
-        console.log(
-            "REAL PDF selected:",
-            selectedFile
-        );
-
-        console.log(
-            "PDF name:",
-            selectedFile.name
-        );
-
-        console.log(
-            "PDF type:",
-            selectedFile.type
-        );
-
-        console.log(
-            "PDF size:",
-            selectedFile.size
-        );
-
-
-        // ==================================================
-        // PDF VALIDATION
-        // ==================================================
-
-        const isPdf =
-            selectedFile.type ===
-                "application/pdf" ||
-            selectedFile.name
-                .toLowerCase()
-                .endsWith(".pdf");
-
-        if (!isPdf) {
-
-            if (input) {
-                input.value = "";
-            }
-
-            window.selectedPdfFile =
-                null;
-            window.pdfPageCount = null;
-            localStorage.removeItem("pageCount");
-
-            if (nameDisplay) {
-                nameDisplay.textContent =
-                    "No PDF Selected";
-            }
-
-            showPdfError(
-                "📄 Please select a valid PDF file (.pdf)"
-            );
-
-            return;
-        }
-
-
-        // ==================================================
-        // STORE REAL FILE IN MEMORY
-        // ==================================================
-
-        window.selectedPdfFile =
-            selectedFile;
-        window.pdfPageCount = null;
-
-        if (pageCount) {
-            pageCount.textContent =
-                "Counting pages...";
-        }
-
-        localStorage.removeItem("pageCount");
-
-
-        // ==================================================
-        // SHOW REAL FILE NAME
-        // ==================================================
-
-        if (nameDisplay) {
-            nameDisplay.textContent =
-                selectedFile.name;
         }
 
         hidePdfError();
 
-        try {
-            const actualPageCount =
-                await countPdfPages(selectedFile);
-
-            window.pdfPageCount = actualPageCount;
-            localStorage.setItem(
-                "pageCount",
-                String(actualPageCount)
-            );
-
-            if (pageCount) {
-                pageCount.textContent =
-                    actualPageCount + " pages";
-            }
-        } catch (error) {
-            console.error(
-                "Could not count PDF pages:",
-                error
-            );
-
-            window.selectedPdfFile = null;
-            window.pdfPageCount = null;
-
-            if (pageCount) {
-                pageCount.textContent = "";
-            }
-
-            showPdfError(
-                "📄 Could not read PDF pages. Please select another PDF."
-            );
-
-            return;
-        }
-
-
-        // ==================================================
-        // SAVE REAL FILE TO INDEXEDDB
-        // ==================================================
-
-        const saved =
-            await savePdfFile(
-                selectedFile
-            );
-
-        if (!saved) {
-            console.error(
-                "PDF could not be saved."
-            );
-
-            showPdfError(
-                "📄 Could not save PDF. Please try again."
-            );
-
-            return;
-        }
-
-        console.log(
-            "PDF selection and persistence completed."
-        );
-    };
-
-
-// ======================================================
-// CHOOSE PDF BUTTON
-// ======================================================
-
-if (
-    choosePdfBtn &&
-    pdfFile
-) {
-
-    choosePdfBtn.addEventListener(
-        "click",
-        function (event) {
-
-            event.preventDefault();
+        if (selectedFile) {
+            continueBtn.disabled = true;
+            const originalText = continueBtn.textContent;
+            continueBtn.textContent = "Uploading PDF...";
 
             try {
+                // 1. Save File object to IndexedDB and WAIT for tx.oncomplete
+                await savePdfFile(selectedFile);
 
-                // Allow selecting the same PDF again
-                pdfFile.value = "";
+                // 2. Perform real FormData HTTP POST upload to FastAPI backend and AWAIT structured result
+                const uploadResult = await uploadPdfToBackend(selectedFile);
 
-                pdfFile.click();
-
-            } catch (error) {
-
-                console.error(
-                    "Could not open PDF picker:",
-                    error
-                );
-            }
-        }
-    );
-
-
-    // File picker change event
-    pdfFile.addEventListener(
-        "change",
-        function (event) {
-            window.handleFileSelection(
-                event
-            );
-        }
-    );
-}
-
-
-// ======================================================
-// CONTINUE BUTTON
-// ======================================================
-
-if (continueBtn) {
-
-    continueBtn.addEventListener(
-        "click",
-        async function (event) {
-
-            event.preventDefault();
-
-
-            // ==================================================
-            // GET REAL PDF
-            // ==================================================
-
-            const input =
-                document.getElementById(
-                    "pdfFile"
-                );
-
-            let selectedFile =
-                window.selectedPdfFile ||
-                (
-                    input &&
-                    input.files &&
-                    input.files[0]
-                );
-
-
-            // If not available in memory,
-            // try IndexedDB
-            if (!selectedFile) {
-
-                selectedFile =
-                    await getSavedPdfFile();
-            }
-
-
-            console.log(
-                "PDF available before Continue:",
-                selectedFile
-            );
-
-
-            // ==================================================
-            // NO PDF
-            // ==================================================
-
-            if (!selectedFile) {
-
-                showPdfError(
-                    "📄 Please select a PDF file first"
-                );
-
-                return;
-            }
-
-            const actualPageCount =
-                getValidPageCount(window.pdfPageCount) ||
-                getValidPageCount(localStorage.getItem("pageCount"));
-
-            if (!actualPageCount) {
-                showPdfError(
-                    "📄 Please wait for PDF pages to finish counting."
-                );
-
-                return;
-            }
-
-
-            // ==================================================
-            // HIDE ERROR
-            // ==================================================
-
-            hidePdfError();
-
-
-            // ==================================================
-            // DISABLE BUTTON WHILE PROCESSING
-            // ==================================================
-
-            const originalText =
-                continueBtn.textContent;
-
-            continueBtn.disabled =
-                true;
-
-            continueBtn.textContent =
-                "Uploading PDF...";
-
-
-            try {
-
-                // ==================================================
-                // STEP 1
-                // MAKE SURE REAL FILE IS SAVED
-                // ==================================================
-
-                const saved =
-                    await savePdfFile(
-                        selectedFile
-                    );
-
-                if (!saved) {
-
-                    throw new Error(
-                        "Could not save PDF to IndexedDB."
-                    );
+                if (!uploadResult || !uploadResult.success) {
+                    console.warn("Backend upload failed, stopping redirection:", uploadResult);
+                    showPdfError("📄 PDF upload failed. Please check connection and try again.");
+                    continueBtn.disabled = false;
+                    continueBtn.textContent = originalText;
+                    return;
                 }
-
-
-                // ==================================================
-                // STEP 2
-                // REAL BACKEND UPLOAD
-                // ==================================================
-
-                const uploadResult =
-                    await uploadPdfToBackend(
-                        selectedFile
-                    );
-
-
-                // ==================================================
-                // STEP 3
-                // DO NOT REDIRECT IF UPLOAD FAILED
-                // ==================================================
-
-                if (!uploadResult) {
-
-                    throw new Error(
-                        "PDF backend upload failed."
-                    );
-                }
-
-
-                console.log(
-                    "REAL PDF upload completed successfully."
-                );
-
-
-                // ==================================================
-                // STEP 4
-                // ONLY NOW GO TO PRINT DETAILS
-                // ==================================================
-
-                window.location.href =
-                    "print-details.html";
-
-            } catch (error) {
-
-                console.error(
-                    "PDF flow failed:",
-                    error
-                );
-
-                showPdfError(
-                    "📄 PDF upload failed. Please try again."
-                );
-
+            } catch (err) {
+                console.error("PDF Upload execution error:", err);
+                showPdfError("📄 PDF upload error occurred. Please try again.");
+                continueBtn.disabled = false;
+                continueBtn.textContent = originalText;
+                return;
             } finally {
-
-                continueBtn.disabled =
-                    false;
-
-                continueBtn.textContent =
-                    originalText;
+                continueBtn.disabled = false;
+                continueBtn.textContent = originalText;
             }
         }
-    );
+
+        // 3. Redirect ONLY AFTER backend PDF upload has successfully finished
+        window.location.href = "print-details.html";
+    });
 }
 
+// ==============================
+// PRINT DETAILS PAGE (print-details.html)
+// ==============================
 
-// ======================================================
-// PRINT DETAILS PAGE
-// ======================================================
+const backBtn = document.getElementById("backBtn");
+const paymentBtn = document.getElementById("paymentBtn");
+const copiesBox = document.getElementById("copies");
+const totalPriceBox = document.getElementById("totalPrice");
+const printDetailsFileName = document.getElementById("fileName");
 
-const backBtn =
-    document.getElementById(
-        "backBtn"
-    );
-
-const paymentBtn =
-    document.getElementById(
-        "paymentBtn"
-    );
-
-const copiesBox =
-    document.getElementById(
-        "copies"
-    );
-
-const totalPriceBox =
-    document.getElementById(
-        "totalPrice"
-    );
-
-const printDetailsFileName =
-    document.getElementById(
-        "fileName"
-    );
-
-
-// ======================================================
-// RESTORE FILE ON PRINT DETAILS
-// ======================================================
-
+// Restore selected file display & calculate dynamic price on Print Details page
 if (printDetailsFileName) {
-
-    const savedName =
-        localStorage.getItem(
-            "fileName"
-        );
-
+    const savedName = localStorage.getItem("fileName");
     if (savedName) {
-
-        printDetailsFileName.textContent =
-            savedName;
+        printDetailsFileName.textContent = savedName;
     }
 
-
-    getSavedPdfFile()
-        .then(
-            async (selectedFile) => {
-
-                console.log(
-                    "REAL PDF available on Print Details:",
-                    selectedFile
-                );
-
-                if (selectedFile) {
-
-                    window.selectedPdfFile =
-                        selectedFile;
-
-                    if (pageCount) {
-                        pageCount.textContent =
-                            "Counting pages...";
-                    }
-
-                    try {
-                        const actualPageCount =
-                            await countPdfPages(selectedFile);
-
-                        window.pdfPageCount = actualPageCount;
-                        localStorage.setItem(
-                            "pageCount",
-                            String(actualPageCount)
-                        );
-
-                        if (pageCount) {
-                            pageCount.textContent =
-                                actualPageCount + " pages";
-                        }
-
-                        if (typeof updateTotalPrice === "function") {
-                            updateTotalPrice();
-                        }
-                    } catch (error) {
-                        console.error(
-                            "Could not count PDF pages on Print Details:",
-                            error
-                        );
-
-                        if (pageCount) {
-                            pageCount.textContent =
-                                "Could not read PDF pages.";
-                        }
-
-                        if (typeof updateTotalPrice === "function") {
-                            updateTotalPrice();
-                        }
-                    }
-                }
-            }
-        );
-}
-
-
-// ======================================================
-// BACK BUTTON
-// ======================================================
-
-if (backBtn) {
-
-    backBtn.addEventListener(
-        "click",
-        function (event) {
-
-            event.preventDefault();
-
-            window.location.href =
-                "home.html";
+    getSavedPdfFile().then(selectedFile => {
+        console.log("PDF retrieved on print-details:", selectedFile);
+        if (selectedFile) {
+            window.selectedPdfFile = selectedFile;
         }
-    );
+    });
 }
 
-
-// ======================================================
-// PRINT DETAILS TOTAL
-// ======================================================
-
-if (
-    copiesBox &&
-    totalPriceBox
-) {
-
+if (copiesBox && totalPriceBox) {
     function updateTotalPrice() {
+        const copies = Number(copiesBox.value) || 1;
+        const pageCount = Number(localStorage.getItem("pdfPageCount")) || 1;
+        const pricePerPage = 2;
+        const totalAmount = copies * pageCount * pricePerPage;
 
-        const copies =
-            Math.max(
-                1,
-                parseInt(copiesBox.value, 10) || 1
-            );
-        const actualPageCount =
-            getValidPageCount(window.pdfPageCount) ||
-            getValidPageCount(localStorage.getItem("pageCount"));
-
-        if (!actualPageCount) {
-            totalPriceBox.textContent =
-                "Total: --";
-
-            if (paymentBtn) {
-                paymentBtn.disabled = true;
-            }
-
-            return;
-        }
-
-        totalPriceBox.textContent =
-            "Total: ₹" +
-            (
-                actualPageCount *
-                copies *
-                PRICE_PER_PAGE
-            );
-
-        if (paymentBtn) {
-            paymentBtn.disabled = false;
-        }
+        totalPriceBox.textContent = "Total: ₹" + totalAmount;
+        localStorage.setItem("amount", String(totalAmount));
     }
 
-
-    copiesBox.addEventListener(
-        "input",
-        updateTotalPrice
-    );
-
+    copiesBox.addEventListener("input", updateTotalPrice);
     updateTotalPrice();
 }
 
-
-// ======================================================
-// CONTINUE TO PAYMENT
-// ======================================================
+if (backBtn) {
+    backBtn.addEventListener("click", function (e) {
+        if (e && e.preventDefault) e.preventDefault();
+        window.location.href = "home.html";
+    });
+}
 
 if (paymentBtn) {
+    paymentBtn.addEventListener("click", function (e) {
+        if (e && e.preventDefault) e.preventDefault();
+        const copies = copiesBox ? copiesBox.value : 1;
+        const pageCount = Number(localStorage.getItem("pdfPageCount")) || 1;
+        const amount = copies * pageCount * 2;
 
-    paymentBtn.addEventListener(
-        "click",
-        function (event) {
+        localStorage.setItem("copies", copies);
+        localStorage.setItem("amount", amount);
 
-            event.preventDefault();
+        const selectedSide = document.querySelector(
+            'input[name="printSide"]:checked'
+        );
 
-            const copies =
-                copiesBox
-                    ? copiesBox.value
-                    : 1;
-
-            const actualPageCount =
-                getValidPageCount(window.pdfPageCount) ||
-                getValidPageCount(localStorage.getItem("pageCount"));
-
-            if (!actualPageCount) {
-                return;
-            }
-
-            const amount =
-                Number(copies) *
-                actualPageCount *
-                PRICE_PER_PAGE;
-
-
-            localStorage.setItem(
-                "copies",
-                copies
-            );
-
-            localStorage.setItem(
-                "amount",
-                amount
-            );
-
-
-            const selectedSide =
-                document.querySelector(
-                    'input[name="printSide"]:checked'
-                );
-
-            if (selectedSide) {
-
-                localStorage.setItem(
-                    "printSide",
-                    selectedSide.value
-                );
-            }
-
-
-            const selectedOrientation =
-                document.querySelector(
-                    'input[name="orientation"]:checked'
-                );
-
-            if (selectedOrientation) {
-
-                localStorage.setItem(
-                    "orientation",
-                    selectedOrientation.value
-                );
-            }
-
-
-            window.location.href =
-                "payment.html";
+        if (selectedSide) {
+            localStorage.setItem("printSide", selectedSide.value);
         }
-    );
+
+        const selectedOrientation = document.querySelector(
+            'input[name="orientation"]:checked'
+        );
+
+        if (selectedOrientation) {
+            localStorage.setItem("orientation", selectedOrientation.value);
+        }
+
+        window.location.href = "payment.html";
+    });
 }
 
+// ==========================
+// PAYMENT PAGE (payment.html) - PAYTM INTEGRATION
+// ==========================
 
-// ======================================================
-// PAYMENT PAGE
-// ======================================================
+const paymentFile = document.getElementById("paymentFile");
+const paymentCopies = document.getElementById("paymentCopies");
+const paymentAmount = document.getElementById("paymentAmount");
+const paymentSide = document.getElementById("paymentSide");
+const paymentOrientation = document.getElementById("paymentOrientation");
+const payBtn = document.getElementById("payBtn");
+const paymentBackBtn = document.getElementById("paymentBackBtn");
+const paytmQrContainer = document.getElementById("paytmQrContainer");
+const qrImage = document.getElementById("qrImage");
+const paytmMethodRadios = document.querySelectorAll('input[name="paytmMethod"]');
 
-const paymentFile =
-    document.getElementById(
-        "paymentFile"
-    );
+if (paymentFile && paymentCopies && paymentAmount) {
+    const fileNameVal = localStorage.getItem("fileName") || "No file selected";
+    const copiesVal = localStorage.getItem("copies") || "1";
+    const amountVal = localStorage.getItem("amount") || "2";
+    const printSideVal = localStorage.getItem("printSide") || "single";
+    const orientationVal = localStorage.getItem("orientation") || "portrait";
 
-const paymentCopies =
-    document.getElementById(
-        "paymentCopies"
-    );
-
-const paymentAmount =
-    document.getElementById(
-        "paymentAmount"
-    );
-
-const paymentSide =
-    document.getElementById(
-        "paymentSide"
-    );
-
-const paymentOrientation =
-    document.getElementById(
-        "paymentOrientation"
-    );
-
-const payBtn =
-    document.getElementById(
-        "payBtn"
-    );
-
-const paymentBackBtn =
-    document.getElementById(
-        "paymentBackBtn"
-    );
-
-
-// ======================================================
-// RESTORE PAYMENT DETAILS
-// ======================================================
-
-if (
-    paymentFile &&
-    paymentCopies &&
-    paymentAmount
-) {
-
-    const fileNameVal =
-        localStorage.getItem(
-            "fileName"
-        ) ||
-        "No file selected";
-
-    const copiesVal =
-        localStorage.getItem(
-            "copies"
-        ) ||
-        "1";
-
-    const amountVal =
-        localStorage.getItem(
-            "amount"
-        ) ||
-        "0";
-
-    const printSideVal =
-        localStorage.getItem(
-            "printSide"
-        ) ||
-        "single";
-
-    const orientationVal =
-        localStorage.getItem(
-            "orientation"
-        ) ||
-        "portrait";
-
-
-    paymentFile.textContent =
-        "File: " +
-        fileNameVal;
-
-    paymentCopies.textContent =
-        "Copies: " +
-        copiesVal;
-
-    paymentAmount.textContent =
-        "Total Amount: ₹" +
-        amountVal;
-
+    paymentFile.textContent = "File: " + fileNameVal;
+    paymentCopies.textContent = "Copies: " + copiesVal;
+    paymentAmount.textContent = "Total Amount: ₹" + amountVal;
 
     if (paymentSide) {
-
         paymentSide.textContent =
             "Print Side: " +
-            (
-                printSideVal === "double"
-                    ? "Double Side"
-                    : "Single Side"
-            );
+            (printSideVal === "double" ? "Double Side" : "Single Side");
     }
-
-
     if (paymentOrientation) {
-
         paymentOrientation.textContent =
             "Orientation: " +
-            (
-                orientationVal === "landscape"
-                    ? "Landscape"
-                    : "Portrait"
-            );
+            (orientationVal === "landscape" ? "Landscape" : "Portrait");
     }
 
-
-    getSavedPdfFile()
-        .then(
-            (selectedFile) => {
-
-                console.log(
-                    "REAL PDF available on Payment:",
-                    selectedFile
-                );
-
-                if (selectedFile) {
-
-                    window.selectedPdfFile =
-                        selectedFile;
+    if (paytmMethodRadios && paytmMethodRadios.length > 0) {
+        paytmMethodRadios.forEach(radio => {
+            radio.addEventListener("change", function () {
+                if (this.value === "paytm_qr") {
+                    if (paytmQrContainer) paytmQrContainer.style.display = "block";
+                    if (qrImage) {
+                        const upiUri = `upi://pay?pa=printflow@paytm&pn=PrintFlow&am=${amountVal}&cu=INR`;
+                        qrImage.src = `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(upiUri)}`;
+                    }
+                    if (payBtn) payBtn.textContent = "I Have Paid via Paytm QR";
+                } else {
+                    if (paytmQrContainer) paytmQrContainer.style.display = "none";
+                    if (payBtn) payBtn.textContent = "Pay with Paytm";
                 }
-            }
-        );
+            });
+        });
+    }
+
+    getSavedPdfFile().then(selectedFile => {
+        console.log("File available on payment page:", selectedFile);
+        if (selectedFile) {
+            window.selectedPdfFile = selectedFile;
+        }
+    });
 }
-
-
-// ======================================================
-// PAYMENT BACK
-// ======================================================
 
 if (paymentBackBtn) {
-
-    paymentBackBtn.addEventListener(
-        "click",
-        function (event) {
-
-            event.preventDefault();
-
-            window.location.href =
-                "print-details.html";
-        }
-    );
+    paymentBackBtn.addEventListener("click", function (e) {
+        if (e && e.preventDefault) e.preventDefault();
+        window.location.href = "print-details.html";
+    });
 }
-
-
-// ======================================================
-// PAYMENT
-// ======================================================
 
 if (payBtn) {
+    payBtn.addEventListener("click", async function (e) {
+        if (e && e.preventDefault) e.preventDefault();
 
-    payBtn.addEventListener(
-        "click",
-        async function (event) {
+        const amountVal = localStorage.getItem("amount") || "2";
+        const selectedMethod = document.querySelector('input[name="paytmMethod"]:checked');
+        const isQrMode = selectedMethod && selectedMethod.value === "paytm_qr";
 
-            event.preventDefault();
+        payBtn.disabled = true;
+        payBtn.textContent = "Processing Paytm Payment...";
 
+        try {
+            const selectedFile = window.selectedPdfFile || await getSavedPdfFile();
+            let uploadedPath = localStorage.getItem("backendFilePath") || "";
 
-            // Get REAL PDF
-            const selectedFile =
-                window.selectedPdfFile ||
-                await getSavedPdfFile();
-
-
-            console.log(
-                "REAL PDF before final payment upload:",
-                selectedFile
-            );
-
-
-            // Upload REAL PDF if available
             if (selectedFile) {
-
-                await uploadPdfToBackend(
-                    selectedFile
-                );
+                const uploadRes = await uploadPdfToBackend(selectedFile);
+                if (uploadRes && uploadRes.data && uploadRes.data.file_path) {
+                    uploadedPath = uploadRes.data.file_path;
+                }
             }
 
+            // Create Order Record in Backend Database for Admin Dashboard
+            const fileNameVal = localStorage.getItem("fileName") || "document.pdf";
+            const copiesVal = parseInt(localStorage.getItem("copies") || "1", 10);
+            const pageCountVal = parseInt(localStorage.getItem("pdfPageCount") || "1", 10);
+            const printSideVal = localStorage.getItem("printSide") || "double";
+            const orientationVal = localStorage.getItem("orientation") || "portrait";
+            const mobileVal = localStorage.getItem("mobileNumber") || "+919876543210";
 
-            // ==================================================
-            // PRINT ORDER DATA
-            // ==================================================
+            await fetch("http://127.0.0.1:8000/print-order", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    file_name: fileNameVal,
+                    copies: copiesVal,
+                    pages: pageCountVal,
+                    color_mode: "black_white",
+                    duplex: printSideVal,
+                    orientation: orientationVal,
+                    customer_mobile: mobileVal,
+                    amount: parseFloat(amountVal),
+                    file_path: uploadedPath
+                })
+            });
 
-            const fileNameVal =
-                localStorage.getItem(
-                    "fileName"
-                ) ||
-                "document.pdf";
+            // Trigger Paytm Order API
+            const orderRes = await fetch("http://127.0.0.1:8000/create-paytm-order", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    amount: parseFloat(amountVal),
+                    order_id: `PF_ORDER_${Date.now()}`
+                })
+            });
+            const orderData = await orderRes.json();
+            console.log("Paytm Order Created:", orderData);
 
-            const copiesVal =
-                parseInt(
-                    localStorage.getItem(
-                        "copies"
-                    ) ||
-                    "1",
-                    10
-                );
-
-            const printSideVal =
-                localStorage.getItem(
-                    "printSide"
-                ) ||
-                "double";
-
-            const orientationVal =
-                localStorage.getItem(
-                    "orientation"
-                ) ||
-                "portrait";
-
-
-            // ==================================================
-            // SEND PRINT ORDER
-            // ==================================================
-
-            fetch(
-                `${API_BASE_URL}${API_PATH_PREFIX}/print-order`,
-                {
-                    method: "POST",
-
-                    headers: {
-                        "Content-Type":
-                            "application/json"
+            if (isQrMode) {
+                window.location.href = "success.html";
+            } else if (window.Paytm && window.Paytm.CheckoutJS) {
+                const config = {
+                    "root": "",
+                    "flow": "DEFAULT",
+                    "data": {
+                        "orderId": orderData.orderId,
+                        "token": orderData.txnToken,
+                        "tokenType": "TXN_TOKEN",
+                        "amount": orderData.amount
                     },
-
-                    body: JSON.stringify({
-                        file_name:
-                            fileNameVal,
-
-                        copies:
-                            copiesVal,
-
-                        color_mode:
-                            "black_white",
-
-                        duplex:
-                            printSideVal,
-
-                        orientation:
-                            orientationVal
-                    })
-                }
-            )
-                .then(
-                    (response) =>
-                        response.json()
-                )
-                .then(
-                    (data) => {
-
-                        console.log(
-                            "Print order placed successfully:",
-                            data
-                        );
+                    "handler": {
+                        "notifyMerchant": function(eventName, data) {
+                            console.log("Paytm Notify Merchant:", eventName, data);
+                        },
+                        "transactionStatus": function(paymentStatus) {
+                            console.log("Paytm Transaction Status:", paymentStatus);
+                            window.location.href = "success.html";
+                        }
                     }
-                )
-                .catch(
-                    (error) => {
+                };
 
-                        console.warn(
-                            "Backend print order note:",
-                            error
-                        );
-                    }
-                );
-
-
-            window.location.href =
-                "success.html";
+                window.Paytm.CheckoutJS.init(config).then(function() {
+                    window.Paytm.CheckoutJS.invoke();
+                }).catch(function(err) {
+                    console.warn("Paytm CheckoutJS invoke note:", err);
+                    window.location.href = "success.html";
+                });
+            } else {
+                setTimeout(() => {
+                    window.location.href = "success.html";
+                }, 800);
+            }
+        } catch (err) {
+            console.error("Paytm Payment error:", err);
+            window.location.href = "success.html";
+        } finally {
+            payBtn.disabled = false;
         }
-    );
+    });
 }
 
+// ==========================
+// ADMIN DASHBOARD LOGIC (admin.html)
+// ==========================
 
-// ======================================================
-// SUCCESS PAGE
-// ======================================================
+const adminOrdersTableBody = document.getElementById("adminOrdersTableBody");
+const refreshOrdersBtn = document.getElementById("refreshOrdersBtn");
+const adminSearchInput = document.getElementById("adminSearchInput");
+const totalEarnings = document.getElementById("totalEarnings");
+const totalOrdersCount = document.getElementById("totalOrdersCount");
+const totalPagesPrinted = document.getElementById("totalPagesPrinted");
+const pendingOrdersCount = document.getElementById("pendingOrdersCount");
 
-const homeBtn =
-    document.getElementById(
-        "homeBtn"
-    );
+let allAdminOrders = [];
 
+async function fetchAdminOrders() {
+    if (!adminOrdersTableBody) return;
+
+    try {
+        const res = await fetch("http://127.0.0.1:8000/api/orders");
+        const data = await res.json();
+
+        if (data && data.orders) {
+            allAdminOrders = data.orders;
+            renderAdminOrders(allAdminOrders);
+        }
+    } catch (err) {
+        console.warn("Error fetching admin orders:", err);
+        if (adminOrdersTableBody) {
+            adminOrdersTableBody.innerHTML = `
+                <tr>
+                    <td colspan="7" style="text-align: center; color: #ef4444; padding: 20px; font-weight: 600;">
+                        Could not load admin orders. Check backend connection.
+                    </td>
+                </tr>
+            `;
+        }
+    }
+}
+
+function renderAdminOrders(orders) {
+    if (!adminOrdersTableBody) return;
+
+    let earningsSum = 0;
+    let pagesSum = 0;
+    let pendingCount = 0;
+
+    orders.forEach(order => {
+        earningsSum += (order.amount || 0);
+        pagesSum += ((order.pages || 1) * (order.copies || 1));
+        if (order.status === "Pending") pendingCount++;
+    });
+
+    if (totalEarnings) totalEarnings.textContent = `₹${earningsSum}`;
+    if (totalOrdersCount) totalOrdersCount.textContent = String(orders.length);
+    if (totalPagesPrinted) totalPagesPrinted.textContent = String(pagesSum);
+    if (pendingOrdersCount) pendingOrdersCount.textContent = String(pendingCount);
+
+    if (orders.length === 0) {
+        adminOrdersTableBody.innerHTML = `
+            <tr>
+                <td colspan="7" style="text-align: center; padding: 30px; color: #94a3b8; font-weight: 600;">
+                    No print orders received yet.
+                </td>
+            </tr>
+        `;
+        return;
+    }
+
+    let html = "";
+    orders.forEach(order => {
+        const isPending = order.status === "Pending";
+        const fileUrl = order.file_path ? `http://127.0.0.1:8000${order.file_path}` : "#";
+
+        html += `
+            <tr>
+                <td><strong>${order.order_id}</strong><br><small style="color: #64748b;">${order.timestamp || ''}</small></td>
+                <td>${order.customer_mobile || 'Guest'}</td>
+                <td><strong>${order.file_name}</strong><br><small style="color: #ea580c;">${order.pages || 1} Pages</small></td>
+                <td>${order.copies || 1} Copies (${order.duplex === 'double' ? 'Double' : 'Single'} Side)</td>
+                <td><strong>₹${order.amount || 2}</strong></td>
+                <td>
+                    <span class="${isPending ? 'badge-pending' : 'badge-completed'}">
+                        ${order.status}
+                    </span>
+                </td>
+                <td>
+                    <div class="action-btn-row">
+                        ${order.file_path ? `<a href="${fileUrl}" target="_blank" class="btn-download">⬇️ View</a>` : ''}
+                        ${order.file_path ? `<button type="button" class="btn-print" onclick="printOrderFile('${fileUrl}')">🖨️ Print</button>` : ''}
+                        ${isPending ? `<button type="button" class="btn-complete" onclick="markOrderCompleted('${order.order_id}')">✅ Complete</button>` : ''}
+                    </div>
+                </td>
+            </tr>
+        `;
+    });
+
+    adminOrdersTableBody.innerHTML = html;
+}
+
+window.printOrderFile = function (fileUrl) {
+    if (!fileUrl || fileUrl === "#") return;
+    const printWin = window.open(fileUrl, "_blank");
+    if (printWin) {
+        printWin.focus();
+        setTimeout(() => printWin.print(), 1000);
+    }
+};
+
+window.markOrderCompleted = async function (orderId) {
+    try {
+        const res = await fetch(`http://127.0.0.1:8000/api/orders/${orderId}/complete`, {
+            method: "POST"
+        });
+        const data = await res.json();
+        console.log("Order completed:", data);
+        fetchAdminOrders();
+    } catch (err) {
+        console.warn("Mark complete error:", err);
+    }
+};
+
+if (refreshOrdersBtn) {
+    refreshOrdersBtn.addEventListener("click", fetchAdminOrders);
+}
+
+if (adminSearchInput) {
+    adminSearchInput.addEventListener("input", function () {
+        const query = this.value.toLowerCase().trim();
+        const filtered = allAdminOrders.filter(o =>
+            (o.file_name && o.file_name.toLowerCase().includes(query)) ||
+            (o.customer_mobile && o.customer_mobile.toLowerCase().includes(query)) ||
+            (o.order_id && o.order_id.toLowerCase().includes(query))
+        );
+        renderAdminOrders(filtered);
+    });
+}
+
+// Initial admin order fetch if on admin.html
+if (adminOrdersTableBody) {
+    fetchAdminOrders();
+    setInterval(fetchAdminOrders, 10000); // Auto-refresh admin queue every 10s
+}
+
+// =======================
+// SUCCESS PAGE (success.html)
+// =======================
+
+const homeBtn = document.getElementById("homeBtn");
 
 if (homeBtn) {
+    homeBtn.addEventListener("click", function (e) {
+        if (e && e.preventDefault) e.preventDefault();
+        localStorage.removeItem("fileName");
+        localStorage.removeItem("fileSize");
+        localStorage.removeItem("fileType");
+        localStorage.removeItem("fileLastModified");
+        localStorage.removeItem("backendFilePath");
+        localStorage.removeItem("copies");
+        localStorage.removeItem("amount");
+        localStorage.removeItem("pdfPageCount");
+        localStorage.removeItem("printSide");
+        localStorage.removeItem("orientation");
+        sessionStorage.removeItem("pdfDataUrl");
 
-    homeBtn.addEventListener(
-        "click",
-        async function (event) {
+        clearSavedPdfFile();
 
-            event.preventDefault();
-
-
-            // Clear order metadata
-            localStorage.removeItem(
-                "fileName"
-            );
-
-            localStorage.removeItem(
-                "fileSize"
-            );
-
-            localStorage.removeItem(
-                "fileType"
-            );
-
-            localStorage.removeItem(
-                "fileLastModified"
-            );
-
-            localStorage.removeItem(
-                "backendFilePath"
-            );
-
-            localStorage.removeItem(
-                "copies"
-            );
-
-            localStorage.removeItem(
-                "amount"
-            );
-
-            localStorage.removeItem(
-                "printSide"
-            );
-
-            localStorage.removeItem(
-                "orientation"
-            );
-
-
-            sessionStorage.removeItem(
-                "pdfDataUrl"
-            );
-
-
-            // Clear REAL PDF
-            await clearSavedPdfFile();
-
-
-            // Return home
-            window.location.href =
-                "home.html";
-        }
-    );
+        window.location.href = "home.html";
+    });
 }

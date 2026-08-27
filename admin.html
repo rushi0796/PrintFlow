@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PrintFlow - Admin Dashboard</title>
+
+    <link rel="stylesheet" href="style.css">
+    <style>
+        body {
+            background: linear-gradient(135deg, #fff7ed 0%, #ffedd5 50%, #fef3c7 100%);
+            min-height: 100vh;
+            padding: 24px 16px;
+        }
+
+        .admin-wrapper {
+            max-width: 1100px;
+            margin: 0 auto;
+        }
+
+        .admin-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: rgba(255, 255, 255, 0.85);
+            backdrop-filter: blur(12px);
+            padding: 20px 28px;
+            border-radius: 20px;
+            border: 1px solid rgba(254, 215, 170, 0.6);
+            box-shadow: 0 10px 25px -5px rgba(234, 88, 12, 0.1);
+            margin-bottom: 24px;
+        }
+
+        .admin-title {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .admin-title h1 {
+            font-size: 24px;
+            color: #7c2d12;
+            margin: 0;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 18px;
+            margin-bottom: 24px;
+        }
+
+        .stat-card {
+            background: #ffffff;
+            padding: 20px;
+            border-radius: 18px;
+            border: 1.5px solid #fed7aa;
+            box-shadow: 0 4px 14px rgba(234, 88, 12, 0.06);
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+
+        .stat-icon {
+            width: 48px;
+            height: 48px;
+            border-radius: 14px;
+            background: #ffedd5;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 24px;
+        }
+
+        .stat-info h4 {
+            margin: 0;
+            font-size: 13px;
+            color: #78350f;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .stat-info p {
+            margin: 4px 0 0 0;
+            font-size: 24px;
+            font-weight: 800;
+            color: #ea580c;
+        }
+
+        .orders-panel {
+            background: #ffffff;
+            border-radius: 20px;
+            border: 1.5px solid #fed7aa;
+            box-shadow: 0 10px 30px rgba(234, 88, 12, 0.08);
+            padding: 24px;
+        }
+
+        .panel-toolbar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            gap: 16px;
+            flex-wrap: wrap;
+        }
+
+        .search-box {
+            padding: 10px 16px;
+            border-radius: 12px;
+            border: 1.5px solid #fed7aa;
+            outline: none;
+            font-size: 14px;
+            width: 260px;
+        }
+
+        .search-box:focus {
+            border-color: #ea580c;
+        }
+
+        .admin-table {
+            width: 100%;
+            border-collapse: collapse;
+            text-align: left;
+        }
+
+        .admin-table th {
+            background: #fff7ed;
+            padding: 14px 16px;
+            font-size: 13px;
+            font-weight: 700;
+            color: #7c2d12;
+            border-bottom: 2px solid #fed7aa;
+        }
+
+        .admin-table td {
+            padding: 16px;
+            border-bottom: 1px solid #ffedd5;
+            font-size: 14px;
+            color: #334155;
+        }
+
+        .badge-pending {
+            background: #fef3c7;
+            color: #d97706;
+            padding: 4px 10px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 700;
+        }
+
+        .badge-completed {
+            background: #dcfce7;
+            color: #16a34a;
+            padding: 4px 10px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 700;
+        }
+
+        .action-btn-row {
+            display: flex;
+            gap: 8px;
+        }
+
+        .btn-print {
+            background: #ea580c;
+            color: #ffffff;
+            border: none;
+            padding: 6px 12px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 12px;
+            font-weight: 700;
+        }
+
+        .btn-download {
+            background: #0284c7;
+            color: #ffffff;
+            border: none;
+            padding: 6px 12px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 12px;
+            font-weight: 700;
+            text-decoration: none;
+        }
+
+        .btn-complete {
+            background: #16a34a;
+            color: #ffffff;
+            border: none;
+            padding: 6px 12px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 12px;
+            font-weight: 700;
+        }
+    </style>
+</head>
+<body>
+
+<div class="admin-wrapper">
+
+    <!-- Header -->
+    <div class="admin-header">
+        <div class="admin-title">
+            <span style="font-size: 32px;">🖨️</span>
+            <div>
+                <h1>PrintFlow Admin</h1>
+                <p style="margin: 0; font-size: 13px; color: #78350f; font-weight: 600;">Shop Counter Operations</p>
+            </div>
+        </div>
+
+        <button type="button" id="refreshOrdersBtn" class="secondary-btn" style="width: auto; padding: 10px 18px;">
+            🔄 Refresh Queue
+        </button>
+    </div>
+
+    <!-- Stats Cards -->
+    <div class="stats-grid">
+        <div class="stat-card">
+            <div class="stat-icon">💰</div>
+            <div class="stat-info">
+                <h4>Today's Earnings</h4>
+                <p id="totalEarnings">₹0</p>
+            </div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-icon">🖨️</div>
+            <div class="stat-info">
+                <h4>Total Orders</h4>
+                <p id="totalOrdersCount">0</p>
+            </div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-icon">📄</div>
+            <div class="stat-info">
+                <h4>Pages Printed</h4>
+                <p id="totalPagesPrinted">0</p>
+            </div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-icon">⏳</div>
+            <div class="stat-info">
+                <h4>Pending Queue</h4>
+                <p id="pendingOrdersCount">0</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Orders Table Panel -->
+    <div class="orders-panel">
+        <div class="panel-toolbar">
+            <h3 style="margin: 0; font-size: 18px; color: #7c2d12;">Live Print Queue</h3>
+
+            <input type="text" id="adminSearchInput" class="search-box" placeholder="Search by mobile or file name...">
+        </div>
+
+        <div style="overflow-x: auto;">
+            <table class="admin-table">
+                <thead>
+                    <tr>
+                        <th>Order ID</th>
+                        <th>Customer</th>
+                        <th>File Name</th>
+                        <th>Copies & Side</th>
+                        <th>Amount</th>
+                        <th>Status</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="adminOrdersTableBody">
+                    <tr>
+                        <td colspan="7" style="text-align: center; padding: 30px; color: #94a3b8;">
+                            Loading live print orders...
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+</div>
+
+<script src="script.js"></script>
+
+</body>
+</html>
