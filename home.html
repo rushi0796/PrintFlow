@@ -6,6 +6,92 @@
     <title>PrintFlow - Home</title>
 
     <link rel="stylesheet" href="style.css">
+    <style>
+        html {
+            overflow-x: hidden;
+        }
+
+        .page-counter-card {
+            display: none;
+            align-items: center;
+            gap: 14px;
+            margin: 16px auto 4px;
+            padding: 14px 16px;
+            border: 1px solid #99f6e4;
+            border-radius: 16px;
+            background: linear-gradient(135deg, #f0fdfa, #ecfeff);
+            color: #115e59;
+            text-align: left;
+            animation: pageCounterIn 0.45s ease-out both;
+        }
+
+        .page-counter-card.is-visible {
+            display: flex;
+        }
+
+        .page-counter-icon {
+            display: grid;
+            place-items: center;
+            width: 44px;
+            height: 44px;
+            flex: 0 0 44px;
+            border-radius: 13px;
+            background: #ccfbf1;
+            font-size: 22px;
+            box-shadow: 0 5px 12px rgba(13, 148, 136, 0.16);
+        }
+
+        .page-counter-number {
+            display: block;
+            color: #0f766e;
+            font-size: 21px;
+            font-weight: 800;
+            line-height: 1.1;
+        }
+
+        .page-counter-label {
+            display: block;
+            margin-top: 3px;
+            color: #0f766e;
+            font-size: 12px;
+            font-weight: 700;
+        }
+
+        #pageCounterCard #pageCount:not(:empty) {
+            min-height: 0;
+            margin: 0;
+            padding: 0;
+            background: transparent;
+            border: 0;
+            border-radius: 0;
+            box-shadow: none;
+            font-size: 21px;
+            animation: none;
+        }
+
+        #pageCounterCard #pageCount:not(:empty)::before {
+            display: none;
+            content: none;
+        }
+
+        @keyframes pageCounterIn {
+            from {
+                opacity: 0;
+                transform: translateY(8px) scale(0.97);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0) scale(1);
+            }
+        }
+
+        @media (max-width: 420px) {
+            .page-counter-card {
+                gap: 11px;
+                padding: 12px 13px;
+            }
+        }
+    </style>
 </head>
 <body>
 
@@ -39,7 +125,13 @@
     <p id="fileName" style="font-weight: 700; color: #1e293b; margin-top: 10px;">
         No PDF Selected
     </p>
-    <p id="pageCount" style="font-size: 13px; font-weight: 600; color: #ea580c; margin-top: 4px; display: none;"></p>
+    <div id="pageCounterCard" class="page-counter-card" role="status" aria-live="polite">
+        <span class="page-counter-icon" aria-hidden="true">📄</span>
+        <span>
+            <strong id="pageCount" class="page-counter-number">0</strong>
+            <span class="page-counter-label">pages detected in your PDF</span>
+        </span>
+    </div>
 
     <button type="button" id="continueBtn" style="margin-top: 18px;">
         Continue

@@ -168,9 +168,14 @@ function renderPdfPreviewAndCount(file) {
             localStorage.setItem("pdfPageCount", String(pdf.numPages));
 
             const pageCountElem = document.getElementById("pageCount");
+            const pageCounterCard = document.getElementById("pageCounterCard");
             if (pageCountElem) {
-                pageCountElem.textContent = `📄 ${pdf.numPages} ${pdf.numPages === 1 ? 'Page' : 'Pages'} detected`;
-                pageCountElem.style.display = "block";
+                pageCountElem.textContent = String(pdf.numPages);
+            }
+            if (pageCounterCard) {
+                pageCounterCard.classList.remove("is-visible");
+                void pageCounterCard.offsetWidth;
+                pageCounterCard.classList.add("is-visible");
             }
 
             // Render first page thumbnail onto canvas
@@ -207,6 +212,7 @@ const choosePdfBtn = document.getElementById("choosePdfBtn");
 const pdfFile = document.getElementById("pdfFile");
 const fileName = document.getElementById("fileName");
 const pageCountDisplay = document.getElementById("pageCount");
+const pageCounterCard = document.getElementById("pageCounterCard");
 const continueBtn = document.getElementById("continueBtn");
 const pdfErrorMsg = document.getElementById("pdfErrorMsg");
 
@@ -231,8 +237,8 @@ if (fileName) {
         fileName.textContent = savedName;
     }
     if (savedPages && pageCountDisplay) {
-        pageCountDisplay.textContent = `📄 ${savedPages} Pages detected`;
-        pageCountDisplay.style.display = "block";
+        pageCountDisplay.textContent = savedPages;
+        if (pageCounterCard) pageCounterCard.classList.add("is-visible");
     }
 }
 
@@ -599,7 +605,8 @@ const adminLockForm = document.getElementById("adminLockForm");
 const adminAccessCode = document.getElementById("adminAccessCode");
 const adminLockError = document.getElementById("adminLockError");
 const lockPortalBtn = document.getElementById("lockPortalBtn");
-const ADMIN_ACCESS_CODE = "PrintFlow@2026";
+const toggleCodeBtn = document.getElementById("toggleCodeBtn");
+const ADMIN_ACCESS_CODE = "Admin@123";
 let adminPortalUnlocked = sessionStorage.getItem("printflowAdminUnlocked") === "true";
 
 function setAdminLockState(isUnlocked) {
@@ -635,6 +642,16 @@ if (lockPortalBtn) {
     lockPortalBtn.addEventListener("click", function () {
         setAdminLockState(false);
         if (adminAccessCode) adminAccessCode.focus();
+    });
+}
+
+if (toggleCodeBtn && adminAccessCode) {
+    toggleCodeBtn.addEventListener("click", function () {
+        const isPassword = adminAccessCode.type === "password";
+        adminAccessCode.type = isPassword ? "text" : "password";
+        toggleCodeBtn.textContent = isPassword ? "Hide" : "Show";
+        toggleCodeBtn.setAttribute("aria-label", `${isPassword ? "Hide" : "Show"} access code`);
+        adminAccessCode.focus();
     });
 }
 

@@ -65,6 +65,34 @@
             margin-bottom: 12px;
         }
 
+        .access-code-field {
+            position: relative;
+        }
+
+        .access-code-field input {
+            padding-right: 82px;
+        }
+
+        .toggle-code-btn {
+            position: absolute;
+            right: 8px;
+            top: 7px;
+            width: auto;
+            padding: 8px 9px;
+            background: transparent;
+            color: #c2410c;
+            box-shadow: none;
+            font-size: 12px;
+        }
+
+        .toggle-code-btn:hover,
+        .toggle-code-btn:active {
+            background: #fff7ed;
+            color: #9a3412;
+            box-shadow: none;
+            transform: none;
+        }
+
         .admin-lock-error {
             min-height: 20px;
             margin: 10px 0 0 !important;
@@ -390,7 +418,10 @@
     <h1 id="adminLockTitle">Admin Portal Locked</h1>
     <p>Enter the admin access code to view the print queue.</p>
     <form id="adminLockForm">
-        <input type="password" id="adminAccessCode" placeholder="Admin access code" autocomplete="current-password" required>
+        <div class="access-code-field">
+            <input type="password" id="adminAccessCode" placeholder="Admin access code" autocomplete="current-password" required>
+            <button type="button" id="toggleCodeBtn" class="toggle-code-btn" aria-label="Show access code">Show</button>
+        </div>
         <button type="submit">Unlock Portal</button>
     </form>
     <p id="adminLockError" class="admin-lock-error" role="alert"></p>
@@ -484,7 +515,7 @@
 
 </div>
 
-<script src="script.js?v=admin-lock-1"></script>
+<script src="script.js?v=admin-lock-2"></script>
 
 </body>
 </html>
