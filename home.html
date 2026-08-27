@@ -57,6 +57,23 @@
             font-weight: 700;
         }
 
+        .upload-confirmation {
+            display: none;
+            margin: 12px 0 0;
+            padding: 9px 12px;
+            border-radius: 10px;
+            background: #f0fdf4;
+            color: #15803d;
+            font-size: 12px;
+            font-weight: 700;
+            overflow-wrap: anywhere;
+        }
+
+        .upload-confirmation.is-visible {
+            display: block;
+            animation: pageCounterIn 0.35s ease-out both;
+        }
+
         #pageCounterCard #pageCount:not(:empty) {
             min-height: 0;
             margin: 0;
@@ -125,6 +142,7 @@
     <p id="fileName" style="font-weight: 700; color: #1e293b; margin-top: 10px;">
         No PDF Selected
     </p>
+    <p id="uploadConfirmation" class="upload-confirmation" role="status" aria-live="polite"></p>
     <div id="pageCounterCard" class="page-counter-card" role="status" aria-live="polite">
         <span class="page-counter-icon" aria-hidden="true">📄</span>
         <span>

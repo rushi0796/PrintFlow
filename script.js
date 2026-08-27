@@ -156,6 +156,9 @@ async function uploadPdfToBackend(file) {
             if (data.file_path) {
                 localStorage.setItem("backendFilePath", data.file_path);
             }
+            if (data.file_name) {
+                localStorage.setItem("uploadedFileName", data.file_name);
+            }
             return { success: true, data: data };
         } else {
             return { success: false, error: data?.message || "Invalid upload response" };
@@ -285,6 +288,11 @@ window.handleFileSelection = function (event) {
     if (nameDisplay) {
         nameDisplay.textContent = file.name;
     }
+    const uploadConfirmation = document.getElementById("uploadConfirmation");
+    if (uploadConfirmation) {
+        uploadConfirmation.textContent = `Selected PDF: ${file.name}`;
+        uploadConfirmation.classList.add("is-visible");
+    }
 
     hidePdfError();
     renderPdfPreviewAndCount(file);
@@ -341,6 +349,12 @@ if (continueBtn) {
                     continueBtn.disabled = false;
                     continueBtn.textContent = originalText;
                     return;
+                }
+                const uploadConfirmation = document.getElementById("uploadConfirmation");
+                if (uploadConfirmation) {
+                    const uploadedName = uploadResult.data?.file_name || selectedFile.name;
+                    uploadConfirmation.textContent = `Uploaded PDF: ${uploadedName}`;
+                    uploadConfirmation.classList.add("is-visible");
                 }
             } catch (err) {
                 console.error("PDF Upload execution error:", err);
@@ -767,7 +781,7 @@ function renderAdminOrders(orders) {
             <tr>
                 <td><strong>${order.order_id}</strong><br><small style="color: #64748b;">${order.timestamp || ''}</small></td>
                 <td>${order.customer_mobile || 'Guest'}</td>
-                <td><strong>${order.file_name}</strong><br><small style="color: #ea580c;">${order.pages || 1} Pages</small></td>
+                <td><strong class="admin-file-name" title="${order.file_name}">${order.file_name}</strong><br><small style="color: #ea580c;">${order.pages || 1} Pages</small></td>
                 <td>${order.copies || 1} Copies (${order.duplex === 'double' ? 'Double' : 'Single'} Side)</td>
                 <td><strong>₹${order.amount || 2}</strong></td>
                 <td>
