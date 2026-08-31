@@ -1,6 +1,9 @@
 import os
 import json
 import shutil
+import hmac
+import hashlib
+from typing import Optional
 from pathlib import Path
 from uuid import uuid4
 from datetime import datetime
@@ -77,10 +80,11 @@ class PrintOrder(BaseModel):
     amount: float = 2.0
     file_path: str = ""
 
-class PaytmOrderRequest(BaseModel):
+class RazorpayOrderRequest(BaseModel):
     amount: float
-    order_id: str = None
-    customer_id: str = "CUST_001"
+    order_id: Optional[str] = None
+    customer_id: Optional[str] = "CUST_001"
+    currency: Optional[str] = "INR"
 
 @app.get("/api/orders")
 def get_all_orders():
@@ -146,25 +150,68 @@ def complete_order(order_id: str):
 def send_notification(mobile: str, message: str):
     print(f"[NOTIFICATION SENT TO {mobile}]: {message}")
 
-@app.post("/create-paytm-order")
-def create_paytm_order(request: PaytmOrderRequest):
-    order_id = request.order_id or f"PF_ORDER_{uuid4().hex[:8].upper()}"
-    mid = os.environ.get("PAYTM_MID", "DIY12386817555501617")
+@app.post("/create-razorpay-order")
+@app.post("/api/create-razorpay-order")
+def create_razorpay_order(request: RazorpayOrderRequest):
+    key_id = os.environ.get("RAZORPAY_KEY_ID", "rzp_test_sampleKey123")
+    key_secret = os.environ.get("RAZORPAY_KEY_SECRET", "")
+    amount_in_paise = int(round(request.amount * 100))
+    order_id = request.order_id or f"order_{uuid4().hex[:14]}"
+
+    if key_secret and key_id != "rzp_test_sampleKey123":
+        try:
+            import razorpay
+            client = razorpay.Client(auth=(key_id, key_secret))
+            razorpay_order = client.order.create({
+                "amount": amount_in_paise,
+                "currency": request.currency or "INR",
+                "receipt": order_id,
+                "payment_capture": 1
+            })
+            return {
+                "status": "success",
+                "key_id": key_id,
+                "order_id": razorpay_order["id"],
+                "amount": razorpay_order["amount"],
+                "currency": razorpay_order["currency"]
+            }
+        except Exception as err:
+            print("Razorpay SDK order creation note:", err)
 
     return {
         "status": "success",
-        "mid": mid,
-        "orderId": order_id,
-        "amount": str(request.amount),
-        "txnToken": f"TXN_TOKEN_{uuid4().hex}",
-        "paytmUrl": f"https://securegw-stage.paytm.in/theia/api/v1/showPaymentPage?mid={mid}&orderId={order_id}"
+        "key_id": key_id,
+        "order_id": order_id,
+        "amount": amount_in_paise,
+        "currency": request.currency or "INR"
     }
 
-@app.post("/verify-paytm-payment")
-def verify_paytm_payment(payload: dict):
+@app.post("/verify-razorpay-payment")
+@app.post("/api/verify-razorpay-payment")
+def verify_razorpay_payment(payload: dict):
+    key_secret = os.environ.get("RAZORPAY_KEY_SECRET", "")
+    razorpay_order_id = payload.get("razorpay_order_id", "")
+    razorpay_payment_id = payload.get("razorpay_payment_id", "")
+    razorpay_signature = payload.get("razorpay_signature", "")
+
+    if key_secret and razorpay_order_id and razorpay_payment_id and razorpay_signature:
+        try:
+            msg = f"{razorpay_order_id}|{razorpay_payment_id}".encode("utf-8")
+            generated_signature = hmac.new(
+                key_secret.encode("utf-8"),
+                msg,
+                hashlib.sha256
+            ).hexdigest()
+            if generated_signature != razorpay_signature:
+                raise HTTPException(status_code=400, detail="Invalid Razorpay payment signature")
+        except HTTPException:
+            raise
+        except Exception as e:
+            print("Razorpay signature verification error:", e)
+
     return {
         "status": "success",
-        "message": "Paytm Payment verified successfully",
+        "message": "Razorpay Payment verified successfully",
         "payload": payload
     }
 

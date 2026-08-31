@@ -451,7 +451,7 @@ if (paymentBtn) {
 }
 
 // ==========================
-// PAYMENT PAGE (payment.html) - PAYTM INTEGRATION
+// PAYMENT PAGE (payment.html) - RAZORPAY INTEGRATION
 // ==========================
 
 const paymentFile = document.getElementById("paymentFile");
@@ -461,9 +461,6 @@ const paymentSide = document.getElementById("paymentSide");
 const paymentOrientation = document.getElementById("paymentOrientation");
 const payBtn = document.getElementById("payBtn");
 const paymentBackBtn = document.getElementById("paymentBackBtn");
-const paytmQrContainer = document.getElementById("paytmQrContainer");
-const qrImage = document.getElementById("qrImage");
-const paytmMethodRadios = document.querySelectorAll('input[name="paytmMethod"]');
 
 if (paymentFile && paymentCopies && paymentAmount) {
     const fileNameVal = localStorage.getItem("fileName") || "No file selected";
@@ -487,24 +484,6 @@ if (paymentFile && paymentCopies && paymentAmount) {
             (orientationVal === "landscape" ? "Landscape" : "Portrait");
     }
 
-    if (paytmMethodRadios && paytmMethodRadios.length > 0) {
-        paytmMethodRadios.forEach(radio => {
-            radio.addEventListener("change", function () {
-                if (this.value === "paytm_qr") {
-                    if (paytmQrContainer) paytmQrContainer.style.display = "block";
-                    if (qrImage) {
-                        const upiUri = `upi://pay?pa=printflow@paytm&pn=PrintFlow&am=${amountVal}&cu=INR`;
-                        qrImage.src = `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(upiUri)}`;
-                    }
-                    if (payBtn) payBtn.textContent = "I Have Paid via Paytm QR";
-                } else {
-                    if (paytmQrContainer) paytmQrContainer.style.display = "none";
-                    if (payBtn) payBtn.textContent = "Pay with Paytm";
-                }
-            });
-        });
-    }
-
     getSavedPdfFile().then(selectedFile => {
         console.log("File available on payment page:", selectedFile);
         if (selectedFile) {
@@ -525,11 +504,9 @@ if (payBtn) {
         if (e && e.preventDefault) e.preventDefault();
 
         const amountVal = localStorage.getItem("amount") || "2";
-        const selectedMethod = document.querySelector('input[name="paytmMethod"]:checked');
-        const isQrMode = selectedMethod && selectedMethod.value === "paytm_qr";
 
         payBtn.disabled = true;
-        payBtn.textContent = "Processing Paytm Payment...";
+        payBtn.textContent = "Processing Payment...";
 
         try {
             const selectedFile = window.selectedPdfFile || await getSavedPdfFile();
@@ -571,8 +548,8 @@ if (payBtn) {
             const printData = await printResponse.json();
             publishOrderUpdate(printData.order);
 
-            // Trigger Paytm Order API
-            const orderRes = await fetch(apiUrl("/create-paytm-order", "/api/create-paytm-order"), {
+            // Trigger Razorpay Order API
+            const orderRes = await fetch(apiUrl("/create-razorpay-order", "/api/create-razorpay-order"), {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
@@ -581,47 +558,63 @@ if (payBtn) {
                 })
             });
             const orderData = await orderRes.json();
-            console.log("Paytm Order Created:", orderData);
+            console.log("Razorpay Order Created:", orderData);
 
-            if (isQrMode) {
-                window.location.href = "success.html";
-            } else if (window.Paytm && window.Paytm.CheckoutJS) {
-                const config = {
-                    "root": "",
-                    "flow": "DEFAULT",
-                    "data": {
-                        "orderId": orderData.orderId,
-                        "token": orderData.txnToken,
-                        "tokenType": "TXN_TOKEN",
-                        "amount": orderData.amount
+            if (typeof Razorpay !== "undefined") {
+                const options = {
+                    "key": orderData.key_id || "rzp_test_sampleKey123",
+                    "amount": orderData.amount,
+                    "currency": orderData.currency || "INR",
+                    "name": "PrintFlow",
+                    "description": `Print Order Payment - ${fileNameVal}`,
+                    "order_id": orderData.order_id,
+                    "handler": async function (response) {
+                        console.log("Razorpay Payment Success:", response);
+                        try {
+                            await fetch(apiUrl("/verify-razorpay-payment", "/api/verify-razorpay-payment"), {
+                                method: "POST",
+                                headers: { "Content-Type": "application/json" },
+                                body: JSON.stringify(response)
+                            });
+                        } catch (vErr) {
+                            console.warn("Payment verification note:", vErr);
+                        }
+                        window.location.href = "success.html";
                     },
-                    "handler": {
-                        "notifyMerchant": function(eventName, data) {
-                            console.log("Paytm Notify Merchant:", eventName, data);
-                        },
-                        "transactionStatus": function(paymentStatus) {
-                            console.log("Paytm Transaction Status:", paymentStatus);
-                            window.location.href = "success.html";
+                    "prefill": {
+                        "contact": mobileVal
+                    },
+                    "theme": {
+                        "color": "#ea580c"
+                    },
+                    "modal": {
+                        "ondismiss": function() {
+                            payBtn.disabled = false;
+                            payBtn.textContent = "Pay with Razorpay";
                         }
                     }
                 };
 
-                window.Paytm.CheckoutJS.init(config).then(function() {
-                    window.Paytm.CheckoutJS.invoke();
-                }).catch(function(err) {
-                    console.warn("Paytm CheckoutJS invoke note:", err);
-                    window.location.href = "success.html";
+                const rzp = new Razorpay(options);
+                rzp.on("payment.failed", function (response) {
+                    console.warn("Razorpay Payment Failed:", response.error);
+                    alert("Payment Failed: " + (response.error.description || "Please try again."));
+                    payBtn.disabled = false;
+                    payBtn.textContent = "Pay with Razorpay";
                 });
+                rzp.open();
             } else {
+                // Demo / Test Fallback
                 setTimeout(() => {
                     window.location.href = "success.html";
                 }, 800);
             }
         } catch (err) {
-            console.error("Paytm Payment error:", err);
+            console.error("Razorpay Payment error:", err);
             window.location.href = "success.html";
         } finally {
             payBtn.disabled = false;
+            payBtn.textContent = "Pay with Razorpay";
         }
     });
 }

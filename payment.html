@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Paytm Payment - PrintFlow</title>
+    <title>Razorpay Payment - PrintFlow</title>
 
     <link rel="stylesheet" href="style.css">
 </head>
@@ -13,10 +13,10 @@
 
     <div class="logo">💳</div>
 
-    <h1>Paytm Payment</h1>
+    <h1>Razorpay Payment</h1>
 
     <p class="description">
-        Review your order and pay securely via Paytm UPI, Wallet, or Cards.
+        Review your order and pay securely via UPI, Cards, Net Banking, or Wallets using Razorpay.
     </p>
 
     <div class="summary">
@@ -28,45 +28,15 @@
         <p id="paymentAmount">Total Amount: ₹2</p>
     </div>
 
-    <!-- Paytm Payment Options -->
-    <div id="paytmSection" style="margin-top: 18px;">
-        <p style="font-size: 14px; font-weight: 700; color: #7c2d12; margin-bottom: 10px; text-align: left;">
-            Select Paytm Payment Method:
-        </p>
-        <div class="radio-option">
-            <label>
-                <input type="radio" name="paytmMethod" value="paytm_modal" checked>
-                Paytm Wallet / UPI / Card
-            </label>
-            <label>
-                <input type="radio" name="paytmMethod" value="paytm_qr">
-                Scan Paytm QR Code
-            </label>
-        </div>
-
-        <!-- Inline Paytm QR Code Container -->
-        <div id="paytmQrContainer" style="display: none; background: #fffbf5; padding: 18px; border-radius: 16px; border: 1.5px solid #fed7aa; margin-top: 14px; text-align: center;">
-            <p style="font-size: 13px; font-weight: 700; color: #ea580c; margin-bottom: 10px;">
-                Scan & Pay with Paytm / BHIM UPI App
-            </p>
-            <div id="paytmQrCode" style="display: flex; justify-content: center; margin: 10px 0;">
-                <img id="qrImage" src="" alt="Paytm UPI QR Code" style="width: 180px; height: 180px; border-radius: 12px; border: 2px solid #ea580c;">
-            </div>
-            <p style="font-size: 12px; color: #78350f; font-weight: 600;">
-                UPI ID: <span style="color: #ea580c; font-weight: 700;">printflow@paytm</span>
-            </p>
-        </div>
-    </div>
-
     <div class="button-row" style="margin-top: 22px;">
         <button type="button" id="paymentBackBtn" class="secondary-btn">← Back</button>
-        <button type="button" id="payBtn">Pay with Paytm</button>
+        <button type="button" id="payBtn">Pay with Razorpay</button>
     </div>
 
 </div>
 
-<!-- Paytm Checkout JS SDK (Staging/Production) -->
-<script type="application/javascript" src="https://securegw-stage.paytm.in/merchantpgpui/checkoutjs/merchants/DIY12386817555501617.js"></script>
+<!-- Razorpay Checkout JS SDK -->
+<script src="https://checkout.razorpay.com/v1/checkout.js"></script>
 
 <script src="script.js"></script>
 
