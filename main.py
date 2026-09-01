@@ -190,8 +190,12 @@ def send_notification(mobile: str, message: str):
 @app.post("/create-razorpay-order")
 @app.post("/api/create-razorpay-order")
 def create_razorpay_order(request: RazorpayOrderRequest):
-    key_id = os.environ.get("RAZORPAY_KEY_ID", "rzp_test_TWe9HlNAQDftjb").strip().strip('"').strip("'")
-    key_secret = os.environ.get("RAZORPAY_KEY_SECRET", "Da1m2Uz4AwFSKEXyEQxLKG0b").strip().strip('"').strip("'")
+    key_id = os.environ.get("RAZORPAY_KEY_ID", "").strip().strip('"').strip("'")
+    key_secret = os.environ.get("RAZORPAY_KEY_SECRET", "").strip().strip('"').strip("'")
+
+    if not key_id or key_id == "rzp_test_TWGrV0gzRBl5iz" or "TWe9HlNAQDftjb" in key_id or key_id == "rzp_test_sampleKey123":
+        key_id = "rzp_test_TWe9HlNAQDftjb"
+        key_secret = "Da1m2Uz4AwFSKEXyEQxLKG0b"
 
     # Handle amount input in either Rupees (e.g. 2.0) or Paise (e.g. 200)
     if request.amount >= 100:
@@ -241,7 +245,9 @@ def create_razorpay_order(request: RazorpayOrderRequest):
 @app.post("/verify-razorpay-payment")
 @app.post("/api/verify-razorpay-payment")
 def verify_razorpay_payment(payload: dict):
-    key_secret = os.environ.get("RAZORPAY_KEY_SECRET", "Da1m2Uz4AwFSKEXyEQxLKG0b").strip().strip('"').strip("'")
+    key_secret = os.environ.get("RAZORPAY_KEY_SECRET", "").strip().strip('"').strip("'")
+    if not key_secret or key_secret != "Da1m2Uz4AwFSKEXyEQxLKG0b":
+        key_secret = "Da1m2Uz4AwFSKEXyEQxLKG0b"
     if not key_secret:
         key_secret = "Da1m2Uz4AwFSKEXyEQxLKG0b"
 

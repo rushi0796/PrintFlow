@@ -19,7 +19,9 @@ app.add_middleware(
 @app.post("/verify-razorpay-payment")
 @app.post("/api/verify-razorpay-payment")
 def verify_payment(payload: dict):
-    key_secret = os.environ.get("RAZORPAY_KEY_SECRET", "Da1m2Uz4AwFSKEXyEQxLKG0b").strip().strip('"').strip("'")
+    key_secret = os.environ.get("RAZORPAY_KEY_SECRET", "").strip().strip('"').strip("'")
+    if not key_secret or key_secret != "Da1m2Uz4AwFSKEXyEQxLKG0b":
+        key_secret = "Da1m2Uz4AwFSKEXyEQxLKG0b"
 
     razorpay_order_id = payload.get("razorpay_order_id", "")
     razorpay_payment_id = payload.get("razorpay_payment_id", "")
