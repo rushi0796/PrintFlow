@@ -190,10 +190,10 @@ def send_notification(mobile: str, message: str):
 @app.post("/create-razorpay-order")
 @app.post("/api/create-razorpay-order")
 def create_razorpay_order(request: RazorpayOrderRequest):
-    key_id = os.environ.get("RAZORPAY_KEY_ID", "rzp_test_TWe9HlNAQDftjb").strip()
-    key_secret = os.environ.get("RAZORPAY_KEY_SECRET", "Da1m2Uz4AwFSKEXyEQxLKG0b").strip()
+    key_id = (os.environ.get("RAZORPAY_KEY_ID") or "rzp_test_TWe9HlNAQDftjb").strip()
+    key_secret = (os.environ.get("RAZORPAY_KEY_SECRET") or "Da1m2Uz4AwFSKEXyEQxLKG0b").strip()
     amount_in_paise = int(round(request.amount * 100))
-    order_id = request.order_id or f"order_{uuid4().hex[:14]}"
+    receipt_id = f"rcpt_{uuid4().hex[:10]}"
 
     if amount_in_paise < 100:
         raise HTTPException(status_code=400, detail="Minimum order amount must be at least 100 paise (INR 1.00)")
@@ -211,7 +211,7 @@ def create_razorpay_order(request: RazorpayOrderRequest):
         rzp_payload = {
             "amount": amount_in_paise,
             "currency": request.currency or "INR",
-            "receipt": order_id,
+            "receipt": receipt_id,
             "payment_capture": 1
         }
         resp = requests.post(rzp_url, auth=HTTPBasicAuth(key_id, key_secret), json=rzp_payload, timeout=10)
@@ -237,7 +237,7 @@ def create_razorpay_order(request: RazorpayOrderRequest):
 @app.post("/verify-razorpay-payment")
 @app.post("/api/verify-razorpay-payment")
 def verify_razorpay_payment(payload: dict):
-    key_secret = os.environ.get("RAZORPAY_KEY_SECRET", "Da1m2Uz4AwFSKEXyEQxLKG0b").strip()
+    key_secret = (os.environ.get("RAZORPAY_KEY_SECRET") or "Da1m2Uz4AwFSKEXyEQxLKG0b").strip()
     if not key_secret:
         raise HTTPException(
             status_code=500,
