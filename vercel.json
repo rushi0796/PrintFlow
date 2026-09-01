@@ -10,27 +10,27 @@
     },
     {
       "source": "/create-razorpay-order",
-      "destination": "/api/create-order"
-    },
-    {
-      "source": "/verify-razorpay-payment",
-      "destination": "/api/verify-payment"
-    },
-    {
-      "source": "/create-order",
-      "destination": "/api/create-order"
-    },
-    {
-      "source": "/verify-payment",
-      "destination": "/api/verify-payment"
+      "destination": "/api/create-order.py"
     },
     {
       "source": "/api/create-razorpay-order",
-      "destination": "/api/create-order"
+      "destination": "/api/create-order.py"
+    },
+    {
+      "source": "/create-order",
+      "destination": "/api/create-order.py"
+    },
+    {
+      "source": "/verify-razorpay-payment",
+      "destination": "/api/verify-payment.py"
     },
     {
       "source": "/api/verify-razorpay-payment",
-      "destination": "/api/verify-payment"
+      "destination": "/api/verify-payment.py"
+    },
+    {
+      "source": "/verify-payment",
+      "destination": "/api/verify-payment.py"
     }
   ],
   "functions": {
