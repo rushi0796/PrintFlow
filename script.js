@@ -7,6 +7,19 @@ const STORE_NAME = "pdfStore";
 const isLocalDevelopment = ["localhost", "127.0.0.1"].includes(window.location.hostname) || window.location.protocol === "file:";
 const API_BASE = isLocalDevelopment ? "http://127.0.0.1:8000" : "";
 const apiUrl = (localPath, productionPath = localPath) => `${API_BASE}${isLocalDevelopment ? localPath : productionPath}`;
+
+async function fetchWithRetry(url, options = {}, retries = 3, backoff = 500) {
+    for (let i = 0; i < retries; i++) {
+        try {
+            const res = await fetch(url, options);
+            if (res.ok) return res;
+            if (i === retries - 1) return res;
+        } catch (err) {
+            if (i === retries - 1) throw err;
+        }
+        await new Promise(r => setTimeout(r, backoff * Math.pow(2, i)));
+    }
+}
 const orderUpdateChannel = typeof BroadcastChannel !== "undefined"
     ? new BroadcastChannel("printflow-order-updates")
     : null;
@@ -589,7 +602,7 @@ if (payBtn) {
             publishOrderUpdate(printData.order);
 
             // Trigger Razorpay Order API
-            const orderRes = await fetch(apiUrl("/api/create-order", "/api/create-order"), {
+            const orderRes = await fetchWithRetry(apiUrl("/api/create-order", "/api/create-order"), {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
@@ -627,7 +640,7 @@ if (payBtn) {
                     "handler": async function (response) {
                         console.log("Razorpay Payment Success:", response);
                         try {
-                            const verifyRes = await fetch(apiUrl("/api/verify-payment", "/api/verify-payment"), {
+                            const verifyRes = await fetchWithRetry(apiUrl("/api/verify-payment", "/api/verify-payment"), {
                                 method: "POST",
                                 headers: { "Content-Type": "application/json" },
                                 body: JSON.stringify(response)
