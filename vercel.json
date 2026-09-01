@@ -7,6 +7,22 @@
     {
       "source": "/admin",
       "destination": "/admin.html"
+    },
+    {
+      "source": "/create-razorpay-order",
+      "destination": "/api/create-razorpay-order"
+    },
+    {
+      "source": "/verify-razorpay-payment",
+      "destination": "/api/verify-razorpay-payment"
+    },
+    {
+      "source": "/create-order",
+      "destination": "/api/create-order"
+    },
+    {
+      "source": "/verify-payment",
+      "destination": "/api/verify-payment"
     }
   ],
   "functions": {
