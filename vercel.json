@@ -10,11 +10,11 @@
     },
     {
       "source": "/create-razorpay-order",
-      "destination": "/api/create-razorpay-order"
+      "destination": "/api/create-order"
     },
     {
       "source": "/verify-razorpay-payment",
-      "destination": "/api/verify-razorpay-payment"
+      "destination": "/api/verify-payment"
     },
     {
       "source": "/create-order",
@@ -22,6 +22,14 @@
     },
     {
       "source": "/verify-payment",
+      "destination": "/api/verify-payment"
+    },
+    {
+      "source": "/api/create-razorpay-order",
+      "destination": "/api/create-order"
+    },
+    {
+      "source": "/api/verify-razorpay-payment",
       "destination": "/api/verify-payment"
     }
   ],
