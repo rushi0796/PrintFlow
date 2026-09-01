@@ -614,7 +614,7 @@ if (payBtn) {
 
             if (typeof Razorpay !== "undefined") {
                 const options = {
-                    "key": orderData.key_id || "rzp_test_TWe9HlNAQDftjb",
+                    "key": orderData.key_id,
                     "amount": orderData.amount,
                     "currency": orderData.currency || "INR",
                     "name": "PrintFlow",

@@ -190,57 +190,60 @@ def send_notification(mobile: str, message: str):
 @app.post("/create-razorpay-order")
 @app.post("/api/create-razorpay-order")
 def create_razorpay_order(request: RazorpayOrderRequest):
-    key_id = os.environ.get("RAZORPAY_KEY_ID", "rzp_test_TWe9HlNAQDftjb")
-    key_secret = os.environ.get("RAZORPAY_KEY_SECRET", "Da1m2Uz4AwFSKEXyEQxLKG0b")
+    key_id = os.environ.get("RAZORPAY_KEY_ID", "rzp_test_TWe9HlNAQDftjb").strip()
+    key_secret = os.environ.get("RAZORPAY_KEY_SECRET", "Da1m2Uz4AwFSKEXyEQxLKG0b").strip()
     amount_in_paise = int(round(request.amount * 100))
     order_id = request.order_id or f"order_{uuid4().hex[:14]}"
 
     if amount_in_paise < 100:
         raise HTTPException(status_code=400, detail="Minimum order amount must be at least 100 paise (INR 1.00)")
 
-    if key_secret and key_id:
-        try:
-            import requests
-            from requests.auth import HTTPBasicAuth
-            rzp_url = "https://api.razorpay.com/v1/orders"
-            rzp_payload = {
-                "amount": amount_in_paise,
-                "currency": request.currency or "INR",
-                "receipt": order_id,
-                "payment_capture": 1
-            }
-            resp = requests.post(rzp_url, auth=HTTPBasicAuth(key_id, key_secret), json=rzp_payload, timeout=10)
-            if resp.status_code in (200, 201):
-                razorpay_order = resp.json()
-                return {
-                    "status": "success",
-                    "key_id": key_id,
-                    "order_id": razorpay_order["id"],
-                    "amount": razorpay_order["amount"],
-                    "currency": razorpay_order["currency"]
-                }
-            else:
-                print("Razorpay API Error Response:", resp.status_code, resp.text)
-                raise HTTPException(status_code=500, detail=f"Razorpay API Error: {resp.text}")
-        except HTTPException:
-            raise
-        except Exception as err:
-            print("Razorpay API order creation error:", err)
-            raise HTTPException(status_code=500, detail=f"Razorpay order creation failed: {str(err)}")
+    if not (key_id and key_secret):
+        raise HTTPException(
+            status_code=500,
+            detail="Razorpay credentials (RAZORPAY_KEY_ID / RAZORPAY_KEY_SECRET) not configured in server environment variables."
+        )
 
-    return {
-        "status": "success",
-        "key_id": key_id,
-        "order_id": order_id,
-        "amount": amount_in_paise,
-        "currency": request.currency or "INR"
-    }
+    try:
+        import requests
+        from requests.auth import HTTPBasicAuth
+        rzp_url = "https://api.razorpay.com/v1/orders"
+        rzp_payload = {
+            "amount": amount_in_paise,
+            "currency": request.currency or "INR",
+            "receipt": order_id,
+            "payment_capture": 1
+        }
+        resp = requests.post(rzp_url, auth=HTTPBasicAuth(key_id, key_secret), json=rzp_payload, timeout=10)
+        if resp.status_code in (200, 201):
+            razorpay_order = resp.json()
+            return {
+                "status": "success",
+                "key_id": key_id,
+                "order_id": razorpay_order["id"],
+                "amount": razorpay_order["amount"],
+                "currency": razorpay_order["currency"]
+            }
+        else:
+            print("Razorpay API Error Response:", resp.status_code, resp.text)
+            raise HTTPException(status_code=resp.status_code, detail=f"Razorpay API Error: {resp.text}")
+    except HTTPException:
+        raise
+    except Exception as err:
+        print("Razorpay API order creation error:", err)
+        raise HTTPException(status_code=500, detail=f"Razorpay order creation failed: {str(err)}")
 
 @app.post("/api/verify-payment")
 @app.post("/verify-razorpay-payment")
 @app.post("/api/verify-razorpay-payment")
 def verify_razorpay_payment(payload: dict):
-    key_secret = os.environ.get("RAZORPAY_KEY_SECRET", "Da1m2Uz4AwFSKEXyEQxLKG0b")
+    key_secret = os.environ.get("RAZORPAY_KEY_SECRET", "Da1m2Uz4AwFSKEXyEQxLKG0b").strip()
+    if not key_secret:
+        raise HTTPException(
+            status_code=500,
+            detail="RAZORPAY_KEY_SECRET not configured in server environment variables."
+        )
+
     razorpay_order_id = payload.get("razorpay_order_id", "")
     razorpay_payment_id = payload.get("razorpay_payment_id", "")
     razorpay_signature = payload.get("razorpay_signature", "")
@@ -255,7 +258,7 @@ def verify_razorpay_payment(payload: dict):
         hashlib.sha256
     ).hexdigest()
 
-    if generated_signature != razorpay_signature:
+    if not hmac.compare_digest(generated_signature, razorpay_signature):
         raise HTTPException(status_code=400, detail="Invalid Razorpay payment signature - payment verification failed")
 
     return {
