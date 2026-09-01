@@ -28,11 +28,43 @@
         <p id="paymentAmount">Total Amount: ₹2</p>
     </div>
 
+    <!-- Direct UPI & QR Code Guidance Box -->
+    <div style="background: #fffbf5; padding: 14px 16px; border-radius: 14px; border: 1.5px solid #fed7aa; margin-top: 16px; text-align: left;">
+        <p style="font-size: 13px; font-weight: 700; color: #ea580c; margin-bottom: 6px;">
+            ⚡ Fast Payment Options Available:
+        </p>
+        <ul style="margin: 0; padding-left: 18px; font-size: 12px; color: #78350f; font-weight: 600; line-height: 1.6;">
+            <li>📱 <strong>Pay via UPI App</strong> (GPay, PhonePe, BHIM)</li>
+            <li>🆔 <strong>Enter UPI ID</strong> (Instant Payment Request sent to your UPI App)</li>
+            <li>📷 <strong>Scan UPI QR Code</strong> (Scan & Pay with any UPI App)</li>
+        </ul>
+    </div>
+
     <div class="button-row" style="margin-top: 22px;">
         <button type="button" id="paymentBackBtn" class="secondary-btn">← Back</button>
         <button type="button" id="payBtn">Pay with Razorpay</button>
     </div>
 
+</div>
+
+<!-- Animated Payment Failed Custom Modal Overlay -->
+<div id="failedModalOverlay" class="failed-modal-overlay" role="dialog" aria-modal="true">
+    <div class="failed-modal-card">
+        <div class="failed-icon-badge">
+            <svg viewBox="0 0 24 24">
+                <line x1="18" y1="6" x2="6" y2="18"></line>
+                <line x1="6" y1="6" x2="18" y2="18"></line>
+            </svg>
+        </div>
+        <h2 id="failedModalTitle" class="failed-modal-title">Payment Failed</h2>
+        <p id="failedModalDesc" class="failed-modal-desc">
+            Your payment didn't go through due to a temporary issue. Any debited amount will be refunded in 4-5 business days.
+        </p>
+        <div class="failed-modal-actions">
+            <button type="button" id="failedModalCloseBtn" class="failed-close-btn">Dismiss</button>
+            <button type="button" id="failedModalRetryBtn" class="failed-retry-btn">Try Again 🔄</button>
+        </div>
+    </div>
 </div>
 
 <!-- Razorpay Checkout JS SDK -->

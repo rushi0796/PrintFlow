@@ -23,6 +23,17 @@ app.add_middleware(
 )
 
 BASE_DIR = Path(__file__).resolve().parent
+ENV_FILE = BASE_DIR / ".env"
+if ENV_FILE.exists():
+    try:
+        for line in ENV_FILE.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                k, v = line.split("=", 1)
+                os.environ[k.strip()] = v.strip()
+    except Exception as e:
+        pass
+
 UPLOAD_DIR = (
     Path("/tmp/printflow-uploads")
     if os.environ.get("VERCEL")
@@ -119,7 +130,7 @@ def create_print_order(order: PrintOrder):
     # Simulated WhatsApp / SMS Alert Trigger
     send_notification(
         order.customer_mobile,
-        f"Hi! Your PrintFlow order {order_id} for '{order.file_name}' (₹{order.amount}) has been received successfully."
+        f"Hi! Your PrintFlow order {order_id} for '{order.file_name}' (Rs.{order.amount}) has been received successfully."
     )
 
     return {
@@ -138,7 +149,7 @@ def complete_order(order_id: str):
             # Send Notification on completion
             send_notification(
                 order["customer_mobile"],
-                f"🎉 Your PrintFlow order {order_id} ('{order['file_name']}') is READY for pickup at the counter!"
+                f"Your PrintFlow order {order_id} ('{order['file_name']}') is READY for pickup at the counter!"
             )
             return {
                 "status": "success",
@@ -148,17 +159,24 @@ def complete_order(order_id: str):
     raise HTTPException(status_code=404, detail="Order not found")
 
 def send_notification(mobile: str, message: str):
-    print(f"[NOTIFICATION SENT TO {mobile}]: {message}")
+    try:
+        print(f"[NOTIFICATION SENT TO {mobile}]: {message}")
+    except Exception:
+        pass
 
+@app.post("/api/create-order")
 @app.post("/create-razorpay-order")
 @app.post("/api/create-razorpay-order")
 def create_razorpay_order(request: RazorpayOrderRequest):
-    key_id = os.environ.get("RAZORPAY_KEY_ID", "rzp_test_sampleKey123")
-    key_secret = os.environ.get("RAZORPAY_KEY_SECRET", "")
+    key_id = os.environ.get("RAZORPAY_KEY_ID", "rzp_test_TWe9HlNAQDftjb")
+    key_secret = os.environ.get("RAZORPAY_KEY_SECRET", "Da1m2Uz4AwFSKEXyEQxLKG0b")
     amount_in_paise = int(round(request.amount * 100))
     order_id = request.order_id or f"order_{uuid4().hex[:14]}"
 
-    if key_secret and key_id != "rzp_test_sampleKey123":
+    if amount_in_paise < 100:
+        raise HTTPException(status_code=400, detail="Minimum order amount must be at least 100 paise (INR 1.00)")
+
+    if key_secret and key_id:
         try:
             import razorpay
             client = razorpay.Client(auth=(key_id, key_secret))
@@ -176,7 +194,8 @@ def create_razorpay_order(request: RazorpayOrderRequest):
                 "currency": razorpay_order["currency"]
             }
         except Exception as err:
-            print("Razorpay SDK order creation note:", err)
+            print("Razorpay API order creation error:", err)
+            raise HTTPException(status_code=500, detail=f"Razorpay order creation failed: {str(err)}")
 
     return {
         "status": "success",
@@ -186,28 +205,27 @@ def create_razorpay_order(request: RazorpayOrderRequest):
         "currency": request.currency or "INR"
     }
 
+@app.post("/api/verify-payment")
 @app.post("/verify-razorpay-payment")
 @app.post("/api/verify-razorpay-payment")
 def verify_razorpay_payment(payload: dict):
-    key_secret = os.environ.get("RAZORPAY_KEY_SECRET", "")
+    key_secret = os.environ.get("RAZORPAY_KEY_SECRET", "Da1m2Uz4AwFSKEXyEQxLKG0b")
     razorpay_order_id = payload.get("razorpay_order_id", "")
     razorpay_payment_id = payload.get("razorpay_payment_id", "")
     razorpay_signature = payload.get("razorpay_signature", "")
 
-    if key_secret and razorpay_order_id and razorpay_payment_id and razorpay_signature:
-        try:
-            msg = f"{razorpay_order_id}|{razorpay_payment_id}".encode("utf-8")
-            generated_signature = hmac.new(
-                key_secret.encode("utf-8"),
-                msg,
-                hashlib.sha256
-            ).hexdigest()
-            if generated_signature != razorpay_signature:
-                raise HTTPException(status_code=400, detail="Invalid Razorpay payment signature")
-        except HTTPException:
-            raise
-        except Exception as e:
-            print("Razorpay signature verification error:", e)
+    if not (razorpay_order_id and razorpay_payment_id and razorpay_signature):
+        raise HTTPException(status_code=400, detail="Missing required payment verification fields (order_id, payment_id, signature)")
+
+    msg = f"{razorpay_order_id}|{razorpay_payment_id}".encode("utf-8")
+    generated_signature = hmac.new(
+        key_secret.encode("utf-8"),
+        msg,
+        hashlib.sha256
+    ).hexdigest()
+
+    if generated_signature != razorpay_signature:
+        raise HTTPException(status_code=400, detail="Invalid Razorpay payment signature - payment verification failed")
 
     return {
         "status": "success",

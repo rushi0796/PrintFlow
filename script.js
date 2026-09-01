@@ -499,6 +499,46 @@ if (paymentBackBtn) {
     });
 }
 
+// ======================================================
+// CUSTOM ANIMATED PAYMENT FAILED MODAL HELPER
+// ======================================================
+
+function showPaymentFailedModal(title, description) {
+    const overlay = document.getElementById("failedModalOverlay");
+    const titleEl = document.getElementById("failedModalTitle");
+    const descEl = document.getElementById("failedModalDesc");
+    const closeBtn = document.getElementById("failedModalCloseBtn");
+    const retryBtn = document.getElementById("failedModalRetryBtn");
+
+    if (!overlay) {
+        alert(`${title}: ${description}`);
+        return;
+    }
+
+    if (titleEl) titleEl.textContent = title || "Payment Failed";
+    if (descEl) descEl.textContent = description || "Your payment didn't go through due to a temporary issue. Any debited amount will be refunded in 4-5 business days.";
+
+    overlay.classList.add("is-open");
+
+    const closeModal = () => {
+        overlay.classList.remove("is-open");
+    };
+
+    if (closeBtn) {
+        closeBtn.onclick = closeModal;
+    }
+    if (retryBtn) {
+        retryBtn.onclick = () => {
+            closeModal();
+            const payBtn = document.getElementById("payBtn");
+            if (payBtn) payBtn.click();
+        };
+    }
+    overlay.onclick = (e) => {
+        if (e.target === overlay) closeModal();
+    };
+}
+
 if (payBtn) {
     payBtn.addEventListener("click", async function (e) {
         if (e && e.preventDefault) e.preventDefault();
@@ -549,7 +589,7 @@ if (payBtn) {
             publishOrderUpdate(printData.order);
 
             // Trigger Razorpay Order API
-            const orderRes = await fetch(apiUrl("/create-razorpay-order", "/api/create-razorpay-order"), {
+            const orderRes = await fetch(apiUrl("/api/create-order", "/api/create-order"), {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
@@ -562,27 +602,38 @@ if (payBtn) {
 
             if (typeof Razorpay !== "undefined") {
                 const options = {
-                    "key": orderData.key_id || "rzp_test_sampleKey123",
+                    "key": orderData.key_id || "rzp_test_TWe9HlNAQDftjb",
                     "amount": orderData.amount,
                     "currency": orderData.currency || "INR",
                     "name": "PrintFlow",
                     "description": `Print Order Payment - ${fileNameVal}`,
                     "order_id": orderData.order_id,
+                    "prefill": {
+                        "contact": mobileVal,
+                        "email": "customer@printflow.in"
+                    },
                     "handler": async function (response) {
                         console.log("Razorpay Payment Success:", response);
                         try {
-                            await fetch(apiUrl("/verify-razorpay-payment", "/api/verify-razorpay-payment"), {
+                            const verifyRes = await fetch(apiUrl("/api/verify-payment", "/api/verify-payment"), {
                                 method: "POST",
                                 headers: { "Content-Type": "application/json" },
                                 body: JSON.stringify(response)
                             });
+                            const verifyData = await verifyRes.json();
+                            if (verifyRes.ok && verifyData && verifyData.status === "success") {
+                                window.location.href = "success.html";
+                            } else {
+                                showPaymentFailedModal("Verification Failed", "Payment signature verification failed. Please contact support.");
+                                payBtn.disabled = false;
+                                payBtn.textContent = "Pay with Razorpay";
+                            }
                         } catch (vErr) {
-                            console.warn("Payment verification note:", vErr);
+                            console.error("Payment verification error:", vErr);
+                            showPaymentFailedModal("Verification Error", "Payment verification error occurred.");
+                            payBtn.disabled = false;
+                            payBtn.textContent = "Pay with Razorpay";
                         }
-                        window.location.href = "success.html";
-                    },
-                    "prefill": {
-                        "contact": mobileVal
                     },
                     "theme": {
                         "color": "#ea580c"
@@ -598,21 +649,28 @@ if (payBtn) {
                 const rzp = new Razorpay(options);
                 rzp.on("payment.failed", function (response) {
                     console.warn("Razorpay Payment Failed:", response.error);
-                    alert("Payment Failed: " + (response.error.description || "Please try again."));
+                    const errorDesc = response.error.description || "Your payment didn't go through due to a temporary issue. Any debited amount will be refunded in 4-5 business days.";
+                    showPaymentFailedModal("Payment Failed", errorDesc);
                     payBtn.disabled = false;
                     payBtn.textContent = "Pay with Razorpay";
                 });
                 rzp.open();
-            } else {
-                // Demo / Test Fallback
+
+                // Re-enable button after modal opens so button resets if modal is dismissed or closed
                 setTimeout(() => {
-                    window.location.href = "success.html";
-                }, 800);
+                    if (payBtn) {
+                        payBtn.disabled = false;
+                        payBtn.textContent = "Pay with Razorpay";
+                    }
+                }, 1500);
+            } else {
+                showPaymentFailedModal("SDK Error", "Razorpay SDK failed to load. Please check your internet connection.");
+                payBtn.disabled = false;
+                payBtn.textContent = "Pay with Razorpay";
             }
         } catch (err) {
             console.error("Razorpay Payment error:", err);
-            window.location.href = "success.html";
-        } finally {
+            showPaymentFailedModal("Order Error", "Order creation failed: " + (err.message || "Please try again."));
             payBtn.disabled = false;
             payBtn.textContent = "Pay with Razorpay";
         }
