@@ -14,6 +14,7 @@ html, body {
     min-height: 100vh;
     margin: 0;
     padding: 0;
+    overflow-x: hidden;
 }
 
 body {
@@ -594,8 +595,14 @@ button:disabled {
 
 /* Responsive Mobile Adjustments */
 @media (max-width: 480px) {
+    body {
+        padding: 12px 10px;
+    }
+
     .container {
-        padding: 30px 22px;
+        width: 100%;
+        max-width: 100%;
+        padding: 26px 16px;
         border-radius: 20px;
     }
 
@@ -610,19 +617,25 @@ button:disabled {
     }
 
     .otp-box {
-        width: 46px;
-        height: 52px;
-        font-size: 20px;
+        width: 42px;
+        height: 48px;
+        font-size: 18px;
     }
 
     .logo, .icon {
-        width: 72px;
-        height: 72px;
-        font-size: 40px;
+        width: 68px;
+        height: 68px;
+        font-size: 36px;
     }
 
     h1 {
-        font-size: 23px;
+        font-size: 22px;
+    }
+
+    .failed-modal-card {
+        width: 100%;
+        max-width: calc(100vw - 24px);
+        padding: 24px 16px;
     }
 }
 
