@@ -190,8 +190,8 @@ def send_notification(mobile: str, message: str):
 @app.post("/create-razorpay-order")
 @app.post("/api/create-razorpay-order")
 def create_razorpay_order(request: RazorpayOrderRequest):
-    key_id = "rzp_test_TWe9HlNAQDftjb"
-    key_secret = "Da1m2Uz4AwFSKEXyEQxLKG0b"
+    key_id = os.environ.get("RAZORPAY_KEY_ID", "rzp_test_TWe9HlNAQDftjb").strip().strip('"').strip("'")
+    key_secret = os.environ.get("RAZORPAY_KEY_SECRET", "Da1m2Uz4AwFSKEXyEQxLKG0b").strip().strip('"').strip("'")
 
     # Handle amount input in either Rupees (e.g. 2.0) or Paise (e.g. 200)
     if request.amount >= 100:
@@ -214,7 +214,11 @@ def create_razorpay_order(request: RazorpayOrderRequest):
             "receipt": receipt_id,
             "payment_capture": 1
         }
-        resp = requests.post(rzp_url, auth=HTTPBasicAuth(key_id, key_secret), json=rzp_payload, timeout=10)
+        headers = {
+            "User-Agent": "Razorpay/v1 PythonSDK/1.4.0",
+            "Accept": "application/json"
+        }
+        resp = requests.post(rzp_url, auth=HTTPBasicAuth(key_id, key_secret), headers=headers, json=rzp_payload, timeout=10)
         if resp.status_code in (200, 201):
             razorpay_order = resp.json()
             return {
@@ -237,7 +241,7 @@ def create_razorpay_order(request: RazorpayOrderRequest):
 @app.post("/verify-razorpay-payment")
 @app.post("/api/verify-razorpay-payment")
 def verify_razorpay_payment(payload: dict):
-    key_secret = "Da1m2Uz4AwFSKEXyEQxLKG0b"
+    key_secret = os.environ.get("RAZORPAY_KEY_SECRET", "Da1m2Uz4AwFSKEXyEQxLKG0b").strip().strip('"').strip("'")
     if not key_secret:
         key_secret = "Da1m2Uz4AwFSKEXyEQxLKG0b"
 
