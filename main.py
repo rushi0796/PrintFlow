@@ -192,6 +192,11 @@ def send_notification(mobile: str, message: str):
 def create_razorpay_order(request: RazorpayOrderRequest):
     key_id = (os.environ.get("RAZORPAY_KEY_ID") or "rzp_test_TWe9HlNAQDftjb").strip()
     key_secret = (os.environ.get("RAZORPAY_KEY_SECRET") or "Da1m2Uz4AwFSKEXyEQxLKG0b").strip()
+
+    if not key_id or key_id == "rzp_test_TWe9HlNAQDftjb":
+        key_id = "rzp_test_TWe9HlNAQDftjb"
+        key_secret = "Da1m2Uz4AwFSKEXyEQxLKG0b"
+
     amount_in_paise = int(round(request.amount * 100))
     receipt_id = f"rcpt_{uuid4().hex[:10]}"
 
@@ -239,6 +244,7 @@ def create_razorpay_order(request: RazorpayOrderRequest):
 def verify_razorpay_payment(payload: dict):
     key_secret = (os.environ.get("RAZORPAY_KEY_SECRET") or "Da1m2Uz4AwFSKEXyEQxLKG0b").strip()
     if not key_secret:
+        key_secret = "Da1m2Uz4AwFSKEXyEQxLKG0b"
         raise HTTPException(
             status_code=500,
             detail="RAZORPAY_KEY_SECRET not configured in server environment variables."
