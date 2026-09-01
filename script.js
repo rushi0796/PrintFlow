@@ -597,7 +597,19 @@ if (payBtn) {
                     order_id: `PF_ORDER_${Date.now()}`
                 })
             });
-            const orderData = await orderRes.json();
+            const resText = await orderRes.text();
+            let orderData;
+            try {
+                orderData = JSON.parse(resText);
+            } catch (pErr) {
+                throw new Error(`API server returned invalid response (HTTP ${orderRes.status}). Please ensure backend server is running.`);
+            }
+
+            if (!orderRes.ok || !orderData || orderData.status === "error") {
+                const detail = (orderData && orderData.detail) ? orderData.detail : `HTTP ${orderRes.status}`;
+                throw new Error(`Order creation failed: ${detail}`);
+            }
+
             console.log("Razorpay Order Created:", orderData);
 
             if (typeof Razorpay !== "undefined") {
@@ -620,17 +632,25 @@ if (payBtn) {
                                 headers: { "Content-Type": "application/json" },
                                 body: JSON.stringify(response)
                             });
-                            const verifyData = await verifyRes.json();
+                            const vText = await verifyRes.text();
+                            let verifyData;
+                            try {
+                                verifyData = JSON.parse(vText);
+                            } catch (vPErr) {
+                                throw new Error("Payment verification server response was invalid.");
+                            }
+
                             if (verifyRes.ok && verifyData && verifyData.status === "success") {
                                 window.location.href = "success.html";
                             } else {
-                                showPaymentFailedModal("Verification Failed", "Payment signature verification failed. Please contact support.");
+                                const vDetail = (verifyData && verifyData.detail) ? verifyData.detail : "Payment signature verification failed.";
+                                showPaymentFailedModal("Verification Failed", vDetail);
                                 payBtn.disabled = false;
                                 payBtn.textContent = "Pay with Razorpay";
                             }
                         } catch (vErr) {
                             console.error("Payment verification error:", vErr);
-                            showPaymentFailedModal("Verification Error", "Payment verification error occurred.");
+                            showPaymentFailedModal("Verification Error", vErr.message || "Payment verification error occurred.");
                             payBtn.disabled = false;
                             payBtn.textContent = "Pay with Razorpay";
                         }

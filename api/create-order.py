@@ -1,8 +1,8 @@
 import os
 import json
-import hmac
-import hashlib
 from uuid import uuid4
+import requests
+from requests.auth import HTTPBasicAuth
 
 def handler(request):
     try:
@@ -24,25 +24,33 @@ def handler(request):
 
         if key_secret and key_id:
             try:
-                import razorpay
-                client = razorpay.Client(auth=(key_id, key_secret))
-                rzp_order = client.order.create({
+                rzp_url = "https://api.razorpay.com/v1/orders"
+                rzp_payload = {
                     "amount": amount_in_paise,
                     "currency": currency,
                     "receipt": receipt,
                     "payment_capture": 1
-                })
-                return {
-                    "statusCode": 200,
-                    "headers": {"Content-Type": "application/json"},
-                    "body": json.dumps({
-                        "status": "success",
-                        "key_id": key_id,
-                        "order_id": rzp_order["id"],
-                        "amount": rzp_order["amount"],
-                        "currency": rzp_order["currency"]
-                    })
                 }
+                resp = requests.post(rzp_url, auth=HTTPBasicAuth(key_id, key_secret), json=rzp_payload, timeout=10)
+                if resp.status_code in (200, 201):
+                    rzp_order = resp.json()
+                    return {
+                        "statusCode": 200,
+                        "headers": {"Content-Type": "application/json"},
+                        "body": json.dumps({
+                            "status": "success",
+                            "key_id": key_id,
+                            "order_id": rzp_order["id"],
+                            "amount": rzp_order["amount"],
+                            "currency": rzp_order["currency"]
+                        })
+                    }
+                else:
+                    return {
+                        "statusCode": 500,
+                        "headers": {"Content-Type": "application/json"},
+                        "body": json.dumps({"detail": f"Razorpay API error: {resp.text}"})
+                    }
             except Exception as e:
                 pass
 

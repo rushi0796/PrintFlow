@@ -97,6 +97,28 @@ class RazorpayOrderRequest(BaseModel):
     customer_id: Optional[str] = "CUST_001"
     currency: Optional[str] = "INR"
 
+class ReviewerLoginRequest(BaseModel):
+    mobile: Optional[str] = "9999999999"
+    access_key: str
+
+@app.post("/api/reviewer-login")
+@app.post("/reviewer-login")
+def reviewer_login(req: ReviewerLoginRequest):
+    expected_key = os.environ.get("REVIEWER_ACCESS_KEY", "Reviewer@2026")
+    if req.access_key.strip() != expected_key:
+        raise HTTPException(status_code=401, detail="Invalid Reviewer Access Key. Please enter valid reviewer credentials.")
+    
+    formatted_mobile = (req.mobile or "9999999999").strip()
+    if not formatted_mobile.startswith("+91"):
+        formatted_mobile = f"+91{formatted_mobile.lstrip('+91')}"
+    
+    return {
+        "status": "success",
+        "message": "Reviewer authentication successful",
+        "mobile": formatted_mobile,
+        "is_reviewer": True
+    }
+
 @app.get("/api/orders")
 def get_all_orders():
     orders_db[:] = load_orders()
@@ -178,21 +200,30 @@ def create_razorpay_order(request: RazorpayOrderRequest):
 
     if key_secret and key_id:
         try:
-            import razorpay
-            client = razorpay.Client(auth=(key_id, key_secret))
-            razorpay_order = client.order.create({
+            import requests
+            from requests.auth import HTTPBasicAuth
+            rzp_url = "https://api.razorpay.com/v1/orders"
+            rzp_payload = {
                 "amount": amount_in_paise,
                 "currency": request.currency or "INR",
                 "receipt": order_id,
                 "payment_capture": 1
-            })
-            return {
-                "status": "success",
-                "key_id": key_id,
-                "order_id": razorpay_order["id"],
-                "amount": razorpay_order["amount"],
-                "currency": razorpay_order["currency"]
             }
+            resp = requests.post(rzp_url, auth=HTTPBasicAuth(key_id, key_secret), json=rzp_payload, timeout=10)
+            if resp.status_code in (200, 201):
+                razorpay_order = resp.json()
+                return {
+                    "status": "success",
+                    "key_id": key_id,
+                    "order_id": razorpay_order["id"],
+                    "amount": razorpay_order["amount"],
+                    "currency": razorpay_order["currency"]
+                }
+            else:
+                print("Razorpay API Error Response:", resp.status_code, resp.text)
+                raise HTTPException(status_code=500, detail=f"Razorpay API Error: {resp.text}")
+        except HTTPException:
+            raise
         except Exception as err:
             print("Razorpay API order creation error:", err)
             raise HTTPException(status_code=500, detail=f"Razorpay order creation failed: {str(err)}")
