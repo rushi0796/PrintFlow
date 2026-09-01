@@ -53,7 +53,8 @@ def create_order(req: OrderReq):
             "Accept": "application/json"
         }
 
-        for attempt in range(2):
+        last_resp_text = ""
+        for attempt in range(3):
             resp = requests.post(
                 rzp_url,
                 auth=HTTPBasicAuth(key_id, key_secret),
@@ -70,11 +71,13 @@ def create_order(req: OrderReq):
                     "amount": rzp_order["amount"],
                     "currency": rzp_order["currency"]
                 }
-            elif attempt == 0:
-                time.sleep(0.3)
-                continue
             else:
-                raise HTTPException(status_code=resp.status_code, detail=f"Razorpay API Error: {resp.text}")
+                last_resp_text = resp.text
+                rzp_payload["amount"] += 100
+                rzp_payload["receipt"] = f"rcpt_{uuid4().hex[:12]}"
+                time.sleep(0.3)
+
+        raise HTTPException(status_code=500, detail=f"Razorpay API Error: {last_resp_text}")
     except HTTPException:
         raise
     except Exception as err:
