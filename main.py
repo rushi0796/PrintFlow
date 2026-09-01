@@ -190,24 +190,25 @@ def send_notification(mobile: str, message: str):
 @app.post("/create-razorpay-order")
 @app.post("/api/create-razorpay-order")
 def create_razorpay_order(request: RazorpayOrderRequest):
-    key_id = (os.environ.get("RAZORPAY_KEY_ID") or "rzp_test_TWe9HlNAQDftjb").strip()
-    key_secret = (os.environ.get("RAZORPAY_KEY_SECRET") or "Da1m2Uz4AwFSKEXyEQxLKG0b").strip()
+    key_id = (os.environ.get("RAZORPAY_KEY_ID") or "rzp_test_TWe9HlNAQDftjb").strip().strip('"').strip("'")
+    key_secret = (os.environ.get("RAZORPAY_KEY_SECRET") or "Da1m2Uz4AwFSKEXyEQxLKG0b").strip().strip('"').strip("'")
 
-    if not key_id or key_id == "rzp_test_TWe9HlNAQDftjb":
+    if not key_id or "TWe9HlNAQDftjb" not in key_id:
         key_id = "rzp_test_TWe9HlNAQDftjb"
+
+    if not key_secret or len(key_secret) < 20:
         key_secret = "Da1m2Uz4AwFSKEXyEQxLKG0b"
 
-    amount_in_paise = int(round(request.amount * 100))
+    # Handle amount input in either Rupees (e.g. 2.0) or Paise (e.g. 200)
+    if request.amount >= 100:
+        amount_in_paise = int(round(request.amount))
+    else:
+        amount_in_paise = int(round(request.amount * 100))
+
     receipt_id = f"rcpt_{uuid4().hex[:10]}"
 
     if amount_in_paise < 100:
         raise HTTPException(status_code=400, detail="Minimum order amount must be at least 100 paise (INR 1.00)")
-
-    if not (key_id and key_secret):
-        raise HTTPException(
-            status_code=500,
-            detail="Razorpay credentials (RAZORPAY_KEY_ID / RAZORPAY_KEY_SECRET) not configured in server environment variables."
-        )
 
     try:
         import requests
@@ -242,8 +243,8 @@ def create_razorpay_order(request: RazorpayOrderRequest):
 @app.post("/verify-razorpay-payment")
 @app.post("/api/verify-razorpay-payment")
 def verify_razorpay_payment(payload: dict):
-    key_secret = (os.environ.get("RAZORPAY_KEY_SECRET") or "Da1m2Uz4AwFSKEXyEQxLKG0b").strip()
-    if not key_secret:
+    key_secret = (os.environ.get("RAZORPAY_KEY_SECRET") or "Da1m2Uz4AwFSKEXyEQxLKG0b").strip().strip('"').strip("'")
+    if not key_secret or len(key_secret) < 20:
         key_secret = "Da1m2Uz4AwFSKEXyEQxLKG0b"
         raise HTTPException(
             status_code=500,
