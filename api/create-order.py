@@ -26,11 +26,12 @@ class OrderReq(BaseModel):
 @app.post("/create-razorpay-order")
 def create_order(req: OrderReq):
     key_id = (os.environ.get("RAZORPAY_KEY_ID") or "rzp_test_TWe9HlNAQDftjb").strip().strip('"').strip("'")
-    key_secret = (os.environ.get("RAZORPAY_KEY_SECRET") or "Da1m2Uz4AwFSKEXyEQxLKG0b").strip().strip('"').strip("'")
-
+    
     if not key_id or "TWe9HlNAQDftjb" in key_id or key_id == "rzp_test_sampleKey123":
         key_id = "rzp_test_TWe9HlNAQDftjb"
         key_secret = "Da1m2Uz4AwFSKEXyEQxLKG0b"
+    else:
+        key_secret = (os.environ.get("RAZORPAY_KEY_SECRET") or "Da1m2Uz4AwFSKEXyEQxLKG0b").strip().strip('"').strip("'")
 
     if req.amount >= 100:
         amount_in_paise = int(round(req.amount))
