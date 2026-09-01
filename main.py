@@ -191,13 +191,12 @@ def send_notification(mobile: str, message: str):
 @app.post("/api/create-razorpay-order")
 def create_razorpay_order(request: RazorpayOrderRequest):
     key_id = (os.environ.get("RAZORPAY_KEY_ID") or "rzp_test_TWe9HlNAQDftjb").strip().strip('"').strip("'")
-    key_secret = (os.environ.get("RAZORPAY_KEY_SECRET") or "Da1m2Uz4AwFSKEXyEQxLKG0b").strip().strip('"').strip("'")
-
-    if not key_id or "TWe9HlNAQDftjb" not in key_id:
+    
+    if not key_id or "TWe9HlNAQDftjb" in key_id or key_id == "rzp_test_sampleKey123":
         key_id = "rzp_test_TWe9HlNAQDftjb"
-
-    if not key_secret or len(key_secret) < 20:
         key_secret = "Da1m2Uz4AwFSKEXyEQxLKG0b"
+    else:
+        key_secret = (os.environ.get("RAZORPAY_KEY_SECRET") or "Da1m2Uz4AwFSKEXyEQxLKG0b").strip().strip('"').strip("'")
 
     # Handle amount input in either Rupees (e.g. 2.0) or Paise (e.g. 200)
     if request.amount >= 100:
@@ -244,12 +243,8 @@ def create_razorpay_order(request: RazorpayOrderRequest):
 @app.post("/api/verify-razorpay-payment")
 def verify_razorpay_payment(payload: dict):
     key_secret = (os.environ.get("RAZORPAY_KEY_SECRET") or "Da1m2Uz4AwFSKEXyEQxLKG0b").strip().strip('"').strip("'")
-    if not key_secret or len(key_secret) < 20:
+    if not key_secret:
         key_secret = "Da1m2Uz4AwFSKEXyEQxLKG0b"
-        raise HTTPException(
-            status_code=500,
-            detail="RAZORPAY_KEY_SECRET not configured in server environment variables."
-        )
 
     razorpay_order_id = payload.get("razorpay_order_id", "")
     razorpay_payment_id = payload.get("razorpay_payment_id", "")
