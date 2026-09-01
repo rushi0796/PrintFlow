@@ -1,5 +1,6 @@
 import os
 import json
+import time
 from uuid import uuid4
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -37,7 +38,7 @@ def create_order(req: OrderReq):
     if amount_in_paise < 100:
         raise HTTPException(status_code=400, detail="Minimum order amount must be at least 100 paise (INR 1.00)")
 
-    receipt_id = f"rcpt_{uuid4().hex[:10]}"
+    receipt_id = f"rcpt_{uuid4().hex[:12]}"
 
     try:
         rzp_url = "https://api.razorpay.com/v1/orders"
@@ -47,18 +48,33 @@ def create_order(req: OrderReq):
             "receipt": receipt_id,
             "payment_capture": 1
         }
-        resp = requests.post(rzp_url, auth=HTTPBasicAuth(key_id, key_secret), json=rzp_payload, timeout=15)
-        if resp.status_code in (200, 201):
-            rzp_order = resp.json()
-            return {
-                "status": "success",
-                "key_id": key_id,
-                "order_id": rzp_order["id"],
-                "amount": rzp_order["amount"],
-                "currency": rzp_order["currency"]
-            }
-        else:
-            raise HTTPException(status_code=resp.status_code, detail=f"Razorpay API Error: {resp.text}")
+        headers = {
+            "User-Agent": "Razorpay/v1 PythonSDK/1.4.0",
+            "Accept": "application/json"
+        }
+
+        for attempt in range(2):
+            resp = requests.post(
+                rzp_url,
+                auth=HTTPBasicAuth(key_id, key_secret),
+                headers=headers,
+                json=rzp_payload,
+                timeout=15
+            )
+            if resp.status_code in (200, 201):
+                rzp_order = resp.json()
+                return {
+                    "status": "success",
+                    "key_id": key_id,
+                    "order_id": rzp_order["id"],
+                    "amount": rzp_order["amount"],
+                    "currency": rzp_order["currency"]
+                }
+            elif attempt == 0:
+                time.sleep(0.3)
+                continue
+            else:
+                raise HTTPException(status_code=resp.status_code, detail=f"Razorpay API Error: {resp.text}")
     except HTTPException:
         raise
     except Exception as err:
