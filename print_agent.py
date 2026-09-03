@@ -159,6 +159,16 @@ def run_agent():
     agent_token = (os.environ.get("PRINT_AGENT_TOKEN") or config.get("agent_token", "PF_AGENT_SECRET_TOKEN_2026")).strip()
     poll_interval = int(config.get("poll_interval_seconds", 3))
 
+    # Perform safe startup cleanup of any orphaned temporary files
+    if TEMP_DOWNLOAD_DIR.exists():
+        for item in TEMP_DOWNLOAD_DIR.glob("*"):
+            if item.is_file():
+                try:
+                    item.unlink()
+                    print(f"[AGENT STARTUP CLEANUP] Removed orphaned temporary file: {item.name}")
+                except Exception:
+                    pass
+
     print(f" Target Backend: {backend_url}")
     print(f" Poll Interval : {poll_interval} seconds")
     print(" Agent Status   : STARTING...\n")
@@ -253,6 +263,15 @@ def run_agent():
                     )
                     with urllib.request.urlopen(comp_req, timeout=10) as comp_resp:
                         print(f"[AGENT JOB COMPLETED] Order {order_id} marked COMPLETED on backend!")
+
+                    # 6. Wait 2.5 seconds & securely delete local downloaded copy
+                    time.sleep(2.5)
+                    if local_file.exists() and local_file.is_file():
+                        try:
+                            local_file.unlink()
+                            print(f"[AGENT LOCAL PRIVACY CLEANUP] Local temp file '{local_file.name}' deleted 2.5s after printing.")
+                        except Exception as c_err:
+                            print(f"[AGENT LOCAL CLEANUP ERROR]: {c_err}")
 
                 except Exception as print_err:
                     print(f"[AGENT PRINT ERROR] Order {order_id} printing failed: {print_err}")

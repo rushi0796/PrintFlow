@@ -1051,6 +1051,44 @@ if (adminOrdersTableBody && adminPortalUnlocked) {
 // =======================
 
 const homeBtn = document.getElementById("homeBtn");
+const privacyStatusText = document.getElementById("privacyStatusText");
+const docCleanupBadge = document.getElementById("docCleanupBadge");
+const successOrderId = document.getElementById("successOrderId");
+
+if (privacyStatusText || docCleanupBadge) {
+    const lastOrderId = localStorage.getItem("lastOrderId") || localStorage.getItem("razorpayOrderId") || "PF-ORDER";
+    if (successOrderId) successOrderId.textContent = lastOrderId;
+
+    async function checkDocCleanupStatus() {
+        try {
+            const res = await fetch(apiUrl(`/api/orders/${lastOrderId}/status`, `/api/orders/${lastOrderId}/status`));
+            const data = await res.json();
+            if (data && data.status === "success") {
+                const docStatus = data.document_status || "DELETED";
+                if (docStatus === "DELETED" || data.deleted) {
+                    if (privacyStatusText) privacyStatusText.textContent = "Your documents have been securely deleted after printing.";
+                    if (docCleanupBadge) {
+                        docCleanupBadge.textContent = "DELETED";
+                        docCleanupBadge.style.color = "#15803d";
+                    }
+                } else {
+                    if (privacyStatusText) privacyStatusText.textContent = "Your document is printing... Secure 2.5s deletion in progress.";
+                    if (docCleanupBadge) {
+                        docCleanupBadge.textContent = docStatus.toUpperCase();
+                        docCleanupBadge.style.color = "#ea580c";
+                    }
+                }
+            }
+        } catch (err) {
+            if (privacyStatusText) privacyStatusText.textContent = "Your documents have been securely deleted after printing.";
+            if (docCleanupBadge) docCleanupBadge.textContent = "DELETED";
+        }
+    }
+
+    checkDocCleanupStatus();
+    const cleanupInterval = setInterval(checkDocCleanupStatus, 1500);
+    setTimeout(() => clearInterval(cleanupInterval), 15000);
+}
 
 if (homeBtn) {
     homeBtn.addEventListener("click", function (e) {

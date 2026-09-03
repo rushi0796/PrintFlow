@@ -149,6 +149,37 @@ AGENT_STATE = {
     "printers": []
 }
 
+import threading
+
+def schedule_secure_document_cleanup(order_id: str, delay_seconds: float = 2.5):
+    def _cleanup_worker():
+        time.sleep(delay_seconds)
+        orders_db[:] = load_orders()
+        for order in orders_db:
+            if order.get("order_id") == order_id or order.get("razorpay_order_id") == order_id:
+                order["document_status"] = "DELETING"
+                file_rel_path = order.get("file_path", "")
+                if file_rel_path:
+                    clean_name = Path(file_rel_path).name
+                    allowed_exts = {".pdf", ".png", ".jpg", ".jpeg", ".webp", ".doc", ".docx", ".txt"}
+                    file_ext = Path(clean_name).suffix.lower()
+                    if file_ext in allowed_exts:
+                        target_file = UPLOAD_DIR / clean_name
+                        if target_file.exists() and target_file.is_file():
+                            try:
+                                target_file.unlink()
+                                print(f"[PRIVACY CLEANUP SUCCESS] Document '{clean_name}' for Order {order_id} deleted from disk 2.5s after completion.")
+                            except Exception as e:
+                                print(f"[PRIVACY CLEANUP ERROR]: {e}")
+                order["file_path"] = ""
+                order["document_status"] = "DELETED"
+                order["deleted_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                save_orders(orders_db)
+                break
+
+    thread = threading.Thread(target=_cleanup_worker, daemon=True)
+    thread.start()
+
 def verify_agent_token(header_token: Optional[str]):
     expected_token = (os.environ.get("PRINT_AGENT_TOKEN") or "PF_AGENT_SECRET_TOKEN_2026").strip()
     if not header_token or header_token.strip() != expected_token:
@@ -162,6 +193,7 @@ def queue_order_for_printing(payload: dict):
     for order in orders_db:
         if order.get("order_id") == order_id or order.get("razorpay_order_id") == order_id:
             order["status"] = "PRINT_QUEUED"
+            order["document_status"] = "UPLOADED"
             order["paid"] = True
             save_orders(orders_db)
             return
@@ -175,6 +207,7 @@ def queue_order_for_printing(payload: dict):
         "customer_mobile": payload.get("customer_mobile", "Guest"),
         "amount": payload.get("amount", 2.0),
         "status": "PRINT_QUEUED",
+        "document_status": "UPLOADED",
         "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     }
     orders_db.insert(0, new_queued)
@@ -206,6 +239,7 @@ def agent_claim_endpoint(order_id: str, x_print_agent_token: Optional[str] = Hea
             if order.get("status") == "PRINTING":
                 raise HTTPException(status_code=409, detail="Order already claimed by another agent worker")
             order["status"] = "PRINTING"
+            order["document_status"] = "PRINTING"
             order["claimed_at"] = time.time()
             save_orders(orders_db)
             return {"status": "success", "message": f"Order {order_id} claimed successfully"}
@@ -219,13 +253,40 @@ def agent_complete_endpoint(order_id: str, req: dict, x_print_agent_token: Optio
     for order in orders_db:
         if order["order_id"] == order_id:
             order["status"] = status_val
-            if "error" in req:
-                order["print_error"] = req["error"]
+            if status_val in ("COMPLETED", "Completed"):
+                order["document_status"] = "PRINTED"
+                save_orders(orders_db)
+                schedule_secure_document_cleanup(order_id, 2.5)
+            elif status_val == "FAILED":
+                order["document_status"] = "UPLOADED" # Retain file for retry
+                if "error" in req:
+                    order["print_error"] = req["error"]
+                save_orders(orders_db)
             if "printed_by_printer" in req:
                 order["printed_by_printer"] = req["printed_by_printer"]
-            save_orders(orders_db)
             return {"status": "success", "message": f"Order {order_id} state updated to {status_val}"}
     raise HTTPException(status_code=404, detail="Order not found")
+
+@app.get("/api/orders/{order_id}/status")
+@app.get("/api/orders/status/{order_id}")
+def get_order_status_endpoint(order_id: str):
+    orders_db[:] = load_orders()
+    for order in orders_db:
+        if order.get("order_id") == order_id or order.get("razorpay_order_id") == order_id:
+            return {
+                "status": "success",
+                "order_id": order_id,
+                "order_status": order.get("status", "COMPLETED"),
+                "document_status": order.get("document_status", "DELETED"),
+                "deleted": order.get("document_status") == "DELETED" or not bool(order.get("file_path"))
+            }
+    return {
+        "status": "success",
+        "order_id": order_id,
+        "order_status": "COMPLETED",
+        "document_status": "DELETED",
+        "deleted": True
+    }
 
 @app.get("/api/agent/status")
 def agent_status_endpoint():
