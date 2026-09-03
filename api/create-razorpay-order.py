@@ -31,10 +31,20 @@ def create_order(req: OrderReq):
     key_id = os.environ.get("RAZORPAY_KEY_ID", "").strip().strip('"').strip("'")
     key_secret = os.environ.get("RAZORPAY_KEY_SECRET", "").strip().strip('"').strip("'")
 
-    if not key_id or key_id == "rzp_test_TWGrV0gzRBl5iz" or "TWe9HlNAQDftjb" in key_id or key_id == "rzp_test_sampleKey123":
-        key_id = "rzp_test_TWe9HlNAQDftjb"
-        key_secret = "Da1m2Uz4AwFSKEXyEQxLKG0b"
+    # Safe diagnostic logging (NEVER logs key_secret)
+    has_key_id = bool(key_id)
+    has_key_secret = bool(key_secret)
+    is_test_key = key_id.startswith("rzp_test_")
+    masked_key_id = f"{key_id[:8]}...{key_id[-4:]}" if len(key_id) > 12 else ("PRESENT" if key_id else "MISSING")
+    print(f"[RAZORPAY DIAGNOSTIC] KEY_ID present: {has_key_id}, Starts with rzp_test_: {is_test_key}, Key ID: {masked_key_id}, KEY_SECRET present: {has_key_secret}")
 
+    if not key_id or not key_secret:
+        raise HTTPException(
+            status_code=400,
+            detail="Razorpay credentials not configured. Please set RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET in Vercel environment variables."
+        )
+
+    # Handle amount input in either Rupees (e.g. 4.0) or Paise (e.g. 400)
     if req.amount >= 100:
         amount_in_paise = int(round(req.amount))
     else:
@@ -58,30 +68,24 @@ def create_order(req: OrderReq):
             "Accept": "application/json"
         }
 
-        last_resp_text = ""
-        for attempt in range(3):
-            resp = requests.post(
-                rzp_url,
-                auth=HTTPBasicAuth(key_id, key_secret),
-                headers=headers,
-                json=rzp_payload,
-                timeout=15
-            )
-            if resp.status_code in (200, 201):
-                rzp_order = resp.json()
-                return {
-                    "status": "success",
-                    "key_id": key_id,
-                    "order_id": rzp_order["id"],
-                    "amount": rzp_order["amount"],
-                    "currency": rzp_order["currency"]
-                }
-            else:
-                last_resp_text = resp.text
-                rzp_payload["receipt"] = f"rcpt_{uuid4().hex[:12]}"
-                time.sleep(0.3)
-
-        raise HTTPException(status_code=500, detail=f"Razorpay API Error: {last_resp_text}")
+        resp = requests.post(
+            rzp_url,
+            auth=HTTPBasicAuth(key_id, key_secret),
+            headers=headers,
+            json=rzp_payload,
+            timeout=15
+        )
+        if resp.status_code in (200, 201):
+            rzp_order = resp.json()
+            return {
+                "status": "success",
+                "key_id": key_id,
+                "order_id": rzp_order["id"],
+                "amount": rzp_order["amount"],
+                "currency": rzp_order["currency"]
+            }
+        else:
+            raise HTTPException(status_code=resp.status_code, detail=f"Razorpay API Error: {resp.text}")
     except HTTPException:
         raise
     except Exception as err:

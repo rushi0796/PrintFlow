@@ -193,11 +193,20 @@ def create_razorpay_order(request: RazorpayOrderRequest):
     key_id = os.environ.get("RAZORPAY_KEY_ID", "").strip().strip('"').strip("'")
     key_secret = os.environ.get("RAZORPAY_KEY_SECRET", "").strip().strip('"').strip("'")
 
-    if not key_id or key_id == "rzp_test_TWGrV0gzRBl5iz" or "TWe9HlNAQDftjb" in key_id or key_id == "rzp_test_sampleKey123":
-        key_id = "rzp_test_TWe9HlNAQDftjb"
-        key_secret = "Da1m2Uz4AwFSKEXyEQxLKG0b"
+    # Safe diagnostic logging (NEVER logs key_secret)
+    has_key_id = bool(key_id)
+    has_key_secret = bool(key_secret)
+    is_test_key = key_id.startswith("rzp_test_")
+    masked_key_id = f"{key_id[:8]}...{key_id[-4:]}" if len(key_id) > 12 else ("PRESENT" if key_id else "MISSING")
+    print(f"[RAZORPAY DIAGNOSTIC] KEY_ID present: {has_key_id}, Starts with rzp_test_: {is_test_key}, Key ID: {masked_key_id}, KEY_SECRET present: {has_key_secret}")
 
-    # Handle amount input in either Rupees (e.g. 2.0) or Paise (e.g. 200)
+    if not key_id or not key_secret:
+        raise HTTPException(
+            status_code=400,
+            detail="Razorpay credentials not configured. Please set RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET in server environment variables."
+        )
+
+    # Handle amount input in either Rupees (e.g. 4.0) or Paise (e.g. 400)
     if request.amount >= 100:
         amount_in_paise = int(round(request.amount))
     else:
@@ -246,10 +255,11 @@ def create_razorpay_order(request: RazorpayOrderRequest):
 @app.post("/api/verify-razorpay-payment")
 def verify_razorpay_payment(payload: dict):
     key_secret = os.environ.get("RAZORPAY_KEY_SECRET", "").strip().strip('"').strip("'")
-    if not key_secret or key_secret != "Da1m2Uz4AwFSKEXyEQxLKG0b":
-        key_secret = "Da1m2Uz4AwFSKEXyEQxLKG0b"
+    has_key_secret = bool(key_secret)
+    print(f"[RAZORPAY VERIFY DIAGNOSTIC] KEY_SECRET present: {has_key_secret}")
+
     if not key_secret:
-        key_secret = "Da1m2Uz4AwFSKEXyEQxLKG0b"
+        raise HTTPException(status_code=400, detail="RAZORPAY_KEY_SECRET not configured in server environment variables.")
 
     razorpay_order_id = payload.get("razorpay_order_id", "")
     razorpay_payment_id = payload.get("razorpay_payment_id", "")

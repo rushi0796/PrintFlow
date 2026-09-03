@@ -20,8 +20,16 @@ app.add_middleware(
 @app.post("/api/verify-razorpay-payment")
 def verify_payment(payload: dict):
     key_secret = os.environ.get("RAZORPAY_KEY_SECRET", "").strip().strip('"').strip("'")
-    if not key_secret or key_secret != "Da1m2Uz4AwFSKEXyEQxLKG0b":
-        key_secret = "Da1m2Uz4AwFSKEXyEQxLKG0b"
+
+    # Safe diagnostic logging (NEVER logs key_secret)
+    has_key_secret = bool(key_secret)
+    print(f"[RAZORPAY VERIFY DIAGNOSTIC] KEY_SECRET present: {has_key_secret}")
+
+    if not key_secret:
+        raise HTTPException(
+            status_code=400,
+            detail="RAZORPAY_KEY_SECRET not configured in server environment variables."
+        )
 
     razorpay_order_id = payload.get("razorpay_order_id", "")
     razorpay_payment_id = payload.get("razorpay_payment_id", "")
