@@ -93,6 +93,8 @@ class PrintOrder(BaseModel):
 
 class RazorpayOrderRequest(BaseModel):
     amount: float
+    pages: Optional[int] = None
+    copies: Optional[int] = None
     order_id: Optional[str] = None
     customer_id: Optional[str] = "CUST_001"
     currency: Optional[str] = "INR"
@@ -419,6 +421,14 @@ def create_razorpay_order(request: RazorpayOrderRequest):
     else:
         amount_in_paise = int(round(request.amount * 100))
 
+    # Backend independent amount validation formula: Page Count × Copies × ₹2
+    if request.pages and request.copies and request.pages > 0 and request.copies > 0:
+        expected_rupees = request.pages * request.copies * 2.0
+        expected_paise = int(round(expected_rupees * 100))
+        if amount_in_paise < expected_paise:
+            print(f"[PRICING VALIDATION] Correcting amount from {amount_in_paise}p to {expected_paise}p ({request.pages} pages x {request.copies} copies x Rs.2)")
+            amount_in_paise = expected_paise
+
     receipt_id = f"rcpt_{uuid4().hex[:10]}"
 
     if amount_in_paise < 100:
@@ -486,9 +496,16 @@ def verify_razorpay_payment(payload: dict):
     if not hmac.compare_digest(generated_signature, razorpay_signature):
         raise HTTPException(status_code=400, detail="Invalid Razorpay payment signature - payment verification failed")
 
+    # Queue print job for local Windows PrintAgent
+    try:
+        queue_order_for_printing(payload)
+    except Exception as q_err:
+        print("[QUEUE PRINT JOB EXCEPTION]:", q_err)
+
     return {
         "status": "success",
-        "message": "Razorpay Payment verified successfully",
+        "message": "Razorpay Payment verified successfully. Job queued for PrintAgent.",
+        "order_status": "PRINT_QUEUED",
         "payload": payload
     }
 

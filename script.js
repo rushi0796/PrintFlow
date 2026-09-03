@@ -497,6 +497,13 @@ if (paymentBtn) {
             localStorage.setItem("printSide", selectedSide.value);
         }
 
+        const selectedColor = document.querySelector(
+            'input[name="colorMode"]:checked'
+        );
+        if (selectedColor) {
+            localStorage.setItem("colorMode", selectedColor.value);
+        }
+
         const selectedOrientation = document.querySelector(
             'input[name="orientation"]:checked'
         );
@@ -515,6 +522,7 @@ if (paymentBtn) {
 
 const paymentFile = document.getElementById("paymentFile");
 const paymentCopies = document.getElementById("paymentCopies");
+const paymentColorMode = document.getElementById("paymentColorMode");
 const paymentAmount = document.getElementById("paymentAmount");
 const paymentSide = document.getElementById("paymentSide");
 const paymentOrientation = document.getElementById("paymentOrientation");
@@ -525,6 +533,7 @@ if (paymentFile && paymentCopies && paymentAmount) {
     const fileNameVal = localStorage.getItem("fileName") || "No file selected";
     const copiesVal = localStorage.getItem("copies") || "1";
     const amountVal = localStorage.getItem("amount") || "2";
+    const colorModeVal = localStorage.getItem("colorMode") || "black_white";
     const printSideVal = localStorage.getItem("printSide") || "single";
     const orientationVal = localStorage.getItem("orientation") || "portrait";
 
@@ -532,6 +541,11 @@ if (paymentFile && paymentCopies && paymentAmount) {
     paymentCopies.textContent = "Copies: " + copiesVal;
     paymentAmount.textContent = "Total Amount: ₹" + amountVal;
 
+    if (paymentColorMode) {
+        paymentColorMode.textContent =
+            "Color Mode: " +
+            (colorModeVal === "color" ? "Color Print 🎨" : "Black & White (B&W)");
+    }
     if (paymentSide) {
         paymentSide.textContent =
             "Print Side: " +
@@ -622,6 +636,7 @@ if (payBtn) {
             const fileNameVal = localStorage.getItem("fileName") || "document.pdf";
             const copiesVal = parseInt(localStorage.getItem("copies") || "1", 10);
             const pageCountVal = parseInt(localStorage.getItem("pdfPageCount") || "1", 10);
+            const colorModeVal = localStorage.getItem("colorMode") || "black_white";
             const printSideVal = localStorage.getItem("printSide") || "double";
             const orientationVal = localStorage.getItem("orientation") || "portrait";
             const rawMobile = localStorage.getItem("mobileNumber") || "9876543210";
@@ -634,7 +649,7 @@ if (payBtn) {
                     file_name: fileNameVal,
                     copies: copiesVal,
                     pages: pageCountVal,
-                    color_mode: "black_white",
+                    color_mode: colorModeVal,
                     duplex: printSideVal,
                     orientation: orientationVal,
                     customer_mobile: cleanContact,
@@ -654,6 +669,8 @@ if (payBtn) {
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                     amount: parseFloat(amountVal),
+                    pages: pageCountVal,
+                    copies: copiesVal,
                     order_id: `PF_ORDER_${Date.now()}`
                 })
             });

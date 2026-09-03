@@ -1,6 +1,7 @@
 import os
 import json
 import time
+from typing import Optional
 from uuid import uuid4
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -20,6 +21,8 @@ app.add_middleware(
 
 class OrderReq(BaseModel):
     amount: float
+    pages: Optional[int] = None
+    copies: Optional[int] = None
     currency: str = "INR"
     order_id: str = None
 
@@ -45,6 +48,14 @@ def create_order(req: OrderReq):
         amount_in_paise = int(round(req.amount))
     else:
         amount_in_paise = int(round(req.amount * 100))
+
+    # Backend independent amount validation formula: Page Count × Copies × ₹2
+    if req.pages and req.copies and req.pages > 0 and req.copies > 0:
+        expected_rupees = req.pages * req.copies * 2.0
+        expected_paise = int(round(expected_rupees * 100))
+        if amount_in_paise < expected_paise:
+            print(f"[PRICING VALIDATION] Correcting amount from {amount_in_paise}p to {expected_paise}p ({req.pages} pages x {req.copies} copies x Rs.2)")
+            amount_in_paise = expected_paise
 
     if amount_in_paise < 100:
         raise HTTPException(status_code=400, detail="Minimum order amount must be at least 100 paise (INR 1.00)")
