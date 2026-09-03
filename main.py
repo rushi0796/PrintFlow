@@ -97,27 +97,6 @@ class RazorpayOrderRequest(BaseModel):
     customer_id: Optional[str] = "CUST_001"
     currency: Optional[str] = "INR"
 
-class ReviewerLoginRequest(BaseModel):
-    mobile: Optional[str] = "9999999999"
-    access_key: str
-
-@app.post("/api/reviewer-login")
-@app.post("/reviewer-login")
-def reviewer_login(req: ReviewerLoginRequest):
-    expected_key = os.environ.get("REVIEWER_ACCESS_KEY", "Reviewer@2026")
-    if req.access_key.strip() != expected_key:
-        raise HTTPException(status_code=401, detail="Invalid Reviewer Access Key. Please enter valid reviewer credentials.")
-    
-    formatted_mobile = (req.mobile or "9999999999").strip()
-    if not formatted_mobile.startswith("+91"):
-        formatted_mobile = f"+91{formatted_mobile.lstrip('+91')}"
-    
-    return {
-        "status": "success",
-        "message": "Reviewer authentication successful",
-        "mobile": formatted_mobile,
-        "is_reviewer": True
-    }
 
 @app.get("/api/orders")
 def get_all_orders():
