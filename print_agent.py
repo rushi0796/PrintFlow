@@ -293,14 +293,23 @@ def run_agent():
                         },
                         method="POST"
                     )
+                    print("Polling:", poll_url)
+print("Token:", agent_token)
+
+with urllib.request.urlopen(req, timeout=10) as resp:
+    resp_data = json.loads(resp.read().decode("utf-8"))
+    
                     try:
                         with urllib.request.urlopen(fail_req, timeout=10):
                             pass
                     except Exception:
                         pass
 
-        except Exception as poll_err:
-            pass
+                except Exception as poll_err:
+            print("\n========== POLL ERROR ==========")
+            print(type(poll_err).__name__)
+            print(repr(poll_err))
+            print("================================\n")
 
         time.sleep(poll_interval)
 
