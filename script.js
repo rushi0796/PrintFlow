@@ -929,7 +929,7 @@ function renderAdminOrders(orders) {
                 <td>
                     <div class="action-btn-row">
                         ${order.file_path ? `<a href="${fileUrl}" target="_blank" class="btn-download">⬇️ View</a>` : ''}
-                        ${order.file_path ? `<button type="button" class="btn-print" onclick="printOrderFile('${fileUrl}')">🖨️ Print</button>` : ''}
+                        ${order.file_path ? `<button type="button" class="btn-print" onclick="printOrderFile('${order.order_id}', '${fileUrl}')">🖨️ Print</button>` : ''}
                         ${isPending ? `<button type="button" class="btn-complete" onclick="markOrderCompleted('${order.order_id}')">✅ Complete</button>` : ''}
                     </div>
                 </td>
@@ -940,14 +940,52 @@ function renderAdminOrders(orders) {
     adminOrdersTableBody.innerHTML = html;
 }
 
-window.printOrderFile = function (fileUrl) {
-    if (!fileUrl || fileUrl === "#") return;
-    const printWin = window.open(fileUrl, "_blank");
-    if (printWin) {
-        printWin.focus();
-        setTimeout(() => printWin.print(), 1000);
+window.printOrderFile = async function (orderId, fileUrl) {
+    if (!orderId) return;
+    try {
+        const res = await fetch(apiUrl(`/api/orders/${orderId}/print`, `/api/orders/${orderId}/print`), { method: "POST" });
+        const data = await res.json();
+        console.log("Print job dispatched:", data);
+        alert(`🖨️ ${data.message || 'Print job sent to physical printer queue!'}`);
+        fetchAdminOrders();
+    } catch (err) {
+        if (fileUrl && fileUrl !== "#") {
+            const printWin = window.open(fileUrl, "_blank");
+            if (printWin) {
+                printWin.focus();
+                setTimeout(() => printWin.print(), 1000);
+            }
+        }
     }
 };
+
+const bwPrinterName = document.getElementById("bwPrinterName");
+const colorPrinterName = document.getElementById("colorPrinterName");
+const refreshPrintersBtn = document.getElementById("refreshPrintersBtn");
+
+async function fetchConnectedPrinters() {
+    if (!bwPrinterName && !colorPrinterName) return;
+    try {
+        const res = await fetch(apiUrl("/api/printers", "/api/printers"));
+        const data = await res.json();
+        if (data && data.status === "success") {
+            const cfg = data.config || {};
+            const printers = data.printers || [];
+            
+            const bwTarget = cfg.bw_printer || (printers.find(p => p.is_default) || printers[0] || {}).name || "System Default B&W";
+            const colorTarget = cfg.color_printer || (printers.find(p => p.name.toLowerCase().includes("color")) || printers[0] || {}).name || "System Default Color";
+            
+            if (bwPrinterName) bwPrinterName.textContent = bwTarget;
+            if (colorPrinterName) colorPrinterName.textContent = colorTarget;
+        }
+    } catch (err) {
+        console.warn("Printers fetch error:", err);
+    }
+}
+
+if (refreshPrintersBtn) {
+    refreshPrintersBtn.addEventListener("click", fetchConnectedPrinters);
+}
 
 window.markOrderCompleted = async function (orderId) {
     try {
@@ -978,9 +1016,10 @@ if (adminSearchInput) {
     });
 }
 
-// Initial admin order fetch if on admin.html
+// Initial admin order & printers fetch if on admin.html
 if (adminOrdersTableBody && adminPortalUnlocked) {
     fetchAdminOrders();
+    fetchConnectedPrinters();
     setInterval(fetchAdminOrders, 2000); // Keep the admin queue current while the portal is open.
 }
 

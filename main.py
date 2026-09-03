@@ -159,6 +159,46 @@ def complete_order(order_id: str):
             }
     raise HTTPException(status_code=404, detail="Order not found")
 
+@app.get("/api/printers")
+def get_printers_endpoint():
+    from printer_manager import get_installed_printers, get_printer_config
+    return {
+        "status": "success",
+        "printers": get_installed_printers(),
+        "config": get_printer_config()
+    }
+
+class PrinterConfigRequest(BaseModel):
+    bw_printer: Optional[str] = ""
+    color_printer: Optional[str] = ""
+
+@app.post("/api/printers/config")
+def save_printers_config_endpoint(req: PrinterConfigRequest):
+    from printer_manager import save_printer_config, get_printer_config
+    cfg = get_printer_config()
+    if req.bw_printer is not None:
+        cfg["bw_printer"] = req.bw_printer
+    if req.color_printer is not None:
+        cfg["color_printer"] = req.color_printer
+    saved = save_printer_config(cfg)
+    return {"status": "success", "config": saved}
+
+@app.post("/api/orders/{order_id}/print")
+def print_order_dispatch_endpoint(order_id: str):
+    orders_db[:] = load_orders()
+    for order in orders_db:
+        if order["order_id"] == order_id:
+            from print_dispatcher import dispatch_print_job
+            print_res = dispatch_print_job(order)
+            order["status"] = "Printing"
+            save_orders(orders_db)
+            return {
+                "status": "success",
+                "message": f"Print job for {order_id} dispatched to printer",
+                "dispatch": print_res
+            }
+    raise HTTPException(status_code=404, detail="Order not found")
+
 def send_notification(mobile: str, message: str):
     try:
         print(f"[NOTIFICATION SENT TO {mobile}]: {message}")

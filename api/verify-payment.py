@@ -42,8 +42,17 @@ def verify_payment(payload: dict):
     if not hmac.compare_digest(generated_signature, razorpay_signature):
         raise HTTPException(status_code=400, detail="Invalid Razorpay payment signature")
 
+    # Trigger automatic printer discovery & direct print dispatch
+    print_result = None
+    try:
+        from print_dispatcher import dispatch_print_job
+        print_result = dispatch_print_job(payload)
+    except Exception as print_err:
+        print("[AUTO PRINT DISPATCH ERROR]:", print_err)
+
     return {
         "status": "success",
         "message": "Razorpay Payment verified successfully",
+        "print_dispatch": print_result if print_result else {"status": "queued"},
         "payload": payload
     }
