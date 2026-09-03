@@ -288,6 +288,7 @@ def verify_razorpay_payment(payload: dict):
     }
 
 @app.post("/upload-pdf")
+@app.post("/api/upload-pdf")
 async def upload_pdf(file: UploadFile = File(...)):
     try:
         if not file.filename:
@@ -296,10 +297,12 @@ async def upload_pdf(file: UploadFile = File(...)):
                 detail="No file selected"
             )
 
-        if not file.filename.lower().endswith(".pdf"):
+        allowed_extensions = {".pdf", ".png", ".jpg", ".jpeg", ".webp", ".doc", ".docx", ".txt"}
+        file_ext = Path(file.filename).suffix.lower()
+        if file_ext not in allowed_extensions:
             raise HTTPException(
                 status_code=400,
-                detail="Only PDF files are allowed"
+                detail=f"Unsupported file format '{file_ext}'. Supported formats: PDF, PNG, JPG, JPEG, WEBP, DOC, DOCX, TXT."
             )
 
         original_name = Path(file.filename).name
@@ -316,7 +319,7 @@ async def upload_pdf(file: UploadFile = File(...)):
 
         return {
             "status": "success",
-            "message": "PDF uploaded successfully",
+            "message": "File uploaded successfully",
             "file_name": file.filename,
             "file_path": returned_path
         }
@@ -325,7 +328,7 @@ async def upload_pdf(file: UploadFile = File(...)):
         raise
 
     except Exception as e:
-        print("PDF upload error:", e)
+        print("File upload error:", e)
 
         raise HTTPException(
             status_code=500,

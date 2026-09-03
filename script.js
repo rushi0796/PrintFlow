@@ -268,48 +268,94 @@ if (fileName) {
     }
 }
 
-// File Selection Handler
+// File Selection Handler - Supports PDF, Images, Documents, and Multiple Files
 window.handleFileSelection = function (event) {
     const input = document.getElementById("pdfFile");
-    const file = (event && event.target && event.target.files && event.target.files[0]) || (input && input.files && input.files[0]);
+    const files = (event && event.target && event.target.files) || (input && input.files);
     const nameDisplay = document.getElementById("fileName");
 
-    if (!file) {
+    if (!files || files.length === 0) {
         if (!window.selectedPdfFile && !localStorage.getItem("fileName")) {
-            if (nameDisplay) nameDisplay.textContent = "No PDF Selected";
+            if (nameDisplay) nameDisplay.textContent = "No File Selected";
         }
         return;
     }
 
-    console.log("Selected file:", file);
+    const allowedExts = [".pdf", ".png", ".jpg", ".jpeg", ".webp", ".doc", ".docx", ".txt"];
+    let validFiles = [];
+    for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        const ext = file.name.substring(file.name.lastIndexOf(".")).toLowerCase();
+        if (allowedExts.includes(ext) || file.type.startsWith("image/") || file.type === "application/pdf") {
+            validFiles.push(file);
+        }
+    }
 
-    // Validate PDF file extension / MIME type
-    const isPdf = file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
-
-    if (!isPdf) {
+    if (validFiles.length === 0) {
         if (input) input.value = "";
         window.selectedPdfFile = null;
-        if (nameDisplay) nameDisplay.textContent = "No PDF Selected";
-        showPdfError("📄 Please select a valid PDF file (.pdf)");
+        if (nameDisplay) nameDisplay.textContent = "No File Selected";
+        showPdfError("📄 Please select valid printable files (.pdf, .png, .jpg, .doc, .txt)");
         return;
     }
 
-    // Valid PDF selected - Store REAL File object in global state
-    window.selectedPdfFile = file;
+    window.selectedPdfFiles = validFiles;
+    window.selectedPdfFile = validFiles[0];
 
-    // Immediately update DOM text display to show actual selected filename
-    if (nameDisplay) {
-        nameDisplay.textContent = file.name;
-    }
+    const displayTitle = validFiles.length === 1 ? validFiles[0].name : `${validFiles.length} Files Selected`;
+    if (nameDisplay) nameDisplay.textContent = displayTitle;
+    localStorage.setItem("fileName", displayTitle);
+
     const uploadConfirmation = document.getElementById("uploadConfirmation");
     if (uploadConfirmation) {
-        uploadConfirmation.textContent = `Selected PDF: ${file.name}`;
+        uploadConfirmation.textContent = `Selected: ${displayTitle}`;
         uploadConfirmation.classList.add("is-visible");
     }
 
     hidePdfError();
-    renderPdfPreviewAndCount(file);
-    savePdfFile(file);
+
+    let totalPagesCalculated = 0;
+    let processedCount = 0;
+
+    validFiles.forEach((file) => {
+        const isPdf = file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
+        if (isPdf && typeof pdfjsLib !== "undefined") {
+            const reader = new FileReader();
+            reader.onload = function (e) {
+                const typedarray = new Uint8Array(e.target.result);
+                pdfjsLib.getDocument(typedarray).promise.then(function (pdf) {
+                    totalPagesCalculated += (pdf.numPages || 1);
+                    processedCount++;
+                    if (processedCount === validFiles.length) {
+                        updateTotalPagesDisplay(totalPagesCalculated);
+                    }
+                }).catch(function() {
+                    totalPagesCalculated += 1;
+                    processedCount++;
+                    if (processedCount === validFiles.length) {
+                        updateTotalPagesDisplay(totalPagesCalculated);
+                    }
+                });
+            };
+            reader.readAsArrayBuffer(file);
+        } else {
+            totalPagesCalculated += 1;
+            processedCount++;
+            if (processedCount === validFiles.length) {
+                updateTotalPagesDisplay(totalPagesCalculated);
+            }
+        }
+    });
+
+    function updateTotalPagesDisplay(pages) {
+        const pageCountDisplay = document.getElementById("pageCount");
+        const pageCounterCard = document.getElementById("pageCounterCard");
+        if (pageCountDisplay) pageCountDisplay.textContent = String(pages);
+        if (pageCounterCard) pageCounterCard.classList.add("is-visible");
+        localStorage.setItem("pdfPageCount", String(pages));
+    }
+
+    savePdfFile(validFiles[0]);
 };
 
 if (choosePdfBtn && pdfFile) {

@@ -116,22 +116,23 @@
 
     <div class="logo">🖨️</div>
 
-    <h1>Upload PDF</h1>
+    <h1>Upload Document</h1>
 
     <p class="description">
-        Select your PDF document to print.
+        Select your PDF, image, or document files to print.
     </p>
 
     <input
         type="file"
         id="pdfFile"
-        accept=".pdf"
+        accept=".pdf,.png,.jpg,.jpeg,.webp,.doc,.docx,.txt"
+        multiple
         style="display: none;"
         onchange="if(window.handleFileSelection) window.handleFileSelection(event);"
     >
 
     <button type="button" id="choosePdfBtn" onclick="var el=document.getElementById('pdfFile'); if(el){ el.value=''; el.click(); }">
-        📄 Choose PDF
+        📄 Choose File(s)
     </button>
 
     <!-- PDF First Page Preview Thumbnail Container -->
@@ -140,14 +141,14 @@
     </div>
 
     <p id="fileName" style="font-weight: 700; color: #1e293b; margin-top: 10px;">
-        No PDF Selected
+        No File Selected
     </p>
     <p id="uploadConfirmation" class="upload-confirmation" role="status" aria-live="polite"></p>
     <div id="pageCounterCard" class="page-counter-card" role="status" aria-live="polite">
         <span class="page-counter-icon" aria-hidden="true">📄</span>
         <span>
             <strong id="pageCount" class="page-counter-number">0</strong>
-            <span class="page-counter-label">pages detected in your PDF</span>
+            <span class="page-counter-label">pages detected in your document(s)</span>
         </span>
     </div>
 
@@ -157,7 +158,7 @@
 
     <!-- Inline Validation Error Message below Continue button -->
     <div id="pdfErrorMsg" class="otp-error-msg" style="display: none; margin-top: 18px; margin-bottom: 0;">
-        📄 Please select a PDF file first
+        📄 Please select a printable file first
     </div>
 
 </div>
