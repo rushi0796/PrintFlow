@@ -1,0 +1,8 @@
+{
+  "backend_url": "https://print-flow-mu.vercel.app",
+  "agent_token": "PF_AGENT_SECRET_TOKEN_2026",
+  "poll_interval_seconds": 3,
+  "bw_printer": "",
+  "color_printer": "",
+  "auto_routing": true
+}
