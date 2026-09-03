@@ -189,6 +189,7 @@ def verify_agent_token(header_token: Optional[str]):
         raise HTTPException(status_code=401, detail="Unauthorized PrintAgent Token")
 
 def queue_order_for_printing(payload: dict):
+    print("QUEUE FUNCTION CALLED")
     orders_db[:] = load_orders()
     order_id = payload.get("razorpay_order_id") or payload.get("order_id")
     if not order_id:
