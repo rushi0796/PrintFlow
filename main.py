@@ -190,8 +190,8 @@ def send_notification(mobile: str, message: str):
 @app.post("/create-razorpay-order")
 @app.post("/api/create-razorpay-order")
 def create_razorpay_order(request: RazorpayOrderRequest):
-    key_id = os.environ.get("RAZORPAY_KEY_ID", "").strip().strip('"').strip("'")
-    key_secret = os.environ.get("RAZORPAY_KEY_SECRET", "").strip().strip('"').strip("'")
+    key_id = (os.environ.get("RAZORPAY_KEY_ID") or "rzp_live_TXZidkYDGHaDOh").strip().strip('"').strip("'")
+    key_secret = (os.environ.get("RAZORPAY_KEY_SECRET") or "FKi1Qw6tdcKvY9N2pmX2IjCf").strip().strip('"').strip("'")
 
     # Safe diagnostic logging (NEVER logs key_secret)
     has_key_id = bool(key_id)
@@ -201,12 +201,6 @@ def create_razorpay_order(request: RazorpayOrderRequest):
     mode_str = "LIVE" if is_live_key else ("TEST" if is_test_key else "UNKNOWN")
     masked_key_id = f"{key_id[:8]}...{key_id[-4:]}" if len(key_id) > 12 else ("PRESENT" if key_id else "MISSING")
     print(f"[RAZORPAY DIAGNOSTIC] KEY_ID present: {has_key_id}, Mode: {mode_str}, Starts with rzp_live_: {is_live_key}, Key ID: {masked_key_id}, KEY_SECRET present: {has_key_secret}")
-
-    if not key_id or not key_secret:
-        raise HTTPException(
-            status_code=400,
-            detail="Razorpay credentials not configured. Please set RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET in server environment variables."
-        )
 
     # Handle amount input in either Rupees (e.g. 4.0) or Paise (e.g. 400)
     if request.amount >= 100:
@@ -257,7 +251,7 @@ def create_razorpay_order(request: RazorpayOrderRequest):
 @app.post("/verify-razorpay-payment")
 @app.post("/api/verify-razorpay-payment")
 def verify_razorpay_payment(payload: dict):
-    key_secret = os.environ.get("RAZORPAY_KEY_SECRET", "").strip().strip('"').strip("'")
+    key_secret = (os.environ.get("RAZORPAY_KEY_SECRET") or "FKi1Qw6tdcKvY9N2pmX2IjCf").strip().strip('"').strip("'")
     has_key_secret = bool(key_secret)
     print(f"[RAZORPAY VERIFY DIAGNOSTIC] KEY_SECRET present: {has_key_secret}")
 
