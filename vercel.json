@@ -35,6 +35,26 @@
     {
       "source": "/api/agent/status",
       "destination": "/api/index.py"
+    },
+    {
+      "source": "/api/agent/poll",
+      "destination": "/api/index.py"
+    },
+    {
+      "source": "/api/agent/claim/(.*)",
+      "destination": "/api/index.py"
+    },
+    {
+      "source": "/api/agent/complete/(.*)",
+      "destination": "/api/index.py"
+    },
+    {
+      "source": "/api/orders/(.*)/retry",
+      "destination": "/api/index.py"
+    },
+    {
+      "source": "/api/agent/test-print",
+      "destination": "/api/index.py"
     }
   ],
   "functions": {
