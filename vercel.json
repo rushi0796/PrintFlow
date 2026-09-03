@@ -1,7 +1,5 @@
 {
   "rewrites": [
-
-	
     {
       "source": "/customer",
       "destination": "/login.html"
@@ -33,6 +31,10 @@
     {
       "source": "/verify-payment",
       "destination": "/api/verify-payment.py"
+    },
+    {
+      "source": "/api/agent/status",
+      "destination": "/api/index.py"
     }
   ],
   "functions": {
