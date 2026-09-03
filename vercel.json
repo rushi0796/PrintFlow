@@ -1,5 +1,7 @@
 {
   "rewrites": [
+
+	
     {
       "source": "/customer",
       "destination": "/login.html"
