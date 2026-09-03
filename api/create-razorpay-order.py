@@ -34,9 +34,11 @@ def create_order(req: OrderReq):
     # Safe diagnostic logging (NEVER logs key_secret)
     has_key_id = bool(key_id)
     has_key_secret = bool(key_secret)
+    is_live_key = key_id.startswith("rzp_live_")
     is_test_key = key_id.startswith("rzp_test_")
+    mode_str = "LIVE" if is_live_key else ("TEST" if is_test_key else "UNKNOWN")
     masked_key_id = f"{key_id[:8]}...{key_id[-4:]}" if len(key_id) > 12 else ("PRESENT" if key_id else "MISSING")
-    print(f"[RAZORPAY DIAGNOSTIC] KEY_ID present: {has_key_id}, Starts with rzp_test_: {is_test_key}, Key ID: {masked_key_id}, KEY_SECRET present: {has_key_secret}")
+    print(f"[RAZORPAY DIAGNOSTIC] KEY_ID present: {has_key_id}, Mode: {mode_str}, Starts with rzp_live_: {is_live_key}, Key ID: {masked_key_id}, KEY_SECRET present: {has_key_secret}")
 
     if not key_id or not key_secret:
         raise HTTPException(
@@ -82,7 +84,8 @@ def create_order(req: OrderReq):
                 "key_id": key_id,
                 "order_id": rzp_order["id"],
                 "amount": rzp_order["amount"],
-                "currency": rzp_order["currency"]
+                "currency": rzp_order["currency"],
+                "mode": mode_str
             }
         else:
             raise HTTPException(status_code=resp.status_code, detail=f"Razorpay API Error: {resp.text}")
