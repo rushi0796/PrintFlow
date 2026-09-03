@@ -140,6 +140,137 @@ def create_print_order(order: PrintOrder):
         "order": new_order
     }
 
+import time
+from fastapi import Header
+
+AGENT_STATE = {
+    "last_seen": 0,
+    "status": "OFFLINE",
+    "printers": []
+}
+
+def verify_agent_token(header_token: Optional[str]):
+    expected_token = (os.environ.get("PRINT_AGENT_TOKEN") or "PF_AGENT_SECRET_TOKEN_2026").strip()
+    if not header_token or header_token.strip() != expected_token:
+        raise HTTPException(status_code=401, detail="Unauthorized PrintAgent Token")
+
+def queue_order_for_printing(payload: dict):
+    orders_db[:] = load_orders()
+    order_id = payload.get("razorpay_order_id") or payload.get("order_id")
+    if not order_id:
+        return
+    for order in orders_db:
+        if order.get("order_id") == order_id or order.get("razorpay_order_id") == order_id:
+            order["status"] = "PRINT_QUEUED"
+            order["paid"] = True
+            save_orders(orders_db)
+            return
+    new_queued = {
+        "order_id": order_id,
+        "file_name": payload.get("file_name", "document.pdf"),
+        "file_path": payload.get("file_path", "/uploads/test.pdf"),
+        "color_mode": payload.get("color_mode", "black_white"),
+        "copies": int(payload.get("copies", 1)),
+        "orientation": payload.get("orientation", "portrait"),
+        "customer_mobile": payload.get("customer_mobile", "Guest"),
+        "amount": payload.get("amount", 2.0),
+        "status": "PRINT_QUEUED",
+        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    }
+    orders_db.insert(0, new_queued)
+    save_orders(orders_db)
+
+@app.post("/api/agent/poll")
+def agent_poll_endpoint(req: dict, x_print_agent_token: Optional[str] = Header(None)):
+    verify_agent_token(x_print_agent_token)
+    AGENT_STATE["last_seen"] = time.time()
+    AGENT_STATE["status"] = "ONLINE"
+    if "printers" in req:
+        AGENT_STATE["printers"] = req["printers"]
+
+    orders_db[:] = load_orders()
+    queued_jobs = [o for o in orders_db if o.get("status") in ("PRINT_QUEUED", "Pending")]
+
+    return {
+        "status": "success",
+        "agent_online": True,
+        "jobs": queued_jobs
+    }
+
+@app.post("/api/agent/claim/{order_id}")
+def agent_claim_endpoint(order_id: str, x_print_agent_token: Optional[str] = Header(None)):
+    verify_agent_token(x_print_agent_token)
+    orders_db[:] = load_orders()
+    for order in orders_db:
+        if order["order_id"] == order_id:
+            if order.get("status") == "PRINTING":
+                raise HTTPException(status_code=409, detail="Order already claimed by another agent worker")
+            order["status"] = "PRINTING"
+            order["claimed_at"] = time.time()
+            save_orders(orders_db)
+            return {"status": "success", "message": f"Order {order_id} claimed successfully"}
+    raise HTTPException(status_code=404, detail="Order not found")
+
+@app.post("/api/agent/complete/{order_id}")
+def agent_complete_endpoint(order_id: str, req: dict, x_print_agent_token: Optional[str] = Header(None)):
+    verify_agent_token(x_print_agent_token)
+    orders_db[:] = load_orders()
+    status_val = req.get("status", "COMPLETED")
+    for order in orders_db:
+        if order["order_id"] == order_id:
+            order["status"] = status_val
+            if "error" in req:
+                order["print_error"] = req["error"]
+            if "printed_by_printer" in req:
+                order["printed_by_printer"] = req["printed_by_printer"]
+            save_orders(orders_db)
+            return {"status": "success", "message": f"Order {order_id} state updated to {status_val}"}
+    raise HTTPException(status_code=404, detail="Order not found")
+
+@app.get("/api/agent/status")
+def agent_status_endpoint():
+    is_online = (time.time() - AGENT_STATE.get("last_seen", 0)) < 25
+    from printer_manager import get_installed_printers, get_printer_config
+    return {
+        "status": "success",
+        "agent_online": is_online,
+        "agent_last_seen": AGENT_STATE.get("last_seen", 0),
+        "discovered_printers": AGENT_STATE.get("printers") or get_installed_printers(),
+        "config": get_printer_config()
+    }
+
+@app.post("/api/orders/{order_id}/retry")
+def retry_order_endpoint(order_id: str):
+    orders_db[:] = load_orders()
+    for order in orders_db:
+        if order["order_id"] == order_id:
+            order["status"] = "PRINT_QUEUED"
+            save_orders(orders_db)
+            return {"status": "success", "message": f"Order {order_id} reset to PRINT_QUEUED for retry"}
+    raise HTTPException(status_code=404, detail="Order not found")
+
+@app.post("/api/agent/test-print")
+def test_print_endpoint():
+    orders_db[:] = load_orders()
+    test_id = f"TEST-{uuid4().hex[:6].upper()}"
+    test_order = {
+        "order_id": test_id,
+        "file_name": "test.pdf",
+        "file_path": "/uploads/test.pdf",
+        "color_mode": "black_white",
+        "copies": 1,
+        "pages": 1,
+        "duplex": "single",
+        "orientation": "portrait",
+        "customer_mobile": "+919999999999",
+        "amount": 2.0,
+        "status": "PRINT_QUEUED",
+        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    }
+    orders_db.insert(0, test_order)
+    save_orders(orders_db)
+    return {"status": "success", "message": f"Test print order {test_id} queued", "order": test_order}
+
 @app.post("/api/orders/{order_id}/complete")
 def complete_order(order_id: str):
     orders_db[:] = load_orders()

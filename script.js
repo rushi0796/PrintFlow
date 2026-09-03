@@ -911,8 +911,15 @@ function renderAdminOrders(orders) {
 
     let html = "";
     orders.forEach(order => {
-        const isPending = order.status === "Pending";
+        const isPending = order.status === "Pending" || order.status === "PRINT_QUEUED";
+        const isPrinting = order.status === "PRINTING";
+        const isFailed = order.status === "FAILED";
         const fileUrl = order.file_path ? `${API_BASE}${order.file_path}` : "#";
+
+        let badgeClass = "badge-completed";
+        if (isPending) badgeClass = "badge-pending";
+        if (isPrinting) badgeClass = "badge-pending";
+        if (isFailed) badgeClass = "badge-pending";
 
         html += `
             <tr>
@@ -922,15 +929,16 @@ function renderAdminOrders(orders) {
                 <td>${order.copies || 1} Copies (${order.duplex === 'double' ? 'Double' : 'Single'} Side)</td>
                 <td><strong>₹${order.amount || 2}</strong></td>
                 <td>
-                    <span class="${isPending ? 'badge-pending' : 'badge-completed'}">
-                        ${order.status}
+                    <span class="${badgeClass}">
+                        ${order.status || 'Pending'}
                     </span>
                 </td>
                 <td>
                     <div class="action-btn-row">
                         ${order.file_path ? `<a href="${fileUrl}" target="_blank" class="btn-download">⬇️ View</a>` : ''}
                         ${order.file_path ? `<button type="button" class="btn-print" onclick="printOrderFile('${order.order_id}', '${fileUrl}')">🖨️ Print</button>` : ''}
-                        ${isPending ? `<button type="button" class="btn-complete" onclick="markOrderCompleted('${order.order_id}')">✅ Complete</button>` : ''}
+                        ${(isPending || isFailed) ? `<button type="button" class="btn-complete" style="background:#e0f2fe; color:#0369a1; border-color:#bae6fd;" onclick="retryOrder('${order.order_id}')">🔄 Retry</button>` : ''}
+                        ${order.status !== 'Completed' ? `<button type="button" class="btn-complete" onclick="markOrderCompleted('${order.order_id}')">✅ Complete</button>` : ''}
                     </div>
                 </td>
             </tr>
@@ -940,47 +948,62 @@ function renderAdminOrders(orders) {
     adminOrdersTableBody.innerHTML = html;
 }
 
-window.printOrderFile = async function (orderId, fileUrl) {
+window.retryOrder = async function (orderId) {
     if (!orderId) return;
     try {
-        const res = await fetch(apiUrl(`/api/orders/${orderId}/print`, `/api/orders/${orderId}/print`), { method: "POST" });
+        const res = await fetch(apiUrl(`/api/orders/${orderId}/retry`, `/api/orders/${orderId}/retry`), { method: "POST" });
         const data = await res.json();
-        console.log("Print job dispatched:", data);
-        alert(`🖨️ ${data.message || 'Print job sent to physical printer queue!'}`);
+        alert(`🔄 ${data.message || 'Order reset to PRINT_QUEUED'}`);
         fetchAdminOrders();
     } catch (err) {
-        if (fileUrl && fileUrl !== "#") {
-            const printWin = window.open(fileUrl, "_blank");
-            if (printWin) {
-                printWin.focus();
-                setTimeout(() => printWin.print(), 1000);
-            }
-        }
+        console.warn("Retry order error:", err);
     }
 };
 
+const agentStatusBadge = document.getElementById("agentStatusBadge");
+const testPrintBtn = document.getElementById("testPrintBtn");
 const bwPrinterName = document.getElementById("bwPrinterName");
 const colorPrinterName = document.getElementById("colorPrinterName");
 const refreshPrintersBtn = document.getElementById("refreshPrintersBtn");
 
 async function fetchConnectedPrinters() {
-    if (!bwPrinterName && !colorPrinterName) return;
+    if (!bwPrinterName && !colorPrinterName && !agentStatusBadge) return;
     try {
-        const res = await fetch(apiUrl("/api/printers", "/api/printers"));
+        const res = await fetch(apiUrl("/api/agent/status", "/api/agent/status"));
         const data = await res.json();
         if (data && data.status === "success") {
+            const isOnline = data.agent_online;
+            if (agentStatusBadge) {
+                agentStatusBadge.textContent = isOnline ? "● Agent Online" : "● Agent Offline";
+                agentStatusBadge.style.background = isOnline ? "#dcfce7" : "#fee2e2";
+                agentStatusBadge.style.color = isOnline ? "#16a34a" : "#dc2626";
+            }
+
             const cfg = data.config || {};
-            const printers = data.printers || [];
+            const printers = data.discovered_printers || [];
             
             const bwTarget = cfg.bw_printer || (printers.find(p => p.is_default) || printers[0] || {}).name || "System Default B&W";
-            const colorTarget = cfg.color_printer || (printers.find(p => p.name.toLowerCase().includes("color")) || printers[0] || {}).name || "System Default Color";
+            const colorTarget = cfg.color_printer || (printers.find(p => p.name && p.name.toLowerCase().includes("color")) || printers[0] || {}).name || "System Default Color";
             
             if (bwPrinterName) bwPrinterName.textContent = bwTarget;
             if (colorPrinterName) colorPrinterName.textContent = colorTarget;
         }
     } catch (err) {
-        console.warn("Printers fetch error:", err);
+        console.warn("Agent status fetch error:", err);
     }
+}
+
+if (testPrintBtn) {
+    testPrintBtn.addEventListener("click", async function () {
+        try {
+            const res = await fetch(apiUrl("/api/agent/test-print", "/api/agent/test-print"), { method: "POST" });
+            const data = await res.json();
+            alert(`🖨️ ${data.message || 'Test print queued!'}`);
+            fetchAdminOrders();
+        } catch (err) {
+            alert("⚠️ Failed to trigger test print");
+        }
+    });
 }
 
 if (refreshPrintersBtn) {
