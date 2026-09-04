@@ -441,6 +441,30 @@ const paymentBtn = document.getElementById("paymentBtn");
 const copiesBox = document.getElementById("copies");
 const totalPriceBox = document.getElementById("totalPrice");
 const printDetailsFileName = document.getElementById("fileName");
+const paperSizeBox = document.getElementById("paperSize");
+const pageRangeModeBox = document.getElementById("pageRangeMode");
+const pageRangeBox = document.getElementById("pageRange");
+const printQualityBox = document.getElementById("printQuality");
+const dpiBox = document.getElementById("dpi");
+const scalingBox = document.getElementById("scaling");
+const customScaleBox = document.getElementById("customScale");
+const marginsBox = document.getElementById("margins");
+const previewSummary = document.getElementById("previewSummary");
+
+function countSelectedPages(pageRange, totalPages) {
+    if (!pageRange || pageRange === "all") return totalPages;
+    const selected = new Set();
+    for (const part of pageRange.split(",")) {
+        const value = part.trim();
+        if (!value) continue;
+        const bounds = value.split("-").map(item => Number(item.trim()));
+        const start = Math.max(1, bounds[0]);
+        const end = Math.min(totalPages, bounds.length > 1 ? bounds[1] : start);
+        if (!Number.isInteger(start) || !Number.isInteger(end) || end < start) continue;
+        for (let page = start; page <= end; page++) selected.add(page);
+    }
+    return selected.size || totalPages;
+}
 
 // Restore selected file display & calculate dynamic price on Print Details page
 if (printDetailsFileName) {
@@ -459,18 +483,41 @@ if (printDetailsFileName) {
 
 if (copiesBox && totalPriceBox) {
     function updateTotalPrice() {
-        const copies = Number(copiesBox.value) || 1;
-        const pageCount = Number(localStorage.getItem("pdfPageCount")) || 1;
-        const pricePerPage = 2;
+        const copies = Math.min(999, Math.max(1, Number(copiesBox.value) || 1));
+        copiesBox.value = copies;
+        const totalPages = Number(localStorage.getItem("pdfPageCount")) || 1;
+        const pageRange = pageRangeModeBox?.value === "custom" ? (pageRangeBox?.value.trim() || "all") : "all";
+        const pageCount = countSelectedPages(pageRange, totalPages);
+        const colorMode = document.querySelector('input[name="colorMode"]:checked')?.value || "black_white";
+        const pricePerPage = colorMode === "color" ? 6 : 2;
         const totalAmount = copies * pageCount * pricePerPage;
 
         totalPriceBox.textContent = "Total: ₹" + totalAmount;
         localStorage.setItem("amount", String(totalAmount));
+        if (previewSummary) {
+            const paper = paperSizeBox?.value || "A4";
+            const orientation = document.querySelector('input[name="orientation"]:checked')?.value || "portrait";
+            const side = document.querySelector('input[name="printSide"]:checked')?.value || "double";
+            const colorLabel = colorMode === "color" ? "Color" : colorMode === "grayscale" ? "Grayscale" : "B&W";
+            previewSummary.textContent = `${paper} · ${orientation} · ${colorLabel} · ${side} · ${copies} ${copies === 1 ? "copy" : "copies"} · ₹${totalAmount}`;
+        }
     }
 
     copiesBox.addEventListener("input", updateTotalPrice);
+    document.querySelectorAll('input[name="colorMode"], input[name="orientation"], input[name="printSide"]').forEach(input => input.addEventListener("change", updateTotalPrice));
+    [paperSizeBox, pageRangeModeBox, pageRangeBox, printQualityBox, dpiBox, scalingBox, customScaleBox, marginsBox].forEach(input => input?.addEventListener("input", updateTotalPrice));
+    [paperSizeBox, pageRangeModeBox, printQualityBox, dpiBox, scalingBox, marginsBox].forEach(input => input?.addEventListener("change", updateTotalPrice));
     updateTotalPrice();
 }
+
+pageRangeModeBox?.addEventListener("change", () => {
+    const custom = pageRangeModeBox.value === "custom";
+    if (pageRangeBox) pageRangeBox.style.display = custom ? "block" : "none";
+});
+
+scalingBox?.addEventListener("change", () => {
+    if (customScaleBox) customScaleBox.style.display = scalingBox.value === "custom" ? "block" : "none";
+});
 
 if (backBtn) {
     backBtn.addEventListener("click", function (e) {
@@ -482,9 +529,12 @@ if (backBtn) {
 if (paymentBtn) {
     paymentBtn.addEventListener("click", function (e) {
         if (e && e.preventDefault) e.preventDefault();
-        const copies = copiesBox ? copiesBox.value : 1;
-        const pageCount = Number(localStorage.getItem("pdfPageCount")) || 1;
-        const amount = copies * pageCount * 2;
+        const copies = Math.min(999, Math.max(1, Number(copiesBox?.value) || 1));
+        const totalPages = Number(localStorage.getItem("pdfPageCount")) || 1;
+        const pageRange = pageRangeModeBox?.value === "custom" ? (pageRangeBox?.value.trim() || "all") : "all";
+        const pageCount = countSelectedPages(pageRange, totalPages);
+        const colorMode = document.querySelector('input[name="colorMode"]:checked')?.value || "black_white";
+        const amount = copies * pageCount * (colorMode === "color" ? 6 : 2);
 
         localStorage.setItem("copies", copies);
         localStorage.setItem("amount", amount);
@@ -512,6 +562,14 @@ if (paymentBtn) {
             localStorage.setItem("orientation", selectedOrientation.value);
         }
 
+        localStorage.setItem("paperSize", paperSizeBox?.value || "A4");
+        localStorage.setItem("pageRange", pageRangeModeBox?.value === "custom" ? (pageRangeBox?.value.trim() || "all") : "all");
+        localStorage.setItem("printQuality", printQualityBox?.value || "normal");
+        localStorage.setItem("dpi", dpiBox?.value || "300");
+        localStorage.setItem("scaling", scalingBox?.value || "actual_size");
+        localStorage.setItem("customScale", customScaleBox?.value || "100");
+        localStorage.setItem("margins", marginsBox?.value || "default");
+
         window.location.href = "payment.html";
     });
 }
@@ -536,6 +594,13 @@ if (paymentFile && paymentCopies && paymentAmount) {
     const colorModeVal = localStorage.getItem("colorMode") || "black_white";
     const printSideVal = localStorage.getItem("printSide") || "single";
     const orientationVal = localStorage.getItem("orientation") || "portrait";
+    const paperSizeVal = localStorage.getItem("paperSize") || "A4";
+    const pageRangeVal = localStorage.getItem("pageRange") || "all";
+    const printQualityVal = localStorage.getItem("printQuality") || "normal";
+    const dpiVal = localStorage.getItem("dpi") || "300";
+    const scalingVal = localStorage.getItem("scaling") || "actual_size";
+    const customScaleVal = localStorage.getItem("customScale") || "100";
+    const marginsVal = localStorage.getItem("margins") || "default";
 
     paymentFile.textContent = "File: " + fileNameVal;
     paymentCopies.textContent = "Copies: " + copiesVal;
@@ -635,10 +700,18 @@ if (payBtn) {
             // Create Order Record in Backend Database for Admin Dashboard
             const fileNameVal = localStorage.getItem("fileName") || "document.pdf";
             const copiesVal = parseInt(localStorage.getItem("copies") || "1", 10);
-            const pageCountVal = parseInt(localStorage.getItem("pdfPageCount") || "1", 10);
+            const totalPagesVal = parseInt(localStorage.getItem("pdfPageCount") || "1", 10);
+            const pageRangeVal = localStorage.getItem("pageRange") || "all";
+            const pageCountVal = pageRangeVal === "all" ? totalPagesVal : countSelectedPages(pageRangeVal, totalPagesVal);
             const colorModeVal = localStorage.getItem("colorMode") || "black_white";
             const printSideVal = localStorage.getItem("printSide") || "double";
             const orientationVal = localStorage.getItem("orientation") || "portrait";
+            const paperSizeVal = localStorage.getItem("paperSize") || "A4";
+            const printQualityVal = localStorage.getItem("printQuality") || "normal";
+            const dpiVal = parseInt(localStorage.getItem("dpi") || "300", 10);
+            const scalingVal = localStorage.getItem("scaling") || "actual_size";
+            const customScaleVal = parseFloat(localStorage.getItem("customScale") || "100");
+            const marginsVal = localStorage.getItem("margins") || "default";
             const rawMobile = localStorage.getItem("mobileNumber") || "9876543210";
             const cleanContact = rawMobile.replace(/\D/g, "").slice(-10) || "9876543210";
 
@@ -649,9 +722,17 @@ if (payBtn) {
                     file_name: fileNameVal,
                     copies: copiesVal,
                     pages: pageCountVal,
+                    file_size: selectedFile?.size || 0,
+                    paper_size: paperSizeVal,
+                    page_range: pageRangeVal,
                     color_mode: colorModeVal,
                     duplex: printSideVal,
                     orientation: orientationVal,
+                    print_quality: printQualityVal,
+                    dpi: dpiVal,
+                    scaling: scalingVal,
+                    custom_scale: customScaleVal,
+                    margins: marginsVal,
                     customer_mobile: cleanContact,
                     amount: parseFloat(amountVal),
                     file_path: uploadedPath
@@ -671,7 +752,8 @@ if (payBtn) {
                     amount: parseFloat(amountVal),
                     pages: pageCountVal,
                     copies: copiesVal,
-                    order_id: `PF_ORDER_${Date.now()}`
+                    color_mode: colorModeVal,
+                    order_id: printData.order.order_id
                 })
             });
             const resText = await orderRes.text();
@@ -709,7 +791,8 @@ if (payBtn) {
                                 headers: { "Content-Type": "application/json" },
                                 body: JSON.stringify({
                                     ...response,
-                                    print_order_id: printData.order.order_id
+                                    print_order_id: printData.order.order_id,
+                                    print_order: printData.order
                                 })
                             });
                             const vText = await verifyRes.text();
@@ -721,6 +804,7 @@ if (payBtn) {
                             }
 
                             if (verifyRes.ok && verifyData && verifyData.status === "success") {
+    localStorage.setItem("lastOrderId", printData.order.order_id);
     window.location.href = "success.html";
 } else {
     const vDetail = verifyData?.detail || "Payment verification failed.";
@@ -851,6 +935,11 @@ const totalEarnings = document.getElementById("totalEarnings");
 const totalOrdersCount = document.getElementById("totalOrdersCount");
 const totalPagesPrinted = document.getElementById("totalPagesPrinted");
 const pendingOrdersCount = document.getElementById("pendingOrdersCount");
+const printingOrdersCount = document.getElementById("printingOrdersCount");
+const completedOrdersCount = document.getElementById("completedOrdersCount");
+const failedOrdersCount = document.getElementById("failedOrdersCount");
+const colorPagesCount = document.getElementById("colorPagesCount");
+const monthRevenue = document.getElementById("monthRevenue");
 
 let allAdminOrders = [];
 
@@ -909,17 +998,36 @@ function renderAdminOrders(orders) {
     let earningsSum = 0;
     let pagesSum = 0;
     let pendingCount = 0;
+    let printingCount = 0;
+    let completedCount = 0;
+    let failedCount = 0;
+    let colorPages = 0;
+    let monthSum = 0;
+    const now = new Date();
 
     orders.forEach(order => {
         earningsSum += (order.amount || 0);
         pagesSum += ((order.pages || 1) * (order.copies || 1));
-        if (order.status === "Pending") pendingCount++;
+        if (order.status === "Pending" || order.status === "PRINT_QUEUED") pendingCount++;
+        if (order.status === "PRINTING") printingCount++;
+        if (order.status === "COMPLETED" || order.status === "Completed") completedCount++;
+        if (order.status === "FAILED") failedCount++;
+        if (order.color_mode === "color") colorPages += ((order.pages || 1) * (order.copies || 1));
+        const orderDate = new Date(order.timestamp || 0);
+        if (orderDate.getFullYear() === now.getFullYear() && orderDate.getMonth() === now.getMonth()) {
+            monthSum += (order.amount || 0);
+        }
     });
 
     if (totalEarnings) totalEarnings.textContent = `₹${earningsSum}`;
     if (totalOrdersCount) totalOrdersCount.textContent = String(orders.length);
     if (totalPagesPrinted) totalPagesPrinted.textContent = String(pagesSum);
     if (pendingOrdersCount) pendingOrdersCount.textContent = String(pendingCount);
+    if (printingOrdersCount) printingOrdersCount.textContent = String(printingCount);
+    if (completedOrdersCount) completedOrdersCount.textContent = String(completedCount);
+    if (failedOrdersCount) failedOrdersCount.textContent = String(failedCount);
+    if (colorPagesCount) colorPagesCount.textContent = String(colorPages);
+    if (monthRevenue) monthRevenue.textContent = `₹${monthSum}`;
 
     if (orders.length === 0) {
         adminOrdersTableBody.innerHTML = `
@@ -961,6 +1069,7 @@ function renderAdminOrders(orders) {
                         ${order.file_path ? `<a href="${fileUrl}" target="_blank" class="btn-download">⬇️ View</a>` : ''}
                         ${order.file_path ? `<button type="button" class="btn-print" onclick="printOrderFile('${order.order_id}', '${fileUrl}')">🖨️ Print</button>` : ''}
                         ${(isPending || isFailed) ? `<button type="button" class="btn-complete" style="background:#e0f2fe; color:#0369a1; border-color:#bae6fd;" onclick="retryOrder('${order.order_id}')">🔄 Retry</button>` : ''}
+                        ${(isPending || isPrinting) ? `<button type="button" class="btn-complete" style="background:#fff1f2; color:#be123c; border-color:#fecdd3;" onclick="cancelOrder('${order.order_id}')">✖ Cancel</button>` : ''}
                         ${order.status !== 'Completed' ? `<button type="button" class="btn-complete" onclick="markOrderCompleted('${order.order_id}')">✅ Complete</button>` : ''}
                     </div>
                 </td>
@@ -980,6 +1089,35 @@ window.retryOrder = async function (orderId) {
         fetchAdminOrders();
     } catch (err) {
         console.warn("Retry order error:", err);
+    }
+};
+
+window.printOrderFile = async function (orderId) {
+    if (!orderId) return;
+    try {
+        const res = await fetch(apiUrl(`/api/orders/${orderId}/print`, `/api/orders/${orderId}/print`), {
+            method: "POST"
+        });
+        const data = await res.json();
+        if (!res.ok) {
+            throw new Error(data.detail || data.message || `Print request failed with HTTP ${res.status}`);
+        }
+        alert(`🖨️ ${data.message || "Print job queued!"}`);
+        fetchAdminOrders();
+    } catch (err) {
+        alert(`⚠️ ${err.message || "Failed to queue print job"}`);
+    }
+};
+
+window.cancelOrder = async function (orderId) {
+    if (!orderId || !window.confirm("Cancel this print job?")) return;
+    try {
+        const res = await fetch(apiUrl(`/api/orders/${orderId}/cancel`, `/api/orders/${orderId}/cancel`), { method: "POST" });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || "Unable to cancel order");
+        fetchAdminOrders();
+    } catch (err) {
+        alert(`⚠️ ${err.message || "Unable to cancel order"}`);
     }
 };
 
@@ -1087,24 +1225,37 @@ if (privacyStatusText || docCleanupBadge) {
             const res = await fetch(apiUrl(`/api/orders/${lastOrderId}/status`, `/api/orders/${lastOrderId}/status`));
             const data = await res.json();
             if (data && data.status === "success") {
-                const docStatus = data.document_status || "DELETED";
-                if (docStatus === "DELETED" || data.deleted) {
+                const orderStatus = data.order_status || "Pending";
+                const docStatus = data.document_status || "UPLOADED";
+                if (orderStatus === "COMPLETED" && (docStatus === "PRINTED" || docStatus === "DELETED")) {
                     if (privacyStatusText) privacyStatusText.textContent = "Your documents have been securely deleted after printing.";
                     if (docCleanupBadge) {
                         docCleanupBadge.textContent = "DELETED";
                         docCleanupBadge.style.color = "#15803d";
                     }
-                } else {
-                    if (privacyStatusText) privacyStatusText.textContent = "Your document is printing... Secure 2.5s deletion in progress.";
+                } else if (orderStatus === "FAILED") {
+                    if (privacyStatusText) privacyStatusText.textContent = data.print_error || "Printing failed. Please contact the print counter.";
                     if (docCleanupBadge) {
-                        docCleanupBadge.textContent = docStatus.toUpperCase();
+                        docCleanupBadge.textContent = "FAILED";
+                        docCleanupBadge.style.color = "#b91c1c";
+                    }
+                } else if (orderStatus === "PRINTING") {
+                    if (privacyStatusText) privacyStatusText.textContent = "Your printer is processing the document...";
+                    if (docCleanupBadge) docCleanupBadge.textContent = "PRINTING";
+                } else if (orderStatus === "PRINT_QUEUED") {
+                    if (privacyStatusText) privacyStatusText.textContent = "Payment verified. Your print job is queued.";
+                    if (docCleanupBadge) docCleanupBadge.textContent = "QUEUED";
+                } else {
+                    if (privacyStatusText) privacyStatusText.textContent = "Payment verified. Waiting for the printer agent...";
+                    if (docCleanupBadge) {
+                        docCleanupBadge.textContent = orderStatus.toUpperCase();
                         docCleanupBadge.style.color = "#ea580c";
                     }
                 }
             }
         } catch (err) {
-            if (privacyStatusText) privacyStatusText.textContent = "Your documents have been securely deleted after printing.";
-            if (docCleanupBadge) docCleanupBadge.textContent = "DELETED";
+            if (privacyStatusText) privacyStatusText.textContent = "Payment verified. Checking printer status...";
+            if (docCleanupBadge) docCleanupBadge.textContent = "CHECKING";
         }
     }
 

@@ -22,7 +22,18 @@
     </p>
 
     <h3>No. of Copies</h3>
-    <input type="number" id="copies" value="1" min="1">
+    <input type="number" id="copies" value="1" min="1" max="999">
+
+    <h3>Paper Size</h3>
+    <select id="paperSize">
+        <option value="A3">A3</option>
+        <option value="A4" selected>A4</option>
+        <option value="A5">A5</option>
+        <option value="Letter">Letter</option>
+        <option value="Legal">Legal</option>
+        <option value="Executive">Executive</option>
+        <option value="Custom">Custom Size</option>
+    </select>
 
     <h3>Print Side</h3>
     <div class="radio-option">
@@ -33,6 +44,14 @@
         <label>
             <input type="radio" name="printSide" value="double" checked>
             Double Side
+        </label>
+        <label>
+            <input type="radio" name="printSide" value="flip_long">
+            Flip Long Edge
+        </label>
+        <label>
+            <input type="radio" name="printSide" value="flip_short">
+            Flip Short Edge
         </label>
     </div>
 
@@ -46,6 +65,10 @@
             <input type="radio" name="colorMode" value="color">
             Color Print 🎨
         </label>
+        <label>
+            <input type="radio" name="colorMode" value="grayscale">
+            Grayscale
+        </label>
     </div>
 
     <h3>Page Orientation</h3>
@@ -58,6 +81,56 @@
             <input type="radio" name="orientation" value="landscape">
             Landscape
         </label>
+        <label>
+            <input type="radio" name="orientation" value="auto">
+            Auto Detect
+        </label>
+    </div>
+
+    <h3>Page Range</h3>
+    <select id="pageRangeMode">
+        <option value="all" selected>All Pages</option>
+        <option value="custom">Custom Pages</option>
+    </select>
+    <input type="text" id="pageRange" placeholder="1-3,6,9" style="display:none;" pattern="[0-9, -]+">
+
+    <h3>Print Quality</h3>
+    <select id="printQuality">
+        <option value="draft">Draft</option>
+        <option value="normal" selected>Normal</option>
+        <option value="high">High</option>
+        <option value="best">Best</option>
+    </select>
+
+    <h3>DPI</h3>
+    <select id="dpi">
+        <option value="150">150 DPI</option>
+        <option value="300" selected>300 DPI</option>
+        <option value="600">600 DPI</option>
+        <option value="1200">1200 DPI</option>
+    </select>
+
+    <h3>Scaling</h3>
+    <select id="scaling">
+        <option value="actual_size" selected>Actual Size (100%)</option>
+        <option value="fit">Fit to Page</option>
+        <option value="fill">Fill Page</option>
+        <option value="custom">Custom Scale</option>
+    </select>
+    <input type="number" id="customScale" value="100" min="10" max="500" step="1" style="display:none;" aria-label="Custom scale percentage">
+
+    <h3>Margins</h3>
+    <select id="margins">
+        <option value="none">None</option>
+        <option value="narrow">Narrow</option>
+        <option value="normal">Normal</option>
+        <option value="wide">Wide</option>
+        <option value="default" selected>Default Printer Margins</option>
+    </select>
+
+    <div id="printPreview" style="margin: 20px 0; padding: 18px; border: 1px solid #fed7aa; background: #fff7ed; border-radius: 12px;">
+        <strong>Print Preview</strong>
+        <p id="previewSummary" style="margin: 8px 0 0;">A4 · Portrait · B&W · 1 copy</p>
     </div>
 
     <h2 id="totalPrice">

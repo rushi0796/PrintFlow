@@ -1,6 +1,42 @@
 {
   "rewrites": [
     {
+      "source": "/health",
+      "destination": "/api/index.py"
+    },
+    {
+      "source": "/api/health",
+      "destination": "/api/index.py"
+    },
+    {
+      "source": "/print-order",
+      "destination": "/api/index.py"
+    },
+    {
+      "source": "/api/print-order",
+      "destination": "/api/index.py"
+    },
+    {
+      "source": "/upload-pdf",
+      "destination": "/api/index.py"
+    },
+    {
+      "source": "/api/upload-pdf",
+      "destination": "/api/index.py"
+    },
+    {
+      "source": "/api/documents/(.*)",
+      "destination": "/api/index.py"
+    },
+    {
+      "source": "/api/orders",
+      "destination": "/api/orders.py"
+    },
+    {
+      "source": "/orders",
+      "destination": "/api/orders.py"
+    },
+    {
       "source": "/customer",
       "destination": "/login.html"
     },
@@ -10,27 +46,35 @@
     },
     {
       "source": "/create-razorpay-order",
-      "destination": "/api/create-order.py"
+      "destination": "/api/index.py"
     },
     {
       "source": "/api/create-razorpay-order",
-      "destination": "/api/create-order.py"
+      "destination": "/api/index.py"
     },
     {
       "source": "/create-order",
-      "destination": "/api/create-order.py"
+      "destination": "/api/index.py"
+    },
+    {
+      "source": "/api/create-order",
+      "destination": "/api/index.py"
     },
     {
       "source": "/verify-razorpay-payment",
-      "destination": "/api/verify-payment.py"
+      "destination": "/api/index.py"
     },
     {
       "source": "/api/verify-razorpay-payment",
-      "destination": "/api/verify-payment.py"
+      "destination": "/api/index.py"
     },
     {
       "source": "/verify-payment",
-      "destination": "/api/verify-payment.py"
+      "destination": "/api/index.py"
+    },
+    {
+      "source": "/api/verify-payment",
+      "destination": "/api/index.py"
     },
     {
       "source": "/api/agent/status",
@@ -49,7 +93,15 @@
       "destination": "/api/index.py"
     },
     {
+      "source": "/api/orders/(.*)/status",
+      "destination": "/api/index.py"
+    },
+    {
       "source": "/api/orders/(.*)/retry",
+      "destination": "/api/index.py"
+    },
+    {
+      "source": "/api/orders/(.*)/cancel",
       "destination": "/api/index.py"
     },
     {

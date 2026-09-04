@@ -1,3 +1,4 @@
+import requests
 import os
 import sys
 import json
@@ -7,1557 +8,390 @@ import urllib.request
 import subprocess
 from pathlib import Path
 
-
-# ============================================================
-# PRINTFLOW LOCAL WINDOWS PRINT AGENT
-# ============================================================
-
 BASE_DIR = Path(__file__).resolve().parent
-
 CONFIG_FILE = BASE_DIR / "agent_config.json"
 EXAMPLE_CONFIG_FILE = BASE_DIR / "agent_config.example.json"
-
 TEMP_DOWNLOAD_DIR = BASE_DIR / "agent_temp"
 TEMP_DOWNLOAD_DIR.mkdir(exist_ok=True)
 
-
-# ============================================================
-# DEFAULT CONFIG
-# ============================================================
-
-DEFAULT_CONFIG = {
-    "backend_url": "https://print-flow-mu.vercel.app",
-    "agent_token": "PF_AGENT_SECRET_TOKEN_2026",
-    "poll_interval_seconds": 3,
-    "bw_printer": "Kyocera ECOSYS M2040dn KX",
-    "color_printer": "EPSON L3210 Series",
-    "auto_routing": True
-}
-
-
-# ============================================================
-# CONFIG
-# ============================================================
-
 def load_agent_config():
     if not CONFIG_FILE.exists():
-
         if EXAMPLE_CONFIG_FILE.exists():
             shutil.copy(EXAMPLE_CONFIG_FILE, CONFIG_FILE)
-
         else:
-            CONFIG_FILE.write_text(
-                json.dumps(DEFAULT_CONFIG, indent=2),
-                encoding="utf-8"
-            )
+            default_data = {
+                "backend_url": "https://print-flow-mu.vercel.app",
+                "agent_token": "PF_AGENT_SECRET_TOKEN_2026",
+                "poll_interval_seconds": 3,
+                "bw_printer": "",
+                "color_printer": "",
+                "auto_routing": True
+            }
+            CONFIG_FILE.write_text(json.dumps(default_data, indent=2), encoding="utf-8")
 
     try:
-        config = json.loads(
-            CONFIG_FILE.read_text(encoding="utf-8")
-        )
-
-        if not isinstance(config, dict):
-            raise ValueError("Agent config must be a JSON object.")
-
-        # Fill missing values without destroying existing config
-        for key, value in DEFAULT_CONFIG.items():
-            config.setdefault(key, value)
-
-        return config
-
+        return json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
     except Exception as err:
-
-        print("[AGENT CONFIG ERROR]", repr(err))
-
-        return DEFAULT_CONFIG.copy()
-
-
-# ============================================================
-# WINDOWS PRINTER DISCOVERY
-# ============================================================
+        print("[AGENT CONFIG ERROR]:", err)
+        return {
+            "backend_url": "http://127.0.0.1:8000",
+            "agent_token": "PF_AGENT_SECRET_TOKEN_2026",
+            "poll_interval_seconds": 3
+        }
 
 def get_installed_windows_printers():
-
     printers = []
+    if sys.platform == "win32":
+        try:
+            ps_cmd = 'Get-Printer | Select-Object Name, DriverName, PrinterStatus, IsDefault | ConvertTo-Json'
+            res = subprocess.run(["powershell", "-Command", ps_cmd], capture_output=True, text=True, timeout=10)
+            if res.returncode == 0 and res.stdout.strip():
+                data = json.loads(res.stdout)
+                if isinstance(data, dict):
+                    data = [data]
+                for p in data:
+                    printers.append({
+                        "name": p.get("Name", ""),
+                        "driver": p.get("DriverName", ""),
+                        "status": "Normal" if p.get("PrinterStatus") in (0, "Normal", None) else str(p.get("PrinterStatus")),
+                        "is_default": bool(p.get("IsDefault"))
+                    })
+        except Exception as e:
+            print("[AGENT PRINTER DISCOVERY WARNING]:", e)
 
-    if sys.platform != "win32":
-        return printers
-
-    try:
-
-        ps_cmd = (
-            "Get-Printer | "
-            "Select-Object Name,DriverName,PrinterStatus,IsDefault | "
-            "ConvertTo-Json -Compress"
-        )
-
-        result = subprocess.run(
-            [
-                "powershell",
-                "-NoProfile",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-Command",
-                ps_cmd
-            ],
-            capture_output=True,
-            text=True,
-            timeout=15
-        )
-
-        if result.returncode != 0:
-
-            print(
-                "[AGENT PRINTER DISCOVERY ERROR]",
-                result.stderr.strip()
-            )
-
-            return printers
-
-        raw = result.stdout.strip()
-
-        if not raw:
-            return printers
-
-        data = json.loads(raw)
-
-        if isinstance(data, dict):
-            data = [data]
-
-        for printer in data:
-
-            name = str(
-                printer.get("Name", "")
-            ).strip()
-
-            if not name:
-                continue
-
-            printers.append({
-                "name": name,
-                "driver": str(
-                    printer.get("DriverName", "")
-                ),
-                "status": str(
-                    printer.get("PrinterStatus", "Unknown")
-                ),
-                "is_default": bool(
-                    printer.get("IsDefault", False)
-                )
-            })
-
-    except Exception as err:
-
-        print(
-            "[AGENT PRINTER DISCOVERY WARNING]",
-            repr(err)
-        )
-
+    if not printers:
+        printers.append({
+            "name": "Microsoft Print to PDF",
+            "driver": "Virtual",
+            "status": "Normal",
+            "is_default": True
+        })
     return printers
 
-
-# ============================================================
-# VERIFY PRINTER
-# ============================================================
-
-def verify_windows_printer(printer_name):
-
-    if sys.platform != "win32":
-        return True
-
-    ps_script = """
-$printer = Get-Printer -Name %s -ErrorAction SilentlyContinue
-
-if ($null -eq $printer) {
-    exit 1
-}
-
-Write-Output $printer.Name
-""" % json.dumps(printer_name)
-
-    result = subprocess.run(
-        [
-            "powershell",
-            "-NoProfile",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-Command",
-            ps_script
-        ],
-        capture_output=True,
-        text=True,
-        timeout=10
-    )
-
-    if result.returncode != 0:
-
-        raise RuntimeError(
-            f"Windows printer not found: {printer_name}"
-        )
-
-    actual_name = result.stdout.strip()
-
-    if actual_name.lower() != printer_name.lower():
-
-        raise RuntimeError(
-            f"Printer verification failed. "
-            f"Requested='{printer_name}', "
-            f"Found='{actual_name}'"
-        )
-
-    print(
-        f"[AGENT PRINTER VERIFIED] {actual_name}"
-    )
-
-    return True
-
-
-# ============================================================
-# PRINTER SELECTION
-# ============================================================
-
-def select_target_printer(
-    color_mode,
-    config,
-    installed_printers
-):
-
-    printer_names = [
-        p["name"]
-        for p in installed_printers
-        if p.get("name")
-    ]
-
-    if not printer_names:
-
-        raise RuntimeError(
-            "No Windows printers detected."
-        )
-
-    mode = str(
-        color_mode or "black_white"
-    ).lower().strip()
-
-    # --------------------------------------------------------
-    # COLOR
-    # --------------------------------------------------------
-
-    if mode in (
-        "color",
-        "colour",
-        "full_color",
-        "full-colour"
-    ):
-
-        configured = str(
-            config.get("color_printer", "")
-        ).strip()
-
-        if configured:
-            if configured in printer_names:
-                return configured
-
-            print(
-                f"[AGENT COLOR WARNING] "
-                f"Configured color printer "
-                f"'{configured}' not found."
-            )
-
-        # Automatic color detection
-        for printer in printer_names:
-
-            name = printer.lower()
-
-            if any(
-                keyword in name
-                for keyword in (
-                    "epson",
-                    "color",
-                    "colour",
-                    "l3210"
-                )
-            ):
-                return printer
-
-    # --------------------------------------------------------
-    # BLACK & WHITE
-    # --------------------------------------------------------
-
-    configured = str(
-        config.get("bw_printer", "")
-    ).strip()
-
-    if configured:
-
-        if configured in printer_names:
-            return configured
-
-        print(
-            f"[AGENT B&W WARNING] "
-            f"Configured B&W printer "
-            f"'{configured}' not found."
-        )
-
-    # Automatic Kyocera detection
-    for printer in printer_names:
-
-        name = printer.lower()
-
-        if any(
-            keyword in name
-            for keyword in (
-                "kyocera",
-                "m2040",
-                "m2640",
-                "laser",
-                "mono"
-            )
-        ):
-
-            return printer
-
-    # --------------------------------------------------------
-    # DEFAULT PRINTER
-    # --------------------------------------------------------
-
-    default_printer = next(
-        (
-            p["name"]
-            for p in installed_printers
-            if p.get("is_default")
-        ),
-        None
-    )
-
-    if default_printer:
-        print(
-            f"[AGENT PRINTER FALLBACK] "
-            f"Using Windows default printer: "
-            f"{default_printer}"
-        )
-
-        return default_printer
-
-    return printer_names[0]
-
-
-# ============================================================
-# DOWNLOAD FILE
-# ============================================================
-
-def download_file(
-    backend_url,
-    file_rel_path
-):
-
-    if not file_rel_path:
-        raise RuntimeError(
-            "Order does not contain file_path."
-        )
-
-    filename = Path(
-        file_rel_path
-    ).name
-
-    if not filename:
-        raise RuntimeError(
-            "Invalid filename."
-        )
-
-    target_path = (
-        TEMP_DOWNLOAD_DIR / filename
-    )
-
-    full_url = (
-        backend_url.rstrip("/")
-        + (
-            file_rel_path
-            if file_rel_path.startswith("/")
-            else "/" + file_rel_path
-        )
-    )
-
-    print(
-        f"[AGENT DOWNLOAD] {full_url}"
-    )
-
-    request = urllib.request.Request(
-        full_url,
-        headers={
-            "User-Agent": "PrintFlowAgent/2.0"
-        }
-    )
-
-    try:
-
-        with urllib.request.urlopen(
-            request,
-            timeout=60
-        ) as response:
-
-            status = getattr(
-                response,
-                "status",
-                200
-            )
-
-            if status >= 400:
-                raise RuntimeError(
-                    f"File download HTTP {status}"
-                )
-
-            with target_path.open(
-                "wb"
-            ) as output:
-
-                shutil.copyfileobj(
-                    response,
-                    output
-                )
-
-    except Exception as err:
-
-        raise RuntimeError(
-            f"Could not download file: {err}"
-        )
-
-    if not target_path.exists():
-
-        raise RuntimeError(
-            "Downloaded file does not exist."
-        )
-
-    size = target_path.stat().st_size
-
-    if size <= 0:
-
-        raise RuntimeError(
-            "Downloaded file is empty."
-        )
-
-    print(
-        f"[AGENT FILE DOWNLOADED] "
-        f"{target_path.name} "
-        f"({size} bytes)"
-    )
+def select_target_printer(color_mode: str, config: dict, installed_printers: list) -> str:
+    printer_names = [p["name"] for p in installed_printers]
+    default_printer = next((p["name"] for p in installed_printers if p.get("is_default")), printer_names[0])
+
+    if color_mode.lower() in ("color", "colour"):
+        target = config.get("color_printer", "").strip()
+        if not target:
+            target = next((n for n in printer_names if "color" in n.lower()), "")
+    else:
+        target = config.get("bw_printer", "").strip()
+        if not target:
+            target = next((n for n in printer_names if any(k in n.lower() for k in ("b&w", "mono", "black", "laser"))), "")
+
+    if not target or target not in printer_names:
+        target = default_printer
+
+    return target
+
+def download_file(backend_url: str, file_rel_path: str, agent_token: str, original_file_name: str = "") -> Path:
+    filename = Path(original_file_name or Path(file_rel_path).name).name
+    target_path = TEMP_DOWNLOAD_DIR / filename
+    full_url = f"{backend_url.rstrip('/')}{file_rel_path if file_rel_path.startswith('/') else '/' + file_rel_path}"
+
+    req = urllib.request.Request(full_url, headers={"User-Agent": "PrintFlowAgent/1.0", "X-Print-Agent-Token": agent_token})
+    with urllib.request.urlopen(req, timeout=30) as response, target_path.open("wb") as out_file:
+        shutil.copyfileobj(response, out_file)
 
     return target_path
 
-
-# ============================================================
-# FIND SUMATRA PDF
-# ============================================================
-
-def find_sumatra_pdf():
-
-    candidates = []
-
-    # PATH
-    candidates.append(
-        shutil.which("SumatraPDF.exe")
-    )
-
-    candidates.append(
-        shutil.which("SumatraPDF")
-    )
-
-    # Program Files
-    program_files = os.environ.get(
-        "PROGRAMFILES",
-        r"C:\Program Files"
-    )
-
-    program_files_x86 = os.environ.get(
-        "PROGRAMFILES(X86)",
-        r"C:\Program Files (x86)"
-    )
-
-    local_app_data = os.environ.get(
-        "LOCALAPPDATA",
-        ""
-    )
-
-    user_profile = os.environ.get(
-        "USERPROFILE",
-        ""
-    )
-
-    candidates.extend([
-        os.path.join(
-            program_files,
-            "SumatraPDF",
-            "SumatraPDF.exe"
-        ),
-
-        os.path.join(
-            program_files_x86,
-            "SumatraPDF",
-            "SumatraPDF.exe"
-        ),
-
-        os.path.join(
-            local_app_data,
-            "SumatraPDF",
-            "SumatraPDF.exe"
-        ),
-
-        os.path.join(
-            user_profile,
-            "Downloads",
-            "SumatraPDF.exe"
-        ),
-
-        os.path.join(
-            user_profile,
-            "Desktop",
-            "SumatraPDF.exe"
-        ),
-
-        str(
-            BASE_DIR / "SumatraPDF.exe"
-        )
-    ])
-
-    checked = set()
-
-    for candidate in candidates:
-
-        if not candidate:
-            continue
-
-        candidate = os.path.abspath(candidate)
-
-        if candidate in checked:
-            continue
-
-        checked.add(candidate)
-
-        if os.path.isfile(candidate):
-
-            print(
-                f"[AGENT PDF ENGINE FOUND] "
-                f"{candidate}"
-            )
-
-            return candidate
-
-    return None
-
-
-# ============================================================
-# GET PRINTER STATUS
-# ============================================================
-
-def get_printer_status(
-    printer_name
+def print_document_silently(
+    file_path: Path,
+    printer_name: str,
+    copies: int = 1,
+    orientation: str = "portrait",
+    paper_size: str = "A4",
+    duplex: str = "single",
+    page_range: str = "all",
+    scaling: str = "actual_size",
+    custom_scale: float = 100,
+    print_quality: str = "normal",
+    dpi: int = 300,
+    margins: str = "default"
 ):
+    ext = file_path.suffix.lower()
+    print(f"[AGENT SILENT PRINT] Printing '{file_path.name}' ({ext}) to '{printer_name}' | Copies: {copies} | Orient: {orientation}")
 
     if sys.platform != "win32":
-        return "UNKNOWN"
-
-    ps_script = """
-$p = Get-Printer -Name %s -ErrorAction SilentlyContinue
-
-if ($null -eq $p) {
-    Write-Output "NOT_FOUND"
-} else {
-    Write-Output $p.PrinterStatus
-}
-""" % json.dumps(printer_name)
-
-    try:
-
-        result = subprocess.run(
-            [
-                "powershell",
-                "-NoProfile",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-Command",
-                ps_script
-            ],
-            capture_output=True,
-            text=True,
-            timeout=10
-        )
-
-        return (
-            result.stdout.strip()
-            or "UNKNOWN"
-        )
-
-    except Exception:
-
-        return "UNKNOWN"
-
-
-# ============================================================
-# PDF PRINT
-# ============================================================
-
-def print_pdf(
-    file_path,
-    printer_name,
-    copies,
-    orientation,
-    color_mode,
-    duplex
-):
-
-    sumatra = find_sumatra_pdf()
-
-    if not sumatra:
-
-        raise RuntimeError(
-            "SumatraPDF was not found. "
-            "Install SumatraPDF before using PrintFlow "
-            "for silent PDF printing."
-        )
-
-    settings = [
-        f"{copies}x"
-    ]
-
-    # Orientation
-    if str(
-        orientation
-    ).lower() == "landscape":
-
-        settings.append(
-            "landscape"
-        )
-
-    else:
-
-        settings.append(
-            "portrait"
-        )
-
-    # Color
-    mode = str(
-        color_mode or "black_white"
-    ).lower()
-
-    if mode in (
-        "color",
-        "colour",
-        "full_color",
-        "full-colour"
-    ):
-
-        settings.append(
-            "color"
-        )
-
-    else:
-
-        settings.append(
-            "monochrome"
-        )
-
-    # Duplex
-    duplex_mode = str(
-        duplex or "single"
-    ).lower()
-
-    if duplex_mode in (
-        "double",
-        "duplex",
-        "two_sided",
-        "two-sided",
-        "twosided",
-        "long_edge"
-    ):
-
-        settings.append(
-            "duplexlong"
-        )
-
-    elif duplex_mode in (
-        "short_edge",
-        "duplex_short"
-    ):
-
-        settings.append(
-            "duplexshort"
-        )
-
-    print_settings = ",".join(
-        settings
-    )
-
-    command = [
-        sumatra,
-        "-silent",
-        "-print-to",
-        printer_name,
-        "-print-settings",
-        print_settings,
-        str(file_path)
-    ]
-
-    print(
-        "[AGENT PDF PRINT]"
-    )
-
-    print(
-        f"  Engine      : {sumatra}"
-    )
-
-    print(
-        f"  Printer     : {printer_name}"
-    )
-
-    print(
-        f"  Settings    : {print_settings}"
-    )
-
-    print(
-        f"  File        : {file_path.name}"
-    )
-
-    result = subprocess.run(
-        command,
-        capture_output=True,
-        text=True,
-        timeout=60
-    )
-
-    if result.returncode != 0:
-
-        raise RuntimeError(
-            "SumatraPDF print failed. "
-            f"ExitCode={result.returncode}; "
-            f"STDOUT={result.stdout.strip()}; "
-            f"STDERR={result.stderr.strip()}"
-        )
-
-    print(
-        "[AGENT PDF PRINT SUBMITTED]"
-    )
-
-    # Give Windows spooler time to receive job
-    time.sleep(3)
-
-    return True
-
-
-# ============================================================
-# DOC / DOCX PRINT
-# ============================================================
-
-def print_word_document(
-    file_path,
-    printer_name,
-    copies
-):
-
-    word = None
-    document = None
-
-    try:
-
-        import win32com.client
-
-        print(
-            "[AGENT WORD] Starting Microsoft Word..."
-        )
-
-        word = win32com.client.Dispatch(
-            "Word.Application"
-        )
-
-        word.Visible = False
-        word.DisplayAlerts = 0
-
-        document = word.Documents.Open(
-            str(file_path),
-            ReadOnly=True
-        )
-
-        word.ActivePrinter = printer_name
-
-        document.PrintOut(
-            Copies=copies,
-            Background=False
-        )
-
-        print(
-            "[AGENT WORD PRINT SUBMITTED]"
-        )
-
-        time.sleep(3)
-
+        # Linux/macOS CUPS silent print
+        lp = shutil.which("lp")
+        if lp:
+            cmd = [lp, "-d", printer_name, "-n", str(copies), str(file_path)]
+            subprocess.run(cmd, check=True, timeout=15)
+            return True
         return True
 
-    except Exception as err:
+    # Windows Printing Logic
+    # 1. PDF via SumatraPDF
+    if ext == ".pdf":
+        sumatra = shutil.which("SumatraPDF.exe") or shutil.which("SumatraPDF")
+        if sumatra:
+            settings = [f"{copies}x"]
+            if page_range and page_range != "all":
+                settings.append(page_range.replace(" ", ""))
+            if scaling == "fit":
+                settings.append("fit")
+            elif scaling == "fill":
+                settings.append("shrink")
+            elif scaling == "custom":
+                settings.append(f"scale={max(10, min(500, int(custom_scale)))}")
+            else:
+                # Explicit noscale prevents driver defaults from shrinking PDFs to half-page.
+                settings.append("noscale")
+            if orientation in ("portrait", "landscape"):
+                settings.append(orientation)
+            if paper_size and paper_size != "Custom":
+                settings.append(f"paper={paper_size}")
+            if duplex == "flip_long":
+                settings.append("duplex=long")
+            elif duplex == "flip_short" or duplex == "double":
+                settings.append("duplex=short" if duplex == "flip_short" else "duplex=long")
+            if print_quality in ("draft", "normal", "high", "best"):
+                settings.append(f"quality={print_quality}")
+            if dpi in (150, 300, 600, 1200):
+                settings.append(f"dpi={dpi}")
+            cmd = [sumatra, "-print-to", printer_name, "-print-settings", ",".join(settings), str(file_path)]
+            subprocess.run(cmd, check=True, timeout=20)
+            return True
 
-        raise RuntimeError(
-            f"Word printing failed: {err}"
-        )
+    # Windows Paint can print raster images directly to a named printer.
+    if ext in (".png", ".jpg", ".jpeg", ".webp"):
+        mspaint = shutil.which("mspaint.exe") or shutil.which("mspaint")
+        if mspaint:
+            for _ in range(copies):
+                subprocess.run([mspaint, "/pt", str(file_path), printer_name], check=True, timeout=30)
+            return True
 
-    finally:
-
+    # 2. DOC / DOCX via Word/WordPad COM Automation or PowerShell
+    if ext in (".doc", ".docx"):
         try:
+            import win32com.client
+            word = win32com.client.Dispatch("Word.Application")
+            word.Visible = False
+            doc = word.Documents.Open(str(file_path))
+            word.ActivePrinter = printer_name
+            doc.PrintOut(Copies=copies)
+            doc.Close(False)
+            word.Quit()
+            return True
+        except Exception as word_err:
+            print("[AGENT WORD COM WARNING]:", word_err)
 
-            if document:
-                document.Close(False)
-
-        except Exception:
-            pass
-
-        try:
-
-            if word:
-                word.Quit()
-
-        except Exception:
-            pass
-
-
-# ============================================================
-# IMAGE / TXT PRINT
-# ============================================================
-
-def print_windows_shell(
-    file_path,
-    printer_name,
-    copies
-):
-
+    # 3. Native Windows ShellExecute printto verb (PNG, JPG, WEBP, TXT, PDF, DOC)
     try:
-
         import win32api
+        for _ in range(copies):
+            win32api.ShellExecute(0, "printto", str(file_path), f'"{printer_name}"', ".", 0)
+            time.sleep(0.5)
+        return True
+    except Exception as win_err:
+        print("[AGENT WIN32 SHELL WARNING]:", win_err)
 
-    except ImportError:
-
-        raise RuntimeError(
-            "pywin32 is not installed. "
-            "Run: pip install pywin32"
-        )
-
-    for copy_number in range(
-        copies
-    ):
-
-        result = win32api.ShellExecute(
-            0,
-            "printto",
-            str(file_path),
-            f'"{printer_name}"',
-            str(file_path.parent),
-            0
-        )
-
-        if result <= 32:
-
-            raise RuntimeError(
-                f"Windows printto failed. "
-                f"Error code: {result}"
-            )
-
-        print(
-            f"[AGENT SHELL PRINT] "
-            f"Copy {copy_number + 1}/{copies} submitted"
-        )
-
-        time.sleep(2)
-
+    # 4. PowerShell Out-Printer / Start-Process fallback
+    ps_cmd = f'Start-Process -FilePath "{str(file_path)}" -Verb PrintTo -ArgumentList "{printer_name}" -WindowStyle Hidden -PassThru'
+    subprocess.run(["powershell", "-Command", ps_cmd], check=True, timeout=15)
     return True
 
-
-# ============================================================
-# MAIN PRINT FUNCTION
-# ============================================================
-
-def print_document_silently(
-    file_path,
-    printer_name,
-    copies=1,
-    orientation="portrait",
-    color_mode="black_white",
-    duplex="single"
-):
-
-    if not file_path.exists():
-
-        raise RuntimeError(
-            f"Print file does not exist: {file_path}"
-        )
-
-    copies = max(
-        1,
-        int(copies)
-    )
-
-    verify_windows_printer(
-        printer_name
-    )
-
-    printer_status = get_printer_status(
-        printer_name
-    )
-
-    print(
-        f"[AGENT PRINTER STATUS] "
-        f"{printer_name} = {printer_status}"
-    )
-
-    extension = (
-        file_path.suffix.lower()
-    )
-
-    print("")
-    print("==========================================")
-    print("          PRINTFLOW PRINT JOB")
-    print("==========================================")
-    print(f"File        : {file_path.name}")
-    print(f"Extension   : {extension}")
-    print(f"Printer     : {printer_name}")
-    print(f"Copies      : {copies}")
-    print(f"Color Mode  : {color_mode}")
-    print(f"Duplex      : {duplex}")
-    print(f"Orientation : {orientation}")
-    print("==========================================")
-
-    # --------------------------------------------------------
-    # PDF
-    # --------------------------------------------------------
-
-    if extension == ".pdf":
-
-        return print_pdf(
-            file_path,
-            printer_name,
-            copies,
-            orientation,
-            color_mode,
-            duplex
-        )
-
-    # --------------------------------------------------------
-    # DOC / DOCX
-    # --------------------------------------------------------
-
-    if extension in (
-        ".doc",
-        ".docx"
-    ):
-
-        return print_word_document(
-            file_path,
-            printer_name,
-            copies
-        )
-
-    # --------------------------------------------------------
-    # IMAGE / TXT
-    # --------------------------------------------------------
-
-    if extension in (
-        ".png",
-        ".jpg",
-        ".jpeg",
-        ".webp",
-        ".txt"
-    ):
-
-        return print_windows_shell(
-            file_path,
-            printer_name,
-            copies
-        )
-
-    raise RuntimeError(
-        f"Unsupported print format: {extension}"
-    )
-
-
-# ============================================================
-# BACKEND REQUEST
-# ============================================================
-
-def backend_request(
-    url,
-    agent_token,
-    data=None,
-    method="POST"
-):
-
-    headers = {
-        "X-Print-Agent-Token": agent_token,
-        "User-Agent": "PrintFlowAgent/2.0"
-    }
-
-    encoded_data = None
-
-    if data is not None:
-
-        encoded_data = json.dumps(
-            data
-        ).encode("utf-8")
-
-        headers["Content-Type"] = (
-            "application/json"
-        )
-
-    request = urllib.request.Request(
-        url,
-        data=encoded_data,
-        headers=headers,
-        method=method
-    )
-
-    try:
-
-        with urllib.request.urlopen(
-            request,
-            timeout=20
-        ) as response:
-
-            raw = response.read().decode(
-                "utf-8"
-            )
-
-            if not raw:
-                return {}
-
-            return json.loads(raw)
-
-    except Exception as err:
-
-        raise RuntimeError(
-            f"Backend request failed "
-            f"{method} {url}: {err}"
-        )
-
-
-# ============================================================
-# COMPLETE ORDER
-# ============================================================
-
-def complete_order(
-    backend_url,
-    agent_token,
-    order_id,
-    printer_name
-):
-
-    url = (
-        f"{backend_url}"
-        f"/api/agent/complete/"
-        f"{order_id}"
-    )
-
-    data = {
-        "status": "COMPLETED",
-        "printed_by_printer": printer_name
-    }
-
-    return backend_request(
-        url,
-        agent_token,
-        data,
-        "POST"
-    )
-
-
-# ============================================================
-# FAIL ORDER
-# ============================================================
-
-def fail_order(
-    backend_url,
-    agent_token,
-    order_id,
-    printer_name,
-    error
-):
-
-    url = (
-        f"{backend_url}"
-        f"/api/agent/complete/"
-        f"{order_id}"
-    )
-
-    data = {
-        "status": "FAILED",
-        "error": str(error),
-        "printed_by_printer": printer_name
-    }
-
-    try:
-
-        return backend_request(
-            url,
-            agent_token,
-            data,
-            "POST"
-        )
-
-    except Exception as backend_error:
-
-        print(
-            "[AGENT FAILURE REPORT ERROR]",
-            repr(backend_error)
-        )
-
-        return None
-
-
-# ============================================================
-# RUN AGENT
-# ============================================================
-
 def run_agent():
-
-    print("")
     print("==================================================")
-    print("   PrintFlow Local Windows Print Agent v2.0")
+    print("  [PRINTER] PrintFlow Local Windows Print Agent v1.0")
     print("==================================================")
-    print("")
 
     config = load_agent_config()
+    backend_url = config.get("backend_url", "https://print-flow-mu.vercel.app").rstrip("/")
+    agent_token = (os.environ.get("PRINT_AGENT_TOKEN") or config.get("agent_token", "PF_AGENT_SECRET_TOKEN_2026")).strip()
+    poll_interval = int(config.get("poll_interval_seconds", 3))
 
-    backend_url = str(
-        config.get(
-            "backend_url",
-            DEFAULT_CONFIG["backend_url"]
-        )
-    ).rstrip("/")
+    # Perform safe startup cleanup of any orphaned temporary files
+    if TEMP_DOWNLOAD_DIR.exists():
+        for item in TEMP_DOWNLOAD_DIR.glob("*"):
+            if item.is_file():
+                try:
+                    item.unlink()
+                    print(f"[AGENT STARTUP CLEANUP] Removed orphaned temporary file: {item.name}")
+                except Exception:
+                    pass
 
-    agent_token = (
-        os.environ.get(
-            "PRINT_AGENT_TOKEN"
-        )
-        or config.get(
-            "agent_token",
-            DEFAULT_CONFIG["agent_token"]
-        )
-    ).strip()
-
-    poll_interval = max(
-        1,
-        int(
-            config.get(
-                "poll_interval_seconds",
-                3
-            )
-        )
-    )
-
-    print(
-        f"[CONFIG] Backend      : {backend_url}"
-    )
-
-    print(
-        f"[CONFIG] Poll interval: {poll_interval}s"
-    )
-
-    print(
-        f"[CONFIG] B&W printer  : "
-        f"{config.get('bw_printer', '')}"
-    )
-
-    print(
-        f"[CONFIG] Color printer: "
-        f"{config.get('color_printer', '')}"
-    )
-
-    # --------------------------------------------------------
-    # PRINTER CHECK
-    # --------------------------------------------------------
-
-    printers = get_installed_windows_printers()
-
-    print("")
-    print(
-        f"[AGENT] Detected {len(printers)} printer(s):"
-    )
-
-    for printer in printers:
-
-        print(
-            f"  - {printer['name']} "
-            f"| Driver: {printer['driver']} "
-            f"| Default: {printer['is_default']}"
-        )
-
-    bw_printer = config.get(
-        "bw_printer",
-        ""
-    ).strip()
-
-    if bw_printer:
-
-        if any(
-            p["name"] == bw_printer
-            for p in printers
-        ):
-
-            print(
-                f"[AGENT] Kyocera/B&W printer OK: "
-                f"{bw_printer}"
-            )
-
-        else:
-
-            print(
-                f"[AGENT WARNING] "
-                f"Configured B&W printer not detected: "
-                f"{bw_printer}"
-            )
-
-    print("")
-    print(
-        "[AGENT STATUS] READY / CONNECTED"
-    )
-    print(
-        "[AGENT STATUS] Waiting for print orders..."
-    )
-    print("")
-
-    # --------------------------------------------------------
-    # MAIN LOOP
-    # --------------------------------------------------------
+    print(f" Target Backend: {backend_url}")
+    print(f" Poll Interval : {poll_interval} seconds")
+    print(" Agent Status   : READY / CONNECTED\n")
 
     while True:
-
         try:
+            installed_printers = get_installed_windows_printers()
 
-            # ------------------------------------------------
-            # DISCOVER PRINTERS
-            # ------------------------------------------------
-
-            installed_printers = (
-                get_installed_windows_printers()
-            )
-
-            # ------------------------------------------------
-            # POLL
-            # ------------------------------------------------
-
-            poll_url = (
-                f"{backend_url}/api/agent/poll"
-            )
-
-            poll_data = {
+            # 1. Heartbeat & Poll Queue from Backend
+            poll_url = f"{backend_url}/api/agent/poll"
+            req_data = json.dumps({
                 "printers": installed_printers,
                 "status": "ONLINE"
-            }
+            }).encode("utf-8")
 
-            response = backend_request(
+            req = urllib.request.Request(
                 poll_url,
-                agent_token,
-                poll_data,
-                "POST"
+                data=req_data,
+                headers={
+                    "Content-Type": "application/json",
+                    "X-Print-Agent-Token": agent_token,
+                    "User-Agent": "PrintFlowAgent/1.0"
+                },
+                method="POST"
             )
 
-            queued_jobs = response.get(
-                "jobs",
-                []
-            )
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                resp_data = json.loads(resp.read().decode("utf-8"))
 
+            queued_jobs = resp_data.get("jobs", [])
             if queued_jobs:
-
-                print(
-                    f"\n[AGENT POLL] "
-                    f"Found {len(queued_jobs)} "
-                    f"pending print job(s)!"
-                )
-
-            # ------------------------------------------------
-            # PROCESS EACH JOB
-            # ------------------------------------------------
+                print(f"[AGENT POLL] Found {len(queued_jobs)} pending print job(s) in queue!")
 
             for job in queued_jobs:
-
-                order_id = job.get(
-                    "order_id"
-                )
-
-                file_rel_path = job.get(
-                    "file_path"
-                )
-
-                color_mode = job.get(
-                    "color_mode",
-                    "black_white"
-                )
-
-                copies = int(
-                    job.get(
-                        "copies",
-                        1
-                    )
-                )
-
-                orientation = job.get(
-                    "orientation",
-                    "portrait"
-                )
-
-                duplex = job.get(
-                    "duplex",
-                    "single"
-                )
-
-                # ------------------------------------------------
-                # VALIDATE JOB
-                # ------------------------------------------------
+                order_id = job.get("order_id")
+                file_rel_path = job.get("file_path")
+                color_mode = job.get("color_mode", "black_white")
+                copies = int(job.get("copies", 1))
+                orientation = job.get("orientation", "portrait")
+                paper_size = job.get("paper_size", "A4")
+                duplex = job.get("duplex", "single")
+                page_range = job.get("page_range", "all")
+                scaling = job.get("scaling", "actual_size")
+                custom_scale = float(job.get("custom_scale", 100))
+                print_quality = job.get("print_quality", "normal")
+                dpi = int(job.get("dpi", 300))
+                margins = job.get("margins", "default")
+                retry_count = int(job.get("retry_count", 0) or 0)
 
                 if not order_id:
-
-                    print(
-                        "[AGENT JOB ERROR] "
-                        "Missing order_id."
-                    )
-
                     continue
 
-                if not file_rel_path:
-
-                    print(
-                        f"[AGENT JOB ERROR] "
-                        f"Order {order_id} has no file_path."
-                    )
-
-                    continue
-
-                # ------------------------------------------------
-                # SELECT PRINTER
-                # ------------------------------------------------
-
-                try:
-
-                    target_printer = (
-                        select_target_printer(
-                            color_mode,
-                            config,
-                            installed_printers
-                        )
-                    )
-
-                except Exception as printer_error:
-
-                    print(
-                        f"[AGENT PRINTER ERROR] "
-                        f"Order {order_id}: "
-                        f"{printer_error}"
-                    )
-
-                    continue
-
-                print("")
-                print(
-                    "------------------------------------------"
-                )
-                print(
-                    f"[AGENT JOB] {order_id}"
-                )
-                print(
-                    f"[AGENT MODE] {color_mode}"
-                )
-                print(
-                    f"[AGENT PRINTER] {target_printer}"
-                )
-
-                # ------------------------------------------------
-                # CLAIM
-                # ------------------------------------------------
-
-                claim_url = (
-                    f"{backend_url}"
-                    f"/api/agent/claim/"
-                    f"{order_id}"
+                # 2. Claim Job Atomically from Backend
+                claim_url = f"{backend_url}/api/agent/claim/{order_id}"
+                claim_req = urllib.request.Request(
+                    claim_url,
+                    headers={
+                        "X-Print-Agent-Token": agent_token,
+                        "User-Agent": "PrintFlowAgent/1.0"
+                    },
+                    method="POST"
                 )
 
                 try:
-
-                    claim_response = backend_request(
-                        claim_url,
-                        agent_token,
-                        None,
-                        "POST"
-                    )
-
-                    if claim_response.get(
-                        "status"
-                    ) != "success":
-
-                        print(
-                            f"[AGENT CLAIM REJECTED] "
-                            f"{order_id}"
-                        )
-
-                        continue
-
-                except Exception as claim_error:
-
-                    print(
-                        f"[AGENT CLAIM ERROR] "
-                        f"{order_id}: "
-                        f"{claim_error}"
-                    )
-
+                    with urllib.request.urlopen(claim_req, timeout=10) as claim_resp:
+                        claim_res = json.loads(claim_resp.read().decode("utf-8"))
+                        if claim_res.get("status") != "success":
+                            print(f"[AGENT CLAIM REJECTED] Order {order_id} already claimed by another worker.")
+                            continue
+                except Exception as claim_err:
+                    print(f"[AGENT CLAIM ERROR] Skipping order {order_id}:", claim_err)
                     continue
 
-                print(
-                    f"[AGENT CLAIMED ORDER] "
-                    f"{order_id} | PRINTING"
-                )
+                print(f"[JOB CLAIMED] Order ID: {order_id} | State: PRINTING")
 
-                local_file = None
-
-                # ------------------------------------------------
-                # DOWNLOAD + PRINT
-                # ------------------------------------------------
-
+                # 3. Download Document File & Select Target Printer
+                target_printer = select_target_printer(color_mode, config, installed_printers)
+                print(f"[PRINTER SELECTED] {target_printer}")
                 try:
+                    if not file_rel_path:
+                        raise ValueError("Queued job has no document path")
+                    local_file = download_file(backend_url, file_rel_path, agent_token, job.get("file_name", ""))
+                    print(f"[DOCUMENT DOWNLOADED] File: {local_file.name}")
 
-                    local_file = download_file(
-                        backend_url,
-                        file_rel_path
-                    )
-
-                    # ------------------------------------------------
-                    # PRINT
-                    # ------------------------------------------------
-
+                    # 4. Execute Silent Direct Print
                     print_document_silently(
                         local_file,
                         target_printer,
                         copies,
                         orientation,
-                        color_mode,
-                        duplex
+                        paper_size,
+                        duplex,
+                        page_range,
+                        scaling,
+                        custom_scale,
+                        print_quality,
+                        dpi,
+                        margins
                     )
+                    print(f"[PRINT DISPATCHED] {local_file.name} -> {target_printer}")
 
-                    # ------------------------------------------------
-                    # SUCCESS
-                    # ------------------------------------------------
+                    # 5. Notify Backend of Completion
+                    complete_url = f"{backend_url}/api/agent/complete/{order_id}"
+                    comp_data = json.dumps({
+                        "status": "COMPLETED",
+                        "printed_by_printer": target_printer
+                    }).encode("utf-8")
 
-                    complete_order(
-                        backend_url,
-                        agent_token,
-                        order_id,
-                        target_printer
+                    comp_req = urllib.request.Request(
+                        complete_url,
+                        data=comp_data,
+                        headers={
+                            "Content-Type": "application/json",
+                            "X-Print-Agent-Token": agent_token,
+                            "User-Agent": "PrintFlowAgent/1.0"
+                        },
+                        method="POST"
                     )
+                    with urllib.request.urlopen(comp_req, timeout=10) as comp_resp:
+                        print(f"[PRINT COMPLETED] Order {order_id} marked COMPLETED on backend!")
 
-                    print(
-                        f"[AGENT JOB COMPLETED] "
-                        f"{order_id}"
-                    )
-
-                except Exception as print_error:
-
-                    # ------------------------------------------------
-                    # FAILURE
-                    # ------------------------------------------------
-
-                    print("")
-                    print(
-                        "========== PRINT FAILED =========="
-                    )
-
-                    print(
-                        f"Order   : {order_id}"
-                    )
-
-                    print(
-                        f"Printer : {target_printer}"
-                    )
-
-                    print(
-                        f"Error   : {print_error}"
-                    )
-
-                    print(
-                        "=================================="
-                    )
-
-                    fail_order(
-                        backend_url,
-                        agent_token,
-                        order_id,
-                        target_printer,
-                        print_error
-                    )
-
-                finally:
-
-                    # ------------------------------------------------
-                    # LOCAL FILE CLEANUP
-                    # ------------------------------------------------
-
-                    if (
-                        local_file
-                        and local_file.exists()
-                        and local_file.is_file()
-                    ):
-
+                    # 6. Wait 2.5 seconds & securely delete local downloaded copy
+                    time.sleep(2.5)
+                    if local_file.exists() and local_file.is_file():
                         try:
-
-                            # Allow spooler/application to finish
-                            time.sleep(3)
-
                             local_file.unlink()
+                            print(f"[AGENT LOCAL PRIVACY CLEANUP] Local temp file '{local_file.name}' deleted 2.5s after printing.")
+                        except Exception as c_err:
+                            print(f"[AGENT LOCAL CLEANUP ERROR]: {c_err}")
 
-                            print(
-                                f"[AGENT LOCAL PRIVACY CLEANUP] "
-                                f"Deleted {local_file.name}"
-                            )
+                except Exception as print_err:
+                    print(f"[PRINT FAILED] Order {order_id}: {print_err}")
+                    # Notify Backend of Failure
+                    fail_url = f"{backend_url}/api/agent/complete/{order_id}"
+                    fail_data = json.dumps({
+                        "status": "FAILED",
+                        "error": str(print_err),
+                        "printed_by_printer": target_printer
+                    }).encode("utf-8")
 
-                        except Exception as cleanup_error:
+                    fail_req = urllib.request.Request(
+                        fail_url,
+                        data=fail_data,
+                        headers={
+                            "Content-Type": "application/json",
+                            "X-Print-Agent-Token": agent_token,
+                            "User-Agent": "PrintFlowAgent/1.0"
+                        },
+                        method="POST"
+                    )
+                    try:
+                        with urllib.request.urlopen(fail_req, timeout=10):
+                            pass
+                    except Exception:
+                        pass
 
-                            print(
-                                f"[AGENT CLEANUP WARNING] "
-                                f"{cleanup_error}"
-                            )
+                    if retry_count < 2:
+                        retry_url = f"{backend_url}/api/orders/{order_id}/retry"
+                        retry_req = urllib.request.Request(
+                            retry_url,
+                            headers={
+                                "X-Print-Agent-Token": agent_token,
+                                "User-Agent": "PrintFlowAgent/1.0"
+                            },
+                            method="POST"
+                        )
+                        try:
+                            with urllib.request.urlopen(retry_req, timeout=10):
+                                print(f"[PRINT RETRY] Order {order_id} requeued (attempt {retry_count + 1}/2)")
+                        except Exception as retry_err:
+                            print(f"[PRINT RETRY ERROR] Order {order_id}: {retry_err}")
 
-            # ------------------------------------------------
-            # WAIT
-            # ------------------------------------------------
+        except Exception as poll_err:
+            print(f"[AGENT POLL ERROR] {poll_err}")
+            import traceback
+            traceback.print_exc()
 
-            time.sleep(
-                poll_interval
-            )
-
-        except KeyboardInterrupt:
-
-            print("")
-            print(
-                "[AGENT] Stopped by user."
-            )
-            break
-
-        except Exception as poll_error:
-
-            print("")
-            print(
-                "========== POLL ERROR =========="
-            )
-
-            print(
-                f"Type : {type(poll_error).__name__}"
-            )
-
-            print(
-                f"Error: {poll_error}"
-            )
-
-            print(
-                "================================"
-            )
-
-            time.sleep(
-                poll_interval
-            )
-
-
-# ============================================================
-# ENTRY POINT
-# ============================================================
+        time.sleep(poll_interval)
 
 if __name__ == "__main__":
     run_agent()

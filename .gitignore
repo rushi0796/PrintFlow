@@ -7,3 +7,5 @@ uploads/*.pdf
 orders/orders.json
 .env
 .DS_Store
+.vercel
+.env*

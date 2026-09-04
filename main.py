@@ -10,8 +10,18 @@ from uuid import uuid4
 from datetime import datetime
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from storage import (
+    claim_order as durable_claim_order,
+    complete_order as durable_complete_order,
+    delete_document,
+    get_document,
+    get_order,
+    list_orders as durable_list_orders,
+    queue_paid_order,
+    save_document,
+    save_order,
+)
 
 app = FastAPI()
 
@@ -35,37 +45,16 @@ if ENV_FILE.exists():
     except Exception as e:
         pass
 
-UPLOAD_DIR = (
-    Path("/tmp/printflow-uploads")
-    if os.environ.get("VERCEL")
-    else BASE_DIR / "uploads"
-)
-UPLOAD_DIR.mkdir(exist_ok=True)
-ORDER_FILE = (
-    Path("/tmp/printflow-orders.json")
-    if os.environ.get("VERCEL")
-    else BASE_DIR / "orders" / "orders.json"
-)
-
-# Serve uploaded PDF files statically for download & printing in Admin Dashboard
-app.mount("/uploads", StaticFiles(directory=str(UPLOAD_DIR)), name="uploads")
-
-# In-memory orders database for Admin Dashboard
 def load_orders():
-    try:
-        if ORDER_FILE.exists():
-            return json.loads(ORDER_FILE.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        pass
-    return []
+    return durable_list_orders()
 
 
 def save_orders(orders):
-    ORDER_FILE.parent.mkdir(exist_ok=True)
-    ORDER_FILE.write_text(json.dumps(orders), encoding="utf-8")
+    for order in orders:
+        save_order(order)
 
 
-orders_db = load_orders()
+orders_db = []
 
 @app.get("/")
 def home():
@@ -85,9 +74,18 @@ class PrintOrder(BaseModel):
     file_name: str
     copies: int = 1
     pages: int = 1
+    file_size: int = 0
+    paper_size: str = "A4"
+    page_range: str = "all"
     color_mode: str = "black_white"
     duplex: str = "double"
     orientation: str = "portrait"
+    print_quality: str = "normal"
+    dpi: int = 300
+    scaling: str = "actual_size"
+    custom_scale: float = 100
+    margins: str = "default"
+    backup_printer: str = ""
     customer_mobile: str = "Guest"
     amount: float = 2.0
     file_path: str = ""
@@ -96,6 +94,7 @@ class RazorpayOrderRequest(BaseModel):
     amount: float
     pages: Optional[int] = None
     copies: Optional[int] = None
+    color_mode: Optional[str] = "black_white"
     order_id: Optional[str] = None
     customer_id: Optional[str] = "CUST_001"
     currency: Optional[str] = "INR"
@@ -112,25 +111,60 @@ def get_all_orders():
 
 @app.post("/print-order")
 def create_print_order(order: PrintOrder):
-    orders_db[:] = load_orders()
+    if not 1 <= order.copies <= 999:
+        raise HTTPException(status_code=400, detail="Copies must be between 1 and 999")
+    if order.pages < 1:
+        raise HTTPException(status_code=400, detail="Pages must be at least 1")
+    if order.color_mode not in ("black_white", "color", "grayscale"):
+        raise HTTPException(status_code=400, detail="Unsupported color mode")
+    if order.paper_size not in ("A3", "A4", "A5", "Letter", "Legal", "Executive", "Custom"):
+        raise HTTPException(status_code=400, detail="Unsupported paper size")
+    if order.orientation not in ("portrait", "landscape", "auto"):
+        raise HTTPException(status_code=400, detail="Unsupported orientation")
+    if order.duplex not in ("single", "double", "flip_long", "flip_short"):
+        raise HTTPException(status_code=400, detail="Unsupported duplex mode")
+    if order.scaling not in ("actual_size", "fit", "fill", "custom"):
+        raise HTTPException(status_code=400, detail="Unsupported scaling mode")
+    if not 10 <= order.custom_scale <= 500:
+        raise HTTPException(status_code=400, detail="Custom scale must be between 10% and 500%")
+    if order.dpi not in (150, 300, 600, 1200):
+        raise HTTPException(status_code=400, detail="Unsupported DPI")
+    price_per_page = 6 if order.color_mode == "color" else 2
+    expected_amount = order.pages * order.copies * price_per_page
+    if abs(order.amount - expected_amount) > 0.01:
+        raise HTTPException(status_code=400, detail=f"Amount must be Rs.{expected_amount}")
     order_id = f"PF-{uuid4().hex[:6].upper()}"
     new_order = {
         "order_id": order_id,
         "file_name": order.file_name,
         "copies": order.copies,
         "pages": order.pages,
+        "file_size": order.file_size,
+        "paper_size": order.paper_size,
+        "page_range": order.page_range,
         "color_mode": order.color_mode,
         "duplex": order.duplex,
         "orientation": order.orientation,
+        "print_quality": order.print_quality,
+        "dpi": order.dpi,
+        "scaling": order.scaling,
+        "custom_scale": order.custom_scale,
+        "margins": order.margins,
+        "backup_printer": order.backup_printer,
         "customer_mobile": order.customer_mobile,
         "amount": order.amount,
         "file_path": order.file_path,
+        "paid": False,
         "status": "Pending",
+        "document_status": "UPLOADED",
+        "print_error": None,
+        "claimed_at": None,
+        "printed_by_printer": None,
         "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     }
-    orders_db.insert(0, new_order)
-    save_orders(orders_db)
+    save_order(new_order)
     print(f"[ORDER CREATED] Order {order_id} created for '{order.file_name}'")
+    print(f"[ORDER SAVED] {order_id} persisted in durable storage")
 
     # Simulated WhatsApp / SMS Alert Trigger
     send_notification(
@@ -158,28 +192,15 @@ import threading
 def schedule_secure_document_cleanup(order_id: str, delay_seconds: float = 2.5):
     def _cleanup_worker():
         time.sleep(delay_seconds)
-        orders_db[:] = load_orders()
-        for order in orders_db:
-            if order.get("order_id") == order_id or order.get("razorpay_order_id") == order_id:
-                order["document_status"] = "DELETING"
-                file_rel_path = order.get("file_path", "")
-                if file_rel_path:
-                    clean_name = Path(file_rel_path).name
-                    allowed_exts = {".pdf", ".png", ".jpg", ".jpeg", ".webp", ".doc", ".docx", ".txt"}
-                    file_ext = Path(clean_name).suffix.lower()
-                    if file_ext in allowed_exts:
-                        target_file = UPLOAD_DIR / clean_name
-                        if target_file.exists() and target_file.is_file():
-                            try:
-                                target_file.unlink()
-                                print(f"[PRIVACY CLEANUP SUCCESS] Document '{clean_name}' for Order {order_id} deleted from disk 2.5s after completion.")
-                            except Exception as e:
-                                print(f"[PRIVACY CLEANUP ERROR]: {e}")
-                order["file_path"] = ""
-                order["document_status"] = "DELETED"
-                order["deleted_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                save_orders(orders_db)
-                break
+        order = get_order(order_id)
+        if order and order.get("file_path"):
+            document_id = Path(order["file_path"]).name
+            delete_document(document_id)
+            order["file_path"] = ""
+            order["document_status"] = "DELETED"
+            order["deleted_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            save_order(order)
+            print(f"[PRIVACY CLEANUP SUCCESS] Document for Order {order_id} deleted after completion.")
 
     thread = threading.Thread(target=_cleanup_worker, daemon=True)
     thread.start()
@@ -190,29 +211,26 @@ def verify_agent_token(header_token: Optional[str]):
         raise HTTPException(status_code=401, detail="Unauthorized PrintAgent Token")
 
 def queue_order_for_printing(payload: dict):
-    orders_db[:] = load_orders()
     order_id = payload.get("print_order_id") or payload.get("order_id")
     if not order_id:
         raise HTTPException(status_code=400, detail="Missing print_order_id for verified payment")
 
-    for order in orders_db:
-        if order.get("order_id") == order_id:
-            if order.get("paid"):
-                if order.get("razorpay_payment_id") == payload.get("razorpay_payment_id"):
-                    print(f"[PRINT JOB QUEUED] Order {order_id} already queued (duplicate callback ignored)")
-                    return order
-                raise HTTPException(status_code=409, detail=f"Print order {order_id} is already paid")
-
-            order["status"] = "PRINT_QUEUED"
-            order["document_status"] = "UPLOADED"
-            order["paid"] = True
-            order["razorpay_order_id"] = payload.get("razorpay_order_id")
-            order["razorpay_payment_id"] = payload.get("razorpay_payment_id")
-            save_orders(orders_db)
-            print(f"[PRINT JOB QUEUED] Order {order_id} added to the agent queue")
-            return order
-
-    raise HTTPException(status_code=404, detail=f"Print order {order_id} not found")
+    existing = get_order(order_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail=f"Print order {order_id} not found")
+    try:
+        queued_order = queue_paid_order(
+            order_id,
+            payload.get("razorpay_order_id", ""),
+            payload.get("razorpay_payment_id", ""),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if not queued_order:
+        raise HTTPException(status_code=404, detail=f"Print order {order_id} not found")
+    print(f"[ORDER SAVED] Payment state persisted for {order_id}")
+    print(f"[PRINT JOB QUEUED] Order {order_id} added to the durable agent queue")
+    return queued_order
 
 @app.post("/api/agent/poll")
 def agent_poll_endpoint(req: dict, x_print_agent_token: Optional[str] = Header(None)):
@@ -222,8 +240,8 @@ def agent_poll_endpoint(req: dict, x_print_agent_token: Optional[str] = Header(N
     if "printers" in req:
         AGENT_STATE["printers"] = req["printers"]
 
-    orders_db[:] = load_orders()
-    queued_jobs = [o for o in orders_db if o.get("status") == "PRINT_QUEUED"]
+    queued_jobs = [o for o in durable_list_orders() if o.get("status") == "PRINT_QUEUED"]
+    print(f"[AGENT ONLINE] durable queue checked; jobs={len(queued_jobs)}")
 
     return {
         "status": "success",
@@ -234,59 +252,44 @@ def agent_poll_endpoint(req: dict, x_print_agent_token: Optional[str] = Header(N
 @app.post("/api/agent/claim/{order_id}")
 def agent_claim_endpoint(order_id: str, x_print_agent_token: Optional[str] = Header(None)):
     verify_agent_token(x_print_agent_token)
-    orders_db[:] = load_orders()
-    for order in orders_db:
-        if order["order_id"] == order_id:
-            if order.get("status") == "PRINTING":
-                raise HTTPException(status_code=409, detail="Order already claimed by another agent worker")
-            order["status"] = "PRINTING"
-            order["document_status"] = "PRINTING"
-            order["claimed_at"] = time.time()
-            save_orders(orders_db)
-            return {"status": "success", "message": f"Order {order_id} claimed successfully"}
-    raise HTTPException(status_code=404, detail="Order not found")
+    order = durable_claim_order(order_id)
+    if not order:
+        existing = get_order(order_id)
+        if existing and existing.get("status") == "PRINTING":
+            raise HTTPException(status_code=409, detail="Order already claimed by another agent worker")
+        raise HTTPException(status_code=404, detail="Order not found or not queued")
+    print(f"[JOB CLAIMED] {order_id} -> PRINTING")
+    return {"status": "success", "message": f"Order {order_id} claimed successfully"}
 
 @app.post("/api/agent/complete/{order_id}")
 def agent_complete_endpoint(order_id: str, req: dict, x_print_agent_token: Optional[str] = Header(None)):
     verify_agent_token(x_print_agent_token)
-    orders_db[:] = load_orders()
     status_val = req.get("status", "COMPLETED")
-    for order in orders_db:
-        if order["order_id"] == order_id:
-            order["status"] = status_val
-            if status_val in ("COMPLETED", "Completed"):
-                order["document_status"] = "PRINTED"
-                save_orders(orders_db)
-                schedule_secure_document_cleanup(order_id, 2.5)
-            elif status_val == "FAILED":
-                order["document_status"] = "UPLOADED" # Retain file for retry
-                if "error" in req:
-                    order["print_error"] = req["error"]
-                save_orders(orders_db)
-            if "printed_by_printer" in req:
-                order["printed_by_printer"] = req["printed_by_printer"]
-            return {"status": "success", "message": f"Order {order_id} state updated to {status_val}"}
-    raise HTTPException(status_code=404, detail="Order not found")
+    if status_val not in ("COMPLETED", "FAILED"):
+        raise HTTPException(status_code=400, detail="Completion status must be COMPLETED or FAILED")
+    order = durable_complete_order(order_id, status_val, req.get("error", ""), req.get("printed_by_printer", ""))
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+    if status_val == "COMPLETED":
+        print(f"[PRINT COMPLETED] {order_id} on {req.get('printed_by_printer', 'configured printer')}")
+        schedule_secure_document_cleanup(order_id, 2.5)
+    else:
+        print(f"[PRINT FAILED] {req.get('error', 'Unknown print error')}")
+    return {"status": "success", "message": f"Order {order_id} state updated to {status_val}"}
 
 @app.get("/api/orders/{order_id}/status")
 @app.get("/api/orders/status/{order_id}")
 def get_order_status_endpoint(order_id: str):
-    orders_db[:] = load_orders()
-    for order in orders_db:
-        if order.get("order_id") == order_id or order.get("razorpay_order_id") == order_id:
-            return {
-                "status": "success",
-                "order_id": order_id,
-                "order_status": order.get("status", "COMPLETED"),
-                "document_status": order.get("document_status", "DELETED"),
-                "deleted": order.get("document_status") == "DELETED" or not bool(order.get("file_path"))
-            }
+    order = get_order(order_id)
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
     return {
         "status": "success",
-        "order_id": order_id,
-        "order_status": "COMPLETED",
-        "document_status": "DELETED",
-        "deleted": True
+        "order_id": order["order_id"],
+        "order_status": order.get("status", "Pending"),
+        "document_status": order.get("document_status", "UPLOADED"),
+        "deleted": order.get("document_status") == "DELETED",
+        "print_error": order.get("print_error")
     }
 
 @app.get("/api/agent/status")
@@ -307,18 +310,34 @@ def retry_order_endpoint(order_id: str):
     for order in orders_db:
         if order["order_id"] == order_id:
             order["status"] = "PRINT_QUEUED"
+            order["document_status"] = "UPLOADED"
+            order["print_error"] = None
+            order["retry_count"] = int(order.get("retry_count", 0) or 0) + 1
             save_orders(orders_db)
             return {"status": "success", "message": f"Order {order_id} reset to PRINT_QUEUED for retry"}
     raise HTTPException(status_code=404, detail="Order not found")
 
+@app.post("/api/orders/{order_id}/cancel")
+def cancel_order_endpoint(order_id: str):
+    order = get_order(order_id)
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+    if order.get("status") in ("COMPLETED", "CANCELLED"):
+        raise HTTPException(status_code=409, detail="Order cannot be cancelled in its current state")
+    order["status"] = "CANCELLED"
+    order["print_error"] = "Cancelled by administrator"
+    save_order(order)
+    return {"status": "success", "message": f"Order {order_id} cancelled"}
+
 @app.post("/api/agent/test-print")
-def test_print_endpoint():
-    orders_db[:] = load_orders()
+def test_print_endpoint(x_print_agent_token: Optional[str] = Header(None)):
+    verify_agent_token(x_print_agent_token)
     test_id = f"TEST-{uuid4().hex[:6].upper()}"
+    document_id = save_document("printflow-test.txt", "text/plain", b"PrintFlow durable storage printer test\r\n")
     test_order = {
         "order_id": test_id,
-        "file_name": "test.pdf",
-        "file_path": "/uploads/test.pdf",
+        "file_name": "printflow-test.txt",
+        "file_path": f"/api/documents/{document_id}",
         "color_mode": "black_white",
         "copies": 1,
         "pages": 1,
@@ -326,11 +345,16 @@ def test_print_endpoint():
         "orientation": "portrait",
         "customer_mobile": "+919999999999",
         "amount": 2.0,
+        "paid": True,
         "status": "PRINT_QUEUED",
+        "document_status": "UPLOADED",
+        "print_error": None,
+        "claimed_at": None,
+        "printed_by_printer": None,
         "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     }
-    orders_db.insert(0, test_order)
-    save_orders(orders_db)
+    save_order(test_order)
+    print(f"[ORDER SAVED] Controlled test order {test_id} persisted in durable storage")
     return {"status": "success", "message": f"Test print order {test_id} queued", "order": test_order}
 
 @app.post("/api/orders/{order_id}/complete")
@@ -381,14 +405,14 @@ def print_order_dispatch_endpoint(order_id: str):
     orders_db[:] = load_orders()
     for order in orders_db:
         if order["order_id"] == order_id:
-            from print_dispatcher import dispatch_print_job
-            print_res = dispatch_print_job(order)
-            order["status"] = "Printing"
-            save_orders(orders_db)
+            if not order.get("file_path"):
+                raise HTTPException(status_code=400, detail="Order has no printable document")
+            order["status"] = "PRINT_QUEUED"
+            order["print_error"] = None
+            save_order(order)
             return {
                 "status": "success",
-                "message": f"Print job for {order_id} dispatched to printer",
-                "dispatch": print_res
+                "message": f"Print job for {order_id} queued for the local agent"
             }
     raise HTTPException(status_code=404, detail="Order not found")
 
@@ -402,17 +426,23 @@ def send_notification(mobile: str, message: str):
 @app.post("/create-razorpay-order")
 @app.post("/api/create-razorpay-order")
 def create_razorpay_order(request: RazorpayOrderRequest):
-    key_id = (os.environ.get("RAZORPAY_KEY_ID") or "rzp_live_TXZidkYDGHaDOh").strip().strip('"').strip("'")
-    key_secret = (os.environ.get("RAZORPAY_KEY_SECRET") or "FKi1Qw6tdcKvY9N2pmX2IjCf").strip().strip('"').strip("'")
+    # CRITICAL: Do NOT use fallback defaults. Fail clearly if credentials are missing.
+    key_id = (os.environ.get("RAZORPAY_KEY_ID") or "").strip().strip('"').strip("'")
+    key_secret = (os.environ.get("RAZORPAY_KEY_SECRET") or "").strip().strip('"').strip("'")
+
+    # Validate credentials exist before proceeding
+    if not key_id or not key_secret:
+        raise HTTPException(
+            status_code=500,
+            detail="RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET are not configured in the server environment"
+        )
 
     # Safe diagnostic logging (NEVER logs key_secret)
-    has_key_id = bool(key_id)
-    has_key_secret = bool(key_secret)
     is_live_key = key_id.startswith("rzp_live_")
     is_test_key = key_id.startswith("rzp_test_")
     mode_str = "LIVE" if is_live_key else ("TEST" if is_test_key else "UNKNOWN")
-    masked_key_id = f"{key_id[:8]}...{key_id[-4:]}" if len(key_id) > 12 else ("PRESENT" if key_id else "MISSING")
-    print(f"[RAZORPAY DIAGNOSTIC] KEY_ID present: {has_key_id}, Mode: {mode_str}, Starts with rzp_live_: {is_live_key}, Key ID: {masked_key_id}, KEY_SECRET present: {has_key_secret}")
+    masked_key_id = f"{key_id[:8]}...{key_id[-4:]}" if len(key_id) > 12 else "PRESENT"
+    print(f"[RAZORPAY DIAGNOSTIC] KEY_ID: {masked_key_id}, Mode: {mode_str}, KEY_SECRET configured: true")
 
     # Handle amount input in either Rupees (e.g. 4.0) or Paise (e.g. 400)
     if request.amount >= 100:
@@ -420,13 +450,15 @@ def create_razorpay_order(request: RazorpayOrderRequest):
     else:
         amount_in_paise = int(round(request.amount * 100))
 
-    # Backend independent amount validation formula: Page Count × Copies × ₹2
+    if request.color_mode not in ("black_white", "color", "grayscale"):
+        raise HTTPException(status_code=400, detail="Unsupported color mode")
+
+    # Canonical pricing: color is Rs.6/page; B&W and grayscale are Rs.2/page.
     if request.pages and request.copies and request.pages > 0 and request.copies > 0:
-        expected_rupees = request.pages * request.copies * 2.0
+        expected_rupees = request.pages * request.copies * (6.0 if request.color_mode == "color" else 2.0)
         expected_paise = int(round(expected_rupees * 100))
-        if amount_in_paise < expected_paise:
-            print(f"[PRICING VALIDATION] Correcting amount from {amount_in_paise}p to {expected_paise}p ({request.pages} pages x {request.copies} copies x Rs.2)")
-            amount_in_paise = expected_paise
+        if amount_in_paise != expected_paise:
+            raise HTTPException(status_code=400, detail=f"Amount must be Rs.{expected_rupees:g}")
 
     receipt_id = f"rcpt_{uuid4().hex[:10]}"
 
@@ -450,6 +482,11 @@ def create_razorpay_order(request: RazorpayOrderRequest):
         resp = requests.post(rzp_url, auth=HTTPBasicAuth(key_id, key_secret), headers=headers, json=rzp_payload, timeout=10)
         if resp.status_code in (200, 201):
             razorpay_order = resp.json()
+            if request.order_id:
+                local_order = get_order(request.order_id)
+                if local_order:
+                    local_order["razorpay_order_id"] = razorpay_order["id"]
+                    save_order(local_order)
             return {
                 "status": "success",
                 "key_id": key_id,
@@ -471,12 +508,18 @@ def create_razorpay_order(request: RazorpayOrderRequest):
 @app.post("/verify-razorpay-payment")
 @app.post("/api/verify-razorpay-payment")
 def verify_razorpay_payment(payload: dict):
+    # CRITICAL: Do NOT use fallback defaults. Fail clearly if credential is missing.
     key_secret = (os.environ.get("RAZORPAY_KEY_SECRET") or "").strip().strip('"').strip("'")
-    has_key_secret = bool(key_secret)
-    print(f"[RAZORPAY VERIFY DIAGNOSTIC] KEY_SECRET present: {has_key_secret}")
 
+    # Validate credential exists before proceeding
     if not key_secret:
-        raise HTTPException(status_code=400, detail="RAZORPAY_KEY_SECRET not configured in server environment variables.")
+        raise HTTPException(
+            status_code=500,
+            detail="RAZORPAY_KEY_SECRET is not configured in the server environment"
+        )
+
+    # Safe diagnostic logging (NEVER logs key_secret)
+    print(f"[RAZORPAY VERIFY DIAGNOSTIC] KEY_SECRET configured: true")
 
     razorpay_order_id = payload.get("razorpay_order_id", "")
     razorpay_payment_id = payload.get("razorpay_payment_id", "")
@@ -494,6 +537,14 @@ def verify_razorpay_payment(payload: dict):
 
     if not hmac.compare_digest(generated_signature, razorpay_signature):
         raise HTTPException(status_code=400, detail="Invalid Razorpay payment signature - payment verification failed")
+
+    local_order = get_order(payload.get("print_order_id", ""))
+    if not local_order:
+        raise HTTPException(status_code=404, detail="Print order not found")
+    if local_order.get("razorpay_order_id") and local_order["razorpay_order_id"] != razorpay_order_id:
+        raise HTTPException(status_code=409, detail="Razorpay order does not match print order")
+    if local_order.get("amount") is not None and abs(float(local_order["amount"]) - (6 if local_order.get("color_mode") == "color" else 2) * int(local_order.get("pages", 1)) * int(local_order.get("copies", 1))) > 0.01:
+        raise HTTPException(status_code=409, detail="Print order amount is inconsistent")
 
     print(f"[PAYMENT VERIFIED] Razorpay payment {razorpay_payment_id} verified for order {razorpay_order_id}")
     queued_order = queue_order_for_printing(payload)
@@ -525,21 +576,14 @@ async def upload_pdf(file: UploadFile = File(...)):
             )
 
         original_name = Path(file.filename).name
-        saved_filename = f"{uuid4().hex[:8]}_{original_name}"
-        file_path = UPLOAD_DIR / saved_filename
-
-        with file_path.open("wb") as buffer:
-            shutil.copyfileobj(
-                file.file,
-                buffer
-            )
-
-        returned_path = f"/uploads/{saved_filename}"
+        content = await file.read()
+        document_id = save_document(original_name, file.content_type or "application/octet-stream", content)
+        returned_path = f"/api/documents/{document_id}"
 
         return {
             "status": "success",
             "message": "File uploaded successfully",
-            "file_name": file.filename,
+            "file_name": original_name,
             "file_path": returned_path
         }
 
@@ -553,3 +597,12 @@ async def upload_pdf(file: UploadFile = File(...)):
             status_code=500,
             detail=str(e)
         )
+
+@app.get("/api/documents/{document_id}")
+def download_document(document_id: str, x_print_agent_token: Optional[str] = Header(None)):
+    verify_agent_token(x_print_agent_token)
+    document = get_document(document_id)
+    if not document:
+        raise HTTPException(status_code=404, detail="Document not found")
+    from fastapi.responses import Response
+    return Response(content=document["content"], media_type=document["mime_type"], headers={"Content-Disposition": f'attachment; filename="{document["file_name"]}"'})

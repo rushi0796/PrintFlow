@@ -2,7 +2,7 @@
   "backend_url": "https://print-flow-mu.vercel.app",
   "agent_token": "PF_AGENT_SECRET_TOKEN_2026",
   "poll_interval_seconds": 3,
-  "bw_printer": "",
-  "color_printer": "",
+  "bw_printer": "Kyocera ECOSYS M2040dn KX",
+   "color_printer": "EPSON L3210 Series",
   "auto_routing": true
 }

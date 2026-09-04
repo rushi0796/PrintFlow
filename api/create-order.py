@@ -23,6 +23,7 @@ class OrderReq(BaseModel):
     amount: float
     pages: Optional[int] = None
     copies: Optional[int] = None
+    color_mode: str = "black_white"
     currency: str = "INR"
     order_id: str = None
 
@@ -31,17 +32,23 @@ class OrderReq(BaseModel):
 @app.post("/create-razorpay-order")
 @app.post("/api/create-razorpay-order")
 def create_order(req: OrderReq):
-    key_id = (os.environ.get("RAZORPAY_KEY_ID") or "rzp_live_TXZidkYDGHaDOh").strip().strip('"').strip("'")
-    key_secret = (os.environ.get("RAZORPAY_KEY_SECRET") or "FKi1Qw6tdcKvY9N2pmX2IjCf").strip().strip('"').strip("'")
+    # CRITICAL: Do NOT use fallback defaults. Fail clearly if credentials are missing.
+    key_id = (os.environ.get("RAZORPAY_KEY_ID") or "").strip().strip('"').strip("'")
+    key_secret = (os.environ.get("RAZORPAY_KEY_SECRET") or "").strip().strip('"').strip("'")
+
+    # Validate credentials exist before proceeding
+    if not key_id or not key_secret:
+        raise HTTPException(
+            status_code=500,
+            detail="RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET are not configured in the server environment"
+        )
 
     # Safe diagnostic logging (NEVER logs key_secret)
-    has_key_id = bool(key_id)
-    has_key_secret = bool(key_secret)
     is_live_key = key_id.startswith("rzp_live_")
     is_test_key = key_id.startswith("rzp_test_")
     mode_str = "LIVE" if is_live_key else ("TEST" if is_test_key else "UNKNOWN")
-    masked_key_id = f"{key_id[:8]}...{key_id[-4:]}" if len(key_id) > 12 else ("PRESENT" if key_id else "MISSING")
-    print(f"[RAZORPAY DIAGNOSTIC] KEY_ID present: {has_key_id}, Mode: {mode_str}, Starts with rzp_live_: {is_live_key}, Key ID: {masked_key_id}, KEY_SECRET present: {has_key_secret}")
+    masked_key_id = f"{key_id[:8]}...{key_id[-4:]}" if len(key_id) > 12 else "PRESENT"
+    print(f"[RAZORPAY DIAGNOSTIC] KEY_ID: {masked_key_id}, Mode: {mode_str}, KEY_SECRET configured: {bool(key_secret)}")
 
     # Handle amount input in either Rupees (e.g. 4.0) or Paise (e.g. 400)
     if req.amount >= 100:
@@ -49,13 +56,15 @@ def create_order(req: OrderReq):
     else:
         amount_in_paise = int(round(req.amount * 100))
 
-    # Backend independent amount validation formula: Page Count × Copies × ₹2
+    if req.color_mode not in ("black_white", "color", "grayscale"):
+        raise HTTPException(status_code=400, detail="Unsupported color mode")
+
+    # Canonical pricing: color is ₹6/page; B&W and grayscale are ₹2/page.
     if req.pages and req.copies and req.pages > 0 and req.copies > 0:
-        expected_rupees = req.pages * req.copies * 2.0
+        expected_rupees = req.pages * req.copies * (6.0 if req.color_mode == "color" else 2.0)
         expected_paise = int(round(expected_rupees * 100))
-        if amount_in_paise < expected_paise:
-            print(f"[PRICING VALIDATION] Correcting amount from {amount_in_paise}p to {expected_paise}p ({req.pages} pages x {req.copies} copies x Rs.2)")
-            amount_in_paise = expected_paise
+        if amount_in_paise != expected_paise:
+            raise HTTPException(status_code=400, detail=f"Amount must be Rs.{expected_rupees:g}")
 
     if amount_in_paise < 100:
         raise HTTPException(status_code=400, detail="Minimum order amount must be at least 100 paise (INR 1.00)")
