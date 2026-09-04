@@ -130,6 +130,7 @@ def create_print_order(order: PrintOrder):
     }
     orders_db.insert(0, new_order)
     save_orders(orders_db)
+    print(f"[ORDER CREATED] Order {order_id} created for '{order.file_name}'")
 
     # Simulated WhatsApp / SMS Alert Trigger
     send_notification(
@@ -189,33 +190,29 @@ def verify_agent_token(header_token: Optional[str]):
         raise HTTPException(status_code=401, detail="Unauthorized PrintAgent Token")
 
 def queue_order_for_printing(payload: dict):
-    print("QUEUE FUNCTION CALLED")
     orders_db[:] = load_orders()
-    order_id = payload.get("razorpay_order_id") or payload.get("order_id")
+    order_id = payload.get("print_order_id") or payload.get("order_id")
     if not order_id:
-        return
+        raise HTTPException(status_code=400, detail="Missing print_order_id for verified payment")
+
     for order in orders_db:
-        if order.get("order_id") == order_id or order.get("razorpay_order_id") == order_id:
+        if order.get("order_id") == order_id:
+            if order.get("paid"):
+                if order.get("razorpay_payment_id") == payload.get("razorpay_payment_id"):
+                    print(f"[PRINT JOB QUEUED] Order {order_id} already queued (duplicate callback ignored)")
+                    return order
+                raise HTTPException(status_code=409, detail=f"Print order {order_id} is already paid")
+
             order["status"] = "PRINT_QUEUED"
             order["document_status"] = "UPLOADED"
             order["paid"] = True
+            order["razorpay_order_id"] = payload.get("razorpay_order_id")
+            order["razorpay_payment_id"] = payload.get("razorpay_payment_id")
             save_orders(orders_db)
-            return
-    new_queued = {
-        "order_id": order_id,
-        "file_name": payload.get("file_name", "document.pdf"),
-        "file_path": payload.get("file_path", "/uploads/test.pdf"),
-        "color_mode": payload.get("color_mode", "black_white"),
-        "copies": int(payload.get("copies", 1)),
-        "orientation": payload.get("orientation", "portrait"),
-        "customer_mobile": payload.get("customer_mobile", "Guest"),
-        "amount": payload.get("amount", 2.0),
-        "status": "PRINT_QUEUED",
-        "document_status": "UPLOADED",
-        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    }
-    orders_db.insert(0, new_queued)
-    save_orders(orders_db)
+            print(f"[PRINT JOB QUEUED] Order {order_id} added to the agent queue")
+            return order
+
+    raise HTTPException(status_code=404, detail=f"Print order {order_id} not found")
 
 @app.post("/api/agent/poll")
 def agent_poll_endpoint(req: dict, x_print_agent_token: Optional[str] = Header(None)):
@@ -226,7 +223,7 @@ def agent_poll_endpoint(req: dict, x_print_agent_token: Optional[str] = Header(N
         AGENT_STATE["printers"] = req["printers"]
 
     orders_db[:] = load_orders()
-    queued_jobs = [o for o in orders_db if o.get("status") in ("PRINT_QUEUED", "Pending")]
+    queued_jobs = [o for o in orders_db if o.get("status") == "PRINT_QUEUED"]
 
     return {
         "status": "success",
@@ -474,7 +471,7 @@ def create_razorpay_order(request: RazorpayOrderRequest):
 @app.post("/verify-razorpay-payment")
 @app.post("/api/verify-razorpay-payment")
 def verify_razorpay_payment(payload: dict):
-    key_secret = (os.environ.get("RAZORPAY_KEY_SECRET") or "FKi1Qw6tdcKvY9N2pmX2IjCf").strip().strip('"').strip("'")
+    key_secret = (os.environ.get("RAZORPAY_KEY_SECRET") or "").strip().strip('"').strip("'")
     has_key_secret = bool(key_secret)
     print(f"[RAZORPAY VERIFY DIAGNOSTIC] KEY_SECRET present: {has_key_secret}")
 
@@ -498,17 +495,15 @@ def verify_razorpay_payment(payload: dict):
     if not hmac.compare_digest(generated_signature, razorpay_signature):
         raise HTTPException(status_code=400, detail="Invalid Razorpay payment signature - payment verification failed")
 
-    # Queue print job for local Windows PrintAgent
-    try:
-        queue_order_for_printing(payload)
-    except Exception as q_err:
-        print("[QUEUE PRINT JOB EXCEPTION]:", q_err)
+    print(f"[PAYMENT VERIFIED] Razorpay payment {razorpay_payment_id} verified for order {razorpay_order_id}")
+    queued_order = queue_order_for_printing(payload)
 
     return {
         "status": "success",
         "message": "Razorpay Payment verified successfully. Job queued for PrintAgent.",
         "order_status": "PRINT_QUEUED",
-        "payload": payload
+        "payload": payload,
+        "order": queued_order
     }
 
 @app.post("/upload-pdf")

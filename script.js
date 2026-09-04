@@ -707,7 +707,10 @@ if (payBtn) {
                             const verifyRes = await fetchWithRetry(apiUrl("/api/verify-payment", "/api/verify-payment"), {
                                 method: "POST",
                                 headers: { "Content-Type": "application/json" },
-                                body: JSON.stringify(response)
+                                body: JSON.stringify({
+                                    ...response,
+                                    print_order_id: printData.order.order_id
+                                })
                             });
                             const vText = await verifyRes.text();
                             let verifyData;
