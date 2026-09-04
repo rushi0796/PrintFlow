@@ -5,11 +5,17 @@ import json
 class handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
-        response = {
-            "status": "online",
-            "service": "PrintFlow Agent",
-            "message": "Agent API is running successfully"
-        }
+        try:
+            from main import agent_status_endpoint
+            response = agent_status_endpoint()
+        except Exception as err:
+            response = {
+                "status": "error",
+                "agent_online": False,
+                "discovered_printers": [],
+                "config": {},
+                "message": str(err)
+            }
 
         body = json.dumps(response).encode("utf-8")
 
