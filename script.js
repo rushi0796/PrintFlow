@@ -717,23 +717,26 @@ if (payBtn) {
                                 throw new Error("Payment verification server response was invalid.");
                             }
 
-                            if ((verifyRes.ok && verifyData && verifyData.status === "success") || (response && response.razorpay_payment_id)) {
-                                window.location.href = "success.html";
-                            } else {
-                                const vDetail = (verifyData && verifyData.detail) ? verifyData.detail : "Payment signature verification failed.";
-                                showPaymentFailedModal("Verification Failed", vDetail);
-                                payBtn.disabled = false;
-                                payBtn.textContent = "Pay with Razorpay";
-                            }
+                            if (verifyRes.ok && verifyData && verifyData.status === "success") {
+    window.location.href = "success.html";
+} else {
+    const vDetail = verifyData?.detail || "Payment verification failed.";
+    showPaymentFailedModal("Verification Failed", vDetail);
+
+    payBtn.disabled = false;
+    payBtn.textContent = "Pay with Razorpay";
+}
+                                
                         } catch (vErr) {
-                            console.error("Payment verification error:", vErr);
-                            if (response && response.razorpay_payment_id) {
-                                window.location.href = "success.html";
-                            } else {
-                                showPaymentFailedModal("Verification Error", vErr.message || "Payment verification error occurred.");
-                                payBtn.disabled = false;
-                                payBtn.textContent = "Pay with Razorpay";
-                            }
+    console.error("Payment verification error:", vErr);
+
+    showPaymentFailedModal(
+        "Verification Error",
+        vErr.message || "Payment verification failed."
+    );
+
+    payBtn.disabled = false;
+    payBtn.textContent = "Pay with Razorpay";
                         }
                     },
                     "theme": {
