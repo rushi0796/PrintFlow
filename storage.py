@@ -8,6 +8,7 @@ from uuid import uuid4
 
 DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
 LOCAL_DB = Path(__file__).resolve().parent / "orders" / "printflow.sqlite3"
+_STORAGE_INITIALIZED = False
 
 
 def _postgres():
@@ -15,7 +16,7 @@ def _postgres():
         return None
     try:
         import psycopg2
-        return psycopg2.connect(DATABASE_URL, connect_timeout=10)
+        return psycopg2.connect(DATABASE_URL, connect_timeout=5)
     except ImportError as exc:
         raise RuntimeError("DATABASE_URL is configured but psycopg2-binary is not installed") from exc
 
@@ -32,6 +33,9 @@ def _connection():
 
 
 def init_storage():
+    global _STORAGE_INITIALIZED
+    if _STORAGE_INITIALIZED:
+        return
     connection = _connection()
     try:
         if DATABASE_URL:
@@ -144,6 +148,7 @@ def init_storage():
                 if column not in existing_columns:
                     connection.execute(f"ALTER TABLE printflow_orders ADD COLUMN {column} {definition}")
             connection.commit()
+        _STORAGE_INITIALIZED = True
     finally:
         connection.close()
 
@@ -176,6 +181,12 @@ def _execute(sql: str, params=(), fetch: str = "none"):
             result = [_row_to_dict(row) for row in cursor.fetchall()]
         connection.commit()
         return result
+    except Exception:
+        try:
+            connection.rollback()
+        except Exception:
+            pass
+        raise
     finally:
         connection.close()
 
@@ -215,6 +226,16 @@ def save_order(order: dict) -> dict:
     order.setdefault("pages_per_sheet", 1)
     order.setdefault("page_order", "horizontal")
     order.setdefault("customer_mobile", "Guest")
+    # Clean claimed_at to ensure it matches DOUBLE PRECISION schema
+    raw_claimed = order.get("claimed_at")
+    if raw_claimed is not None and not isinstance(raw_claimed, (int, float)):
+        try:
+            order["claimed_at"] = float(raw_claimed)
+        except (ValueError, TypeError):
+            try:
+                order["claimed_at"] = datetime.strptime(str(raw_claimed), "%Y-%m-%d %H:%M:%S").timestamp()
+            except Exception:
+                order["claimed_at"] = None
     columns = ["order_id", "razorpay_order_id", "razorpay_payment_id", "file_name", "file_path", "file_size", "pages", "copies", "paper_size", "page_range", "color_mode", "duplex", "orientation", "print_quality", "dpi", "scaling", "custom_scale", "margins", "amount", "paid", "status", "document_status", "timestamp", "created_at", "completed_at", "print_error", "claimed_at", "printed_by_printer", "backup_printer", "retry_count", "scale_mode", "print_mode", "pages_per_sheet", "page_order", "customer_mobile"]
     values = [order.get(column) for column in columns]
     placeholders = ", ".join(["%s"] * len(columns)) if DATABASE_URL else ", ".join(["?"] * len(columns))
@@ -235,8 +256,12 @@ def get_order(order_id: str) -> Optional[dict]:
 
 def list_orders() -> list[dict]:
     init_storage()
-    rows = _execute("SELECT order_id FROM printflow_orders", fetch="all")
-    return [order for row in rows if (order := get_order(row["order_id"]))]
+    return _execute("SELECT * FROM printflow_orders ORDER BY created_at DESC", fetch="all") or []
+
+
+def get_queued_orders() -> list[dict]:
+    init_storage()
+    return _execute("SELECT * FROM printflow_orders WHERE status='PRINT_QUEUED' ORDER BY created_at ASC", fetch="all") or []
 
 
 def queue_paid_order(order_id: str, razorpay_order_id: str, payment_id: str) -> Optional[dict]:
@@ -271,11 +296,18 @@ def claim_order(order_id: str) -> Optional[dict]:
     init_storage()
     placeholder = "%s" if DATABASE_URL else "?"
     if DATABASE_URL:
-        return _execute(f"UPDATE printflow_orders SET status='PRINTING', document_status='PRINTING', claimed_at=EXTRACT(EPOCH FROM NOW()) WHERE order_id={placeholder} AND status='PRINT_QUEUED' RETURNING *", (order_id,), "one")
+        return _execute(
+            f"UPDATE printflow_orders SET status='PRINTING', document_status='PRINTING', claimed_at=EXTRACT(EPOCH FROM NOW()) WHERE (order_id={placeholder} OR razorpay_order_id={placeholder}) AND status='PRINT_QUEUED' RETURNING *",
+            (order_id, order_id),
+            "one"
+        )
     connection = _connection()
     try:
         cursor = connection.cursor()
-        cursor.execute("UPDATE printflow_orders SET status='PRINTING', document_status='PRINTING', claimed_at=strftime('%s', 'now') WHERE order_id=? AND status='PRINT_QUEUED'", (order_id,))
+        cursor.execute(
+            "UPDATE printflow_orders SET status='PRINTING', document_status='PRINTING', claimed_at=strftime('%s', 'now') WHERE (order_id=? OR razorpay_order_id=?) AND status='PRINT_QUEUED'",
+            (order_id, order_id)
+        )
         connection.commit()
         return get_order(order_id) if cursor.rowcount == 1 else None
     finally:

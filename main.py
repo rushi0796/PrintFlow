@@ -22,6 +22,7 @@ from storage import (
     delete_document,
     get_document,
     get_order,
+    get_queued_orders,
     list_orders as durable_list_orders,
     queue_paid_order,
     save_document,
@@ -39,16 +40,16 @@ app.add_middleware(
 )
 
 BASE_DIR = Path(__file__).resolve().parent
-ENV_FILE = BASE_DIR / ".env"
-if ENV_FILE.exists():
-    try:
-        for line in ENV_FILE.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
-            if line and not line.startswith("#") and "=" in line:
-                k, v = line.split("=", 1)
-                os.environ[k.strip()] = v.strip()
-    except Exception:
-        pass
+for env_candidate in [BASE_DIR / ".env", BASE_DIR / ".env.local"]:
+    if env_candidate.exists():
+        try:
+            for line in env_candidate.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    k, v = line.split("=", 1)
+                    os.environ[k.strip()] = v.strip().strip('"').strip("'")
+        except Exception:
+            pass
 
 UPLOAD_DIR = (
     Path("/tmp/printflow-uploads")
@@ -302,8 +303,13 @@ def agent_poll_endpoint(req: dict, x_print_agent_token: Optional[str] = Header(N
     if "printers" in req:
         AGENT_STATE["printers"] = req["printers"]
 
-    orders = load_orders()
-    queued_jobs = [o for o in orders if o.get("status") == "PRINT_QUEUED"]
+    try:
+        queued_jobs = get_queued_orders()
+    except Exception as exc:
+        print(f"[POLL QUEUE ERROR] {type(exc).__name__}: {exc}")
+        orders = load_orders()
+        queued_jobs = [o for o in orders if o.get("status") == "PRINT_QUEUED"]
+
     return {
         "status": "success",
         "agent_status": "ONLINE",
@@ -314,46 +320,51 @@ def agent_poll_endpoint(req: dict, x_print_agent_token: Optional[str] = Header(N
 @app.post("/api/agent/claim/{order_id}")
 def agent_claim_job_endpoint(order_id: str, x_print_agent_token: Optional[str] = Header(None)):
     verify_agent_token(x_print_agent_token)
-    orders = load_orders()
-    for order in orders:
-        if order.get("order_id") == order_id or order.get("razorpay_order_id") == order_id:
-            if order.get("status") == "PRINTING":
-                raise HTTPException(status_code=409, detail=f"Order {order_id} is already claimed and currently PRINTING.")
-            order["status"] = "PRINTING"
-            order["document_status"] = "PRINTING"
-            order["claimed_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            save_order(order)
-            return {
-                "status": "success",
-                "message": f"Order {order_id} claimed successfully",
-                "order": order
-            }
-    raise HTTPException(status_code=404, detail="Order not found")
+    claimed_order = durable_claim_order(order_id)
+    if claimed_order:
+        return {
+            "status": "success",
+            "message": f"Order {order_id} claimed successfully",
+            "order": claimed_order
+        }
+
+    order = get_order(order_id)
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+
+    if order.get("status") == "PRINTING":
+        raise HTTPException(status_code=409, detail=f"Order {order_id} is already claimed and currently PRINTING.")
+    if order.get("status") == "COMPLETED":
+        raise HTTPException(status_code=409, detail=f"Order {order_id} has already been completed.")
+
+    raise HTTPException(status_code=400, detail=f"Order {order_id} cannot be claimed in status {order.get('status')}.")
 
 @app.post("/api/agent/complete/{order_id}")
 def agent_complete_job_endpoint(order_id: str, req: dict, x_print_agent_token: Optional[str] = Header(None)):
     verify_agent_token(x_print_agent_token)
-    orders = load_orders()
-    for order in orders:
-        if order.get("order_id") == order_id or order.get("razorpay_order_id") == order_id:
-            new_status = req.get("status", "COMPLETED")
-            order["status"] = new_status
-            if new_status == "COMPLETED":
-                order["document_status"] = "PRINTED"
-                order["printed_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                order["printed_by_printer"] = req.get("printed_by_printer", "Windows Printer")
-                save_order(order)
-                schedule_secure_document_cleanup(order_id, 2.5)
-            else:
-                order["document_status"] = "UPLOADED"
-                order["print_error"] = req.get("error", "Print execution failed")
-                save_order(order)
-            return {
-                "status": "success",
-                "message": f"Order {order_id} updated to {new_status}",
-                "order": order
-            }
-    raise HTTPException(status_code=404, detail="Order not found")
+    order = get_order(order_id)
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+
+    new_status = req.get("status", "COMPLETED")
+    order["status"] = new_status
+    if new_status == "COMPLETED":
+        order["document_status"] = "PRINTED"
+        order["printed_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        order["printed_by_printer"] = req.get("printed_by_printer", "Windows Printer")
+        order["completed_at"] = datetime.utcnow().isoformat()
+        save_order(order)
+        schedule_secure_document_cleanup(order_id, 2.5)
+    else:
+        order["document_status"] = "UPLOADED"
+        order["print_error"] = req.get("error", "Print execution failed")
+        save_order(order)
+
+    return {
+        "status": "success",
+        "message": f"Order {order_id} updated to {new_status}",
+        "order": order
+    }
 
 @app.get("/api/orders/{order_id}")
 @app.get("/api/orders/{order_id}/status")
@@ -362,13 +373,7 @@ def get_order_status_endpoint(
     x_customer_mobile: Optional[str] = Header(None),
     x_admin_token: Optional[str] = Header(None)
 ):
-    orders = load_orders()
-    matching_order = None
-    for order in orders:
-        if order.get("order_id") == order_id or order.get("razorpay_order_id") == order_id:
-            matching_order = order
-            break
-
+    matching_order = get_order(order_id)
     if not matching_order:
         raise HTTPException(status_code=404, detail="Order not found")
 
