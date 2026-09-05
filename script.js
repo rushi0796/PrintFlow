@@ -528,77 +528,100 @@ function processUploadQueue() {
     renderFileRowUI(nextItem);
     updateOverallUploadSummary();
 
-    const formData = new FormData();
-    formData.append("file", nextItem.file, nextItem.name);
+    const uploadEndpoints = [
+        apiUrl("/upload-pdf", "/api/upload-pdf"),
+        "/upload-pdf",
+        "/api/upload-pdf",
+        "http://127.0.0.1:8000/upload-pdf",
+        "http://127.0.0.1:8000/api/upload-pdf"
+    ];
+    let endpointIndex = 0;
 
-    const xhr = new XMLHttpRequest();
-    nextItem.xhr = xhr;
-
-    xhr.upload.onprogress = function(evt) {
-        if (evt.lengthComputable) {
-            const percent = Math.round((evt.loaded / evt.total) * 100);
-            nextItem.progress = percent;
-            updateFileRowProgressUI(nextItem.id, percent);
-            updateOverallUploadSummary();
-        }
-    };
-
-    xhr.onload = function() {
-        nextItem.xhr = null;
-        if (xhr.status >= 200 && xhr.status < 300) {
-            try {
-                const res = JSON.parse(xhr.responseText);
-                nextItem.status = "UPLOADED";
-                nextItem.progress = 100;
-                nextItem.backendPath = res.file_path || "";
-                renderFileRowUI(nextItem);
-            } catch(err) {
-                nextItem.status = "FAILED";
-                nextItem.error = "Response error";
-                renderFileRowUI(nextItem);
-            }
-        } else {
+    function attemptNextUploadEndpoint() {
+        if (endpointIndex >= uploadEndpoints.length) {
+            nextItem.xhr = null;
             nextItem.status = "FAILED";
-            nextItem.error = `HTTP ${xhr.status}`;
+            nextItem.error = "Upload failed";
             renderFileRowUI(nextItem);
+            isQueueProcessing = false;
+            updateOverallUploadSummary();
+            processUploadQueue();
+            return;
         }
-        isQueueProcessing = false;
-        updateOverallUploadSummary();
-        processUploadQueue();
-    };
 
-    xhr.onerror = function() {
-        nextItem.xhr = null;
-        nextItem.status = "FAILED";
-        nextItem.error = "Network error";
-        renderFileRowUI(nextItem);
-        isQueueProcessing = false;
-        updateOverallUploadSummary();
-        processUploadQueue();
-    };
+        const targetUrl = uploadEndpoints[endpointIndex++];
+        const formData = new FormData();
+        formData.append("file", nextItem.file, nextItem.name);
 
-    xhr.onabort = function() {
-        nextItem.xhr = null;
-        nextItem.status = "CANCELED";
-        renderFileRowUI(nextItem);
-        isQueueProcessing = false;
-        updateOverallUploadSummary();
-        processUploadQueue();
-    };
+        const xhr = new XMLHttpRequest();
+        nextItem.xhr = xhr;
+        xhr.timeout = 60000;
 
-    try {
-        xhr.open("POST", apiUrl("/upload-pdf", "/api/upload-pdf"), true);
-        xhr.send(formData);
-    } catch (err) {
-        console.warn("XHR upload send error:", err);
-        nextItem.xhr = null;
-        nextItem.status = "FAILED";
-        nextItem.error = "Dispatch error";
-        renderFileRowUI(nextItem);
-        isQueueProcessing = false;
-        updateOverallUploadSummary();
-        processUploadQueue();
+        xhr.upload.onprogress = function(evt) {
+            if (evt.lengthComputable) {
+                const percent = Math.round((evt.loaded / evt.total) * 100);
+                nextItem.progress = percent;
+                updateFileRowProgressUI(nextItem.id, percent);
+                updateOverallUploadSummary();
+            }
+        };
+
+        xhr.onload = function() {
+            if (xhr.status >= 200 && xhr.status < 300) {
+                nextItem.xhr = null;
+                try {
+                    const res = JSON.parse(xhr.responseText);
+                    nextItem.status = "UPLOADED";
+                    nextItem.progress = 100;
+                    nextItem.backendPath = res.file_path || "";
+                    renderFileRowUI(nextItem);
+                } catch(err) {
+                    nextItem.status = "FAILED";
+                    nextItem.error = "Response error";
+                    renderFileRowUI(nextItem);
+                }
+                isQueueProcessing = false;
+                updateOverallUploadSummary();
+                processUploadQueue();
+            } else {
+                console.warn(`Upload endpoint ${targetUrl} returned HTTP ${xhr.status}, trying fallback...`);
+                attemptNextUploadEndpoint();
+            }
+        };
+
+        xhr.onerror = function() {
+            console.warn(`Upload endpoint ${targetUrl} network error, trying fallback...`);
+            attemptNextUploadEndpoint();
+        };
+
+        xhr.ontimeout = function() {
+            console.warn(`Upload endpoint ${targetUrl} timed out, trying fallback...`);
+            attemptNextUploadEndpoint();
+        };
+
+        xhr.onabort = function() {
+            nextItem.xhr = null;
+            nextItem.status = "CANCELED";
+            renderFileRowUI(nextItem);
+            isQueueProcessing = false;
+            updateOverallUploadSummary();
+            processUploadQueue();
+        };
+
+        try {
+            xhr.open("POST", targetUrl, true);
+            const headers = getAuthHeaders();
+            Object.keys(headers).forEach(key => {
+                try { xhr.setRequestHeader(key, headers[key]); } catch(e) {}
+            });
+            xhr.send(formData);
+        } catch (err) {
+            console.warn(`Upload dispatch error for ${targetUrl}:`, err);
+            attemptNextUploadEndpoint();
+        }
     }
+
+    attemptNextUploadEndpoint();
 }
 
 function removeFileFromQueue(fileId) {
@@ -1629,6 +1652,25 @@ function initSuccessReceiptPage() {
     pollStatus();
     if (successPollingInterval) clearInterval(successPollingInterval);
     successPollingInterval = setInterval(pollStatus, 1500);
+
+    // 60-Second Automatic Security Logout Timer
+    let autoLogoutSeconds = 60;
+    const autoLogoutTimerText = document.getElementById("autoLogoutTimerText");
+
+    const logoutCountdownInterval = setInterval(() => {
+        autoLogoutSeconds--;
+        if (autoLogoutTimerText) {
+            autoLogoutTimerText.textContent = `Automatic security logout in ${autoLogoutSeconds}s...`;
+        }
+        if (autoLogoutSeconds <= 0) {
+            clearInterval(logoutCountdownInterval);
+            if (successPollingInterval) clearInterval(successPollingInterval);
+            clearUserDocumentSession();
+            localStorage.removeItem("mobileNumber");
+            sessionStorage.clear();
+            window.location.href = "login.html?logout=true";
+        }
+    }, 1000);
 }
 window.initSuccessReceiptPage = initSuccessReceiptPage;
 
