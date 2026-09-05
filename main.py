@@ -161,12 +161,35 @@ class RazorpayOrderRequest(BaseModel):
     currency: Optional[str] = "INR"
 
 @app.get("/api/orders")
-def get_all_orders():
+def get_all_orders(
+    x_customer_mobile: Optional[str] = Header(None),
+    x_admin_token: Optional[str] = Header(None)
+):
     orders = load_orders()
+    is_admin = (x_admin_token == "Admin@123")
+
+    if is_admin:
+        return {
+            "status": "success",
+            "total_orders": len(orders),
+            "orders": orders
+        }
+
+    if x_customer_mobile and x_customer_mobile.strip():
+        user_orders = [
+            o for o in orders
+            if str(o.get("customer_mobile", "")).strip() == x_customer_mobile.strip()
+        ]
+        return {
+            "status": "success",
+            "total_orders": len(user_orders),
+            "orders": user_orders
+        }
+
     return {
         "status": "success",
-        "total_orders": len(orders),
-        "orders": orders
+        "total_orders": 0,
+        "orders": []
     }
 
 @app.post("/print-order")
@@ -351,24 +374,35 @@ def agent_complete_job_endpoint(order_id: str, req: dict, x_print_agent_token: O
     raise HTTPException(status_code=404, detail="Order not found")
 
 @app.get("/api/orders/{order_id}/status")
-def get_order_status_endpoint(order_id: str):
+def get_order_status_endpoint(
+    order_id: str,
+    x_customer_mobile: Optional[str] = Header(None),
+    x_admin_token: Optional[str] = Header(None)
+):
     orders = load_orders()
+    matching_order = None
     for order in orders:
         if order.get("order_id") == order_id or order.get("razorpay_order_id") == order_id:
-            return {
-                "status": "success",
-                "order_id": order_id,
-                "order_status": order.get("status", "PRINT_QUEUED"),
-                "document_status": order.get("document_status", "UPLOADED"),
-                "deleted": order.get("document_status") == "DELETED",
-                "order": order
-            }
+            matching_order = order
+            break
+
+    if not matching_order:
+        raise HTTPException(status_code=404, detail="Order not found")
+
+    order_mobile = matching_order.get("customer_mobile")
+    is_admin = (x_admin_token == "Admin@123")
+
+    if order_mobile and not is_admin:
+        if not x_customer_mobile or x_customer_mobile.strip() != str(order_mobile).strip():
+            raise HTTPException(status_code=403, detail="Access denied: Unauthorized order access")
+
     return {
         "status": "success",
         "order_id": order_id,
-        "order_status": "PRINT_QUEUED",
-        "document_status": "DELETED",
-        "deleted": True
+        "order_status": matching_order.get("status", "PRINT_QUEUED"),
+        "document_status": matching_order.get("document_status", "UPLOADED"),
+        "deleted": matching_order.get("document_status") == "DELETED",
+        "order": matching_order
     }
 
 @app.get("/api/agent/status")
@@ -563,18 +597,34 @@ async def upload_pdf(file: UploadFile = File(...)):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/orders/{order_id}/retry")
-def retry_order_endpoint(order_id: str):
+def retry_order_endpoint(
+    order_id: str,
+    x_customer_mobile: Optional[str] = Header(None),
+    x_admin_token: Optional[str] = Header(None)
+):
     orders = load_orders()
+    matching_order = None
     for order in orders:
         if order.get("order_id") == order_id or order.get("razorpay_order_id") == order_id:
-            order["status"] = "PRINT_QUEUED"
-            save_order(order)
-            return {
-                "status": "success",
-                "message": f"Order {order_id} reset to PRINT_QUEUED for retry",
-                "order_status": "PRINT_QUEUED",
-                "order": order
-            }
+            matching_order = order
+            break
+
+    if matching_order:
+        order_mobile = matching_order.get("customer_mobile")
+        is_admin = (x_admin_token == "Admin@123")
+        if order_mobile and not is_admin:
+            if not x_customer_mobile or x_customer_mobile.strip() != str(order_mobile).strip():
+                raise HTTPException(status_code=403, detail="Access denied: Unauthorized order access")
+
+        matching_order["status"] = "PRINT_QUEUED"
+        save_order(matching_order)
+        return {
+            "status": "success",
+            "message": f"Order {order_id} reset to PRINT_QUEUED for retry",
+            "order_status": "PRINT_QUEUED",
+            "order": matching_order
+        }
+
     retry_queued = {
         "order_id": order_id,
         "file_name": "document.pdf",
@@ -583,6 +633,7 @@ def retry_order_endpoint(order_id: str):
         "copies": 1,
         "pages": 1,
         "duplex": "single",
+        "customer_mobile": x_customer_mobile or "",
         "status": "PRINT_QUEUED",
         "document_status": "UPLOADED",
         "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")

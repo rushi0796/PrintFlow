@@ -8,7 +8,21 @@ const isLocalDevelopment = ["localhost", "127.0.0.1"].includes(window.location.h
 const API_BASE = isLocalDevelopment ? "http://127.0.0.1:8000" : "";
 const apiUrl = (localPath, productionPath = localPath) => `${API_BASE}${isLocalDevelopment ? localPath : productionPath}`;
 
+function getAuthHeaders(customHeaders = {}) {
+    const headers = { ...customHeaders };
+    const mobile = (localStorage.getItem("mobileNumber") || "").trim();
+    if (mobile) {
+        headers["X-Customer-Mobile"] = mobile;
+    }
+    const isAdminUnlocked = sessionStorage.getItem("printflowAdminUnlocked") === "true";
+    if (isAdminUnlocked) {
+        headers["X-Admin-Token"] = "Admin@123";
+    }
+    return headers;
+}
+
 async function fetchWithRetry(url, options = {}, retries = 3, backoff = 500) {
+    options.headers = getAuthHeaders(options.headers || {});
     for (let i = 0; i < retries; i++) {
         try {
             const res = await fetch(url, options);
@@ -1221,7 +1235,9 @@ async function fetchAdminOrders() {
     if (!adminOrdersTableBody || !adminPortalUnlocked) return;
 
     try {
-        const res = await fetch(apiUrl("/api/orders", "/api/orders"));
+        const res = await fetch(apiUrl("/api/orders", "/api/orders"), {
+            headers: getAuthHeaders()
+        });
         const data = await res.json();
 
         if (data && data.orders) {
@@ -1484,7 +1500,24 @@ function initSuccessReceiptPage() {
 
     async function pollStatus() {
         try {
-            const res = await fetch(apiUrl(`/api/orders/${orderId}/status`, `/api/orders/${orderId}/status`));
+            const res = await fetch(apiUrl(`/api/orders/${orderId}/status`, `/api/orders/${orderId}/status`), {
+                headers: getAuthHeaders()
+            });
+
+            if (res.status === 403 || res.status === 404) {
+                if (successPollingInterval) clearInterval(successPollingInterval);
+                const container = document.querySelector(".receipt-page-container") || document.body;
+                container.innerHTML = `
+                    <div class="card" style="text-align:center; padding:30px; margin: 40px auto; max-width: 480px; background: white; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.1);">
+                        <div style="font-size: 48px; margin-bottom: 16px;">🔒</div>
+                        <h2 style="color: #dc2626; margin-bottom: 8px;">Access Denied</h2>
+                        <p style="color: #4b5563; font-size: 15px; margin-bottom: 20px;">You are not authorized to view this order receipt.</p>
+                        <a href="home.html" style="display:inline-block; padding: 10px 20px; background: #2563eb; color: white; border-radius: 8px; text-decoration: none; font-weight: 600;">Go to Home</a>
+                    </div>
+                `;
+                return;
+            }
+
             const data = await res.json();
             if (data && data.status === "success") {
                 const orderState = data.order_status || "PRINT_QUEUED";
@@ -1543,7 +1576,10 @@ window.retryPrintJob = async function() {
     if (retryBtn) retryBtn.disabled = true;
 
     try {
-        const res = await fetch(apiUrl(`/api/orders/${orderId}/retry`, `/api/orders/${orderId}/retry`), { method: "POST" });
+        const res = await fetch(apiUrl(`/api/orders/${orderId}/retry`, `/api/orders/${orderId}/retry`), {
+            method: "POST",
+            headers: getAuthHeaders()
+        });
         const data = await res.json();
         if (data.status === "success") {
             if (retryBtn) retryBtn.style.display = "none";
