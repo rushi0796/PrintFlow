@@ -30,16 +30,20 @@
 
             <div id="mobileSection">
 
-                <input
-                    type="tel"
-                    id="mobileNumber"
-                    name="mobileNumber"
-                    placeholder="Enter Mobile Number"
-                    maxlength="10"
-                    inputmode="numeric"
-                    autocomplete="tel"
-                    enterkeyhint="go"
-                >
+                <div class="phone-input-wrapper" style="position: relative; display: flex; align-items: center; margin-bottom: 18px;">
+                    <span style="position: absolute; left: 16px; font-weight: 700; color: #ea580c; font-size: 15px; pointer-events: none;">+91</span>
+                    <input
+                        type="tel"
+                        id="mobileNumber"
+                        name="mobileNumber"
+                        placeholder="Enter 10-digit Mobile Number"
+                        maxlength="10"
+                        inputmode="numeric"
+                        autocomplete="tel"
+                        enterkeyhint="go"
+                        style="padding-left: 54px !important; margin-bottom: 0 !important;"
+                    >
+                </div>
 
                 <button
                     type="button"

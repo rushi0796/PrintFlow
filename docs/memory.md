@@ -8,51 +8,41 @@ This document contains the live state, architectural decisions, recent test resu
 
 - **System Status**: Fully Production Ready & Secure.
 - **System Status**: Fully Production Ready & Secure.
-- **Current Task**: Official PrintFlow Brand Logo Header Implementation across all PrintFlow pages.
-- **Current File**: `logo.png`, `assets/logo.png`, `style.css`, `login.html`, `home.html`, `print-details.html`, `payment.html`, `success.html`, `admin.html`, `index.html`, `privacy-policy.html`, `terms.html`, `refund-policy.html`
-- **Active Git Commit**: `feat: implement official PrintFlow logo and brand animations across all pages`
+- **Current Task**: Root Cause Fix for Upload Queue & Phone Number Login Authorization Guard.
+- **Current File**: `login.html`, `login.js`, `auth_guard.js`, `script.js`, `home.html`, `docs/memory.md`
+- **Active Git Commit**: `fix: restore phone number login page accessibility and fix upload queue page count hang`
 - **Deployment Target**: Vercel (`https://print-flow-mu.vercel.app`) & Local Windows Print Agent (`print_agent.py`)
 
 ---
 
 ## 2. Completed Milestones & Architectural Decisions
 
-1. **Official PrintFlow Brand Logo Header (`brand-header`, `logo.png`)**:
-   - Integrated user-uploaded official PrintFlow logo image (`logo.png` / `assets/logo.png`) across all 10 pages (`login.html`, `home.html`, `print-details.html`, `payment.html`, `success.html`, `admin.html`, `index.html`, `privacy-policy.html`, `terms.html`, `refund-policy.html`).
-   - Replaced generic printer emojis (`🖨️`, `💳`, placeholder icons) in top header containers with responsive `.brand-header`, `.brand-logo-wrapper`, and `.brand-logo-img`.
-   - Applied smooth `@keyframes brandReveal` entrance animation (0.6s cubic-bezier) and ambient `@keyframes brandShimmer` drop-shadow glow (4s infinite).
-   - Fully responsive layout ensuring crisp display and zero horizontal overflow across 320px–1440px viewports.
+1. **Upload Queue Hang Root Cause Fix (`script.js`)**:
+   - **Root Cause**: `countPdfPages(file)` was invoked inside `handleFileSelection()`, but `countPdfPages` was undefined in `script.js`. This threw a synchronous `Uncaught ReferenceError` when selecting PDF files, halting execution before `processUploadQueue()` was reached and leaving files stuck in `WAITING` state indefinitely.
+   - **Fix**: Implemented `countPdfPages(file)` using `pdfjsLib` with safe fallback to `1` page on missing worker or error. Added `xhr.timeout = 60000` (60s) and `xhr.ontimeout` handler to `processUploadQueue()`.
 
-2. **Universal Footer Links Across All Pages (`app-footer`)**:
-   - Added uniform, mobile-responsive footer to the bottom of all PrintFlow pages (`login.html`, `home.html`, `print-details.html`, `payment.html`, `success.html`, `admin.html`, `index.html`, `privacy-policy.html`, `terms.html`, `refund-policy.html`).
-   - Links: `Privacy Policy` (`privacy-policy.html`), `Terms & Conditions` (`terms.html`), `Refund Policy` (`refund-policy.html`), `Contact Support` (`mailto:printflowindia@gmail.com`).
-
-3. **Real Animated File Upload Status (`script.js`, `style.css`)**:
-   - Built a dynamic, real-time status summary engine with CSS keyframe animation (`.spin-icon`).
-   - Displays real-time header states (`⟳ Uploading 1 of 4 files...`, `✓ All 4 files uploaded successfully`, `⚠️ 1 of 4 files failed to upload`).
-
-4. **Global Authentication & Direct URL Guard (`auth_guard.js`)**:
-   - Built a lightweight, zero-dependency guard executed synchronously at top of `<head>` across all private pages.
-
-5. **Backend Order Privacy & Authorization**:
-   - Enforced `X-Customer-Mobile` header validation across `/api/orders/{order_id}/status`, `/api/orders`, and `/api/orders/{order_id}/retry`.
+2. **Public Login Page Accessibility & Direct URL Security Guard (`auth_guard.js`, `login.html`)**:
+   - **Root Cause**: `auth_guard.js` used a whitelist matching only explicit customer page basenames. Unlisted pages (or URL parameter variants) bypassed the check, while valid login navigation triggered redirect loops when previous session state existed.
+   - **Fix**: Updated `auth_guard.js` so that ALL non-public pages are protected by default. `login.html`, `index.html`, `privacy-policy.html`, `terms.html`, `refund-policy.html` are explicitly declared in `publicPages`. Unauthenticated direct URL requests hide the DOM synchronously (`display: none`) and redirect to `login.html`.
+   - Added support for `?logout=true` query parameter on `login.html` to automatically clear session storage and allow clean phone login UI rendering.
+   - Restored phone number login UI with `+91` country code badge wrapper, MSG91 Web SDK 4-digit OTP verification, resend countdown, and success animations.
 
 ---
 
 ## 3. Current Bugs & Recent Fixes
 
-- **Recent Fix 1 (Official Brand Logo Header)**: Integrated official PrintFlow logo image asset with CSS keyframe reveal animations across all 10 HTML pages, replacing generic emojis.
-- **Recent Fix 2 (Universal Footer Links)**: Added `Privacy Policy`, `Terms & Conditions`, `Refund Policy`, and `Contact Support` (`mailto:printflowindia@gmail.com`) links to the bottom of every page.
+- **Recent Fix 1 (Phone Number Login Restoration & Auth Guard)**: Made `login.html` publicly accessible with `+91` phone input and MSG91 OTP system, while protecting all private routes against direct URL access.
+- **Recent Fix 2 (Upload Queue Fix)**: Defined `countPdfPages` in `script.js` to prevent synchronous `ReferenceError` crashes during PDF file selection.
 - **Current Bugs**: None. All automated test suites passing 100%.
 
 ---
 
 ## 4. Test Results & Quality Assurance
 
+- **Login & Auth Security Suite**: `scratch/test_login_auth_restore_suite.py` -> **100% PASSED**
 - **Official Logo Test Suite**: `scratch/test_official_logo_suite.py` -> **100% PASSED**
 - **Footer Links Test Suite**: `scratch/test_footer_links_suite.py` -> **100% PASSED**
 - **Upload Status & Animation Suite**: `scratch/test_multi_upload_status_suite.py` -> **100% PASSED**
-- **Security & Authorization Test Suite**: `scratch/test_security_auth_suite.py` -> **100% PASSED**
 - **Multi-File Upload Test Suite**: `scratch/test_multi_file_upload_suite.py` -> **100% PASSED**
 - **Production QA Suite**: `scratch/test_printflow_full_production_suite.py` -> **100% PASSED**
 

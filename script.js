@@ -421,6 +421,22 @@ function escapeHtml(str) {
     return String(str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
+async function countPdfPages(file) {
+    if (!file) return 1;
+    const isPdf = (file.type === "application/pdf") || ((file.name || "").toLowerCase().endsWith(".pdf"));
+    if (!isPdf) return 1;
+    if (typeof pdfjsLib === "undefined") return 1;
+
+    try {
+        const arrayBuffer = await file.arrayBuffer();
+        const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+        return (pdf && pdf.numPages) ? pdf.numPages : 1;
+    } catch (err) {
+        console.warn("countPdfPages fallback:", err);
+        return 1;
+    }
+}
+
 async function uploadPdfToBackend(file) {
     if (!file) return null;
     handleFileSelection([file]);
@@ -640,6 +656,12 @@ window.clearAllFilesFromQueue = clearAllFilesFromQueue;
 
 // Attach Upload UI Event Listeners
 document.addEventListener("DOMContentLoaded", function() {
+    const userMobileDisplay = document.getElementById("userMobileDisplay");
+    const mobile = (localStorage.getItem("mobileNumber") || "").trim();
+    if (userMobileDisplay && mobile) {
+        userMobileDisplay.textContent = `+91 ${mobile}`;
+    }
+
     const dropzone = document.getElementById("uploadDropzone");
     const fileInput = document.getElementById("pdfFile");
     const choosePdfBtn = document.getElementById("choosePdfBtn");
