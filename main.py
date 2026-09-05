@@ -77,11 +77,11 @@ class PrintOrder(BaseModel):
     file_size: int = 0
     paper_size: str = "A4"
     page_range: str = "all"
+    pages_per_sheet: int = 1
+    page_order: str = "horizontal"
     color_mode: str = "black_white"
     duplex: str = "double"
     orientation: str = "portrait"
-    print_quality: str = "normal"
-    dpi: int = 300
     scaling: str = "actual_size"
     custom_scale: float = 100
     margins: str = "default"
@@ -95,6 +95,7 @@ class RazorpayOrderRequest(BaseModel):
     pages: Optional[int] = None
     copies: Optional[int] = None
     color_mode: Optional[str] = "black_white"
+    pages_per_sheet: Optional[int] = 1
     order_id: Optional[str] = None
     customer_id: Optional[str] = "CUST_001"
     currency: Optional[str] = "INR"
@@ -115,24 +116,64 @@ def create_print_order(order: PrintOrder):
         raise HTTPException(status_code=400, detail="Copies must be between 1 and 999")
     if order.pages < 1:
         raise HTTPException(status_code=400, detail="Pages must be at least 1")
-    if order.color_mode not in ("black_white", "color", "grayscale"):
+    if order.color_mode not in ("black_white", "color", "micro_xerox"):
         raise HTTPException(status_code=400, detail="Unsupported color mode")
     if order.paper_size not in ("A3", "A4", "A5", "Letter", "Legal", "Executive", "Custom"):
         raise HTTPException(status_code=400, detail="Unsupported paper size")
     if order.orientation not in ("portrait", "landscape", "auto"):
         raise HTTPException(status_code=400, detail="Unsupported orientation")
-    if order.duplex not in ("single", "double", "flip_long", "flip_short"):
+    if order.duplex not in ("single", "double"):
         raise HTTPException(status_code=400, detail="Unsupported duplex mode")
+    if order.page_order not in ("horizontal", "vertical"):
+        raise HTTPException(status_code=400, detail="Unsupported page order")
     if order.scaling not in ("actual_size", "fit", "fill", "custom"):
         raise HTTPException(status_code=400, detail="Unsupported scaling mode")
     if not 10 <= order.custom_scale <= 500:
         raise HTTPException(status_code=400, detail="Custom scale must be between 10% and 500%")
-    if order.dpi not in (150, 300, 600, 1200):
-        raise HTTPException(status_code=400, detail="Unsupported DPI")
-    price_per_page = 6 if order.color_mode == "color" else 2
-    expected_amount = order.pages * order.copies * price_per_page
+
+    allowed_micro_sheet_counts = (2, 4, 6, 9, 16)
+    if order.color_mode == "micro_xerox":
+        if order.pages_per_sheet not in allowed_micro_sheet_counts:
+            raise HTTPException(
+                status_code=400,
+                detail="Micro Xerox Pages Per Sheet must be 2, 4, 6, 9, or 16"
+            )
+    elif order.pages_per_sheet != 1:
+        raise HTTPException(
+            status_code=400,
+            detail="Pages per sheet is only available for Micro Xerox"
+        )
+
+    physical_papers = (
+        (order.pages + order.pages_per_sheet - 1)
+        // order.pages_per_sheet
+    ) * order.copies
+
+    expected_amount = (
+        physical_papers * 3
+        if order.color_mode == "micro_xerox"
+        else order.pages
+        * order.copies
+        * (6 if order.color_mode == "color" else 2)
+    )
+
     if abs(order.amount - expected_amount) > 0.01:
-        raise HTTPException(status_code=400, detail=f"Amount must be Rs.{expected_amount}")
+        raise HTTPException(
+            status_code=400,
+            detail=f"Amount must be Rs.{expected_amount}"
+        )
+
+    order.pages_per_sheet = (
+        order.pages_per_sheet
+        if order.color_mode == "micro_xerox"
+        else 1
+    )
+    order.page_order = (
+        order.page_order
+        if order.color_mode == "micro_xerox"
+        else "horizontal"
+    )
+
     order_id = f"PF-{uuid4().hex[:6].upper()}"
     new_order = {
         "order_id": order_id,
@@ -142,11 +183,11 @@ def create_print_order(order: PrintOrder):
         "file_size": order.file_size,
         "paper_size": order.paper_size,
         "page_range": order.page_range,
+        "pages_per_sheet": order.pages_per_sheet,
+        "page_order": order.page_order,
         "color_mode": order.color_mode,
         "duplex": order.duplex,
         "orientation": order.orientation,
-        "print_quality": order.print_quality,
-        "dpi": order.dpi,
         "scaling": order.scaling,
         "custom_scale": order.custom_scale,
         "margins": order.margins,
@@ -450,12 +491,15 @@ def create_razorpay_order(request: RazorpayOrderRequest):
     else:
         amount_in_paise = int(round(request.amount * 100))
 
-    if request.color_mode not in ("black_white", "color", "grayscale"):
+    if request.color_mode not in ("black_white", "color", "micro_xerox"):
         raise HTTPException(status_code=400, detail="Unsupported color mode")
 
-    # Canonical pricing: color is Rs.6/page; B&W and grayscale are Rs.2/page.
+    # Canonical pricing: color is Rs.6/page; B&W is Rs.2/page.
     if request.pages and request.copies and request.pages > 0 and request.copies > 0:
-        expected_rupees = request.pages * request.copies * (6.0 if request.color_mode == "color" else 2.0)
+        if request.pages_per_sheet not in (1, 2, 4, 6, 9, 16):
+            raise HTTPException(status_code=400, detail="Unsupported pages per sheet")
+        physical_papers = ((request.pages + request.pages_per_sheet - 1) // request.pages_per_sheet) * request.copies
+        expected_rupees = physical_papers * 3.0 if request.color_mode == "micro_xerox" else request.pages * request.copies * (6.0 if request.color_mode == "color" else 2.0)
         expected_paise = int(round(expected_rupees * 100))
         if amount_in_paise != expected_paise:
             raise HTTPException(status_code=400, detail=f"Amount must be Rs.{expected_rupees:g}")
@@ -543,7 +587,11 @@ def verify_razorpay_payment(payload: dict):
         raise HTTPException(status_code=404, detail="Print order not found")
     if local_order.get("razorpay_order_id") and local_order["razorpay_order_id"] != razorpay_order_id:
         raise HTTPException(status_code=409, detail="Razorpay order does not match print order")
-    if local_order.get("amount") is not None and abs(float(local_order["amount"]) - (6 if local_order.get("color_mode") == "color" else 2) * int(local_order.get("pages", 1)) * int(local_order.get("copies", 1))) > 0.01:
+    pages = int(local_order.get("pages", 1))
+    copies = int(local_order.get("copies", 1))
+    pages_per_sheet = int(local_order.get("pages_per_sheet", 1) or 1)
+    expected_amount = ((pages + pages_per_sheet - 1) // pages_per_sheet) * copies * 3 if local_order.get("color_mode") == "micro_xerox" else pages * copies * (6 if local_order.get("color_mode") == "color" else 2)
+    if local_order.get("amount") is not None and abs(float(local_order["amount"]) - expected_amount) > 0.01:
         raise HTTPException(status_code=409, detail="Print order amount is inconsistent")
 
     print(f"[PAYMENT VERIFIED] Razorpay payment {razorpay_payment_id} verified for order {razorpay_order_id}")

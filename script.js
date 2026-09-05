@@ -444,12 +444,15 @@ const printDetailsFileName = document.getElementById("fileName");
 const paperSizeBox = document.getElementById("paperSize");
 const pageRangeModeBox = document.getElementById("pageRangeMode");
 const pageRangeBox = document.getElementById("pageRange");
-const printQualityBox = document.getElementById("printQuality");
-const dpiBox = document.getElementById("dpi");
 const scalingBox = document.getElementById("scaling");
 const customScaleBox = document.getElementById("customScale");
 const marginsBox = document.getElementById("margins");
 const previewSummary = document.getElementById("previewSummary");
+const microXeroxSettings = document.getElementById("microXeroxSettings");
+const pagesPerSheetBox = document.getElementById("pagesPerSheet");
+const pageOrderBox = document.getElementById("pageOrder");
+const microSummary = document.getElementById("microSummary");
+const previewLayout = document.getElementById("previewLayout");
 
 function countSelectedPages(pageRange, totalPages) {
     if (!pageRange || pageRange === "all") return totalPages;
@@ -482,31 +485,127 @@ if (printDetailsFileName) {
 }
 
 if (copiesBox && totalPriceBox) {
+    function getSelectedColorMode() {
+        const selected = document.querySelector('input[name="colorMode"]:checked')?.value;
+        return ["black_white", "color", "micro_xerox"].includes(selected)
+            ? selected
+            : "black_white";
+    }
+
+    function getSelectedPagesPerSheet() {
+        const value = Number(pagesPerSheetBox?.value);
+        return [2, 4, 6, 9, 16].includes(value) ? value : 4;
+    }
+
+    function updateMicroPreview(pagesPerSheet, pageOrder, colorMode) {
+        if (!previewLayout) return;
+
+        const previewPages = colorMode === "micro_xerox" ? pagesPerSheet : 1;
+        const columns = previewPages >= 9 ? 4 : previewPages >= 4 ? 2 : previewPages;
+
+        previewLayout.classList.toggle(
+            "page-order-horizontal",
+            pageOrder !== "vertical"
+        );
+        previewLayout.classList.toggle(
+            "page-order-vertical",
+            pageOrder === "vertical"
+        );
+        previewLayout.style.gridTemplateColumns =
+            `repeat(${columns}, minmax(0, 1fr))`;
+
+        previewLayout.innerHTML = Array.from(
+            { length: previewPages },
+            (_, index) =>
+                `<span class="preview-page" title="Page ${index + 1}">${index + 1}</span>`
+        ).join("");
+    }
+
     function updateTotalPrice() {
         const copies = Math.min(999, Math.max(1, Number(copiesBox.value) || 1));
         copiesBox.value = copies;
-        const totalPages = Number(localStorage.getItem("pdfPageCount")) || 1;
-        const pageRange = pageRangeModeBox?.value === "custom" ? (pageRangeBox?.value.trim() || "all") : "all";
-        const pageCount = countSelectedPages(pageRange, totalPages);
-        const colorMode = document.querySelector('input[name="colorMode"]:checked')?.value || "black_white";
-        const pricePerPage = colorMode === "color" ? 6 : 2;
-        const totalAmount = copies * pageCount * pricePerPage;
 
-        totalPriceBox.textContent = "Total: ₹" + totalAmount;
+        const totalPages = Number(localStorage.getItem("pdfPageCount")) || 1;
+        const pageRange = pageRangeModeBox?.value === "custom"
+            ? (pageRangeBox?.value.trim() || "all")
+            : "all";
+        const pageCount = countSelectedPages(pageRange, totalPages);
+        const colorMode = getSelectedColorMode();
+        const pagesPerSheet = getSelectedPagesPerSheet();
+        const pageOrder = pageOrderBox?.value === "vertical"
+            ? "vertical"
+            : "horizontal";
+
+        const physicalPapersPerCopy = Math.ceil(pageCount / pagesPerSheet);
+        const physicalPapers = physicalPapersPerCopy * copies;
+
+        let totalAmount;
+        if (colorMode === "micro_xerox") {
+            totalAmount = physicalPapers * 3;
+        } else {
+            const pricePerPage = colorMode === "color" ? 6 : 2;
+            totalAmount = pageCount * copies * pricePerPage;
+        }
+
+        totalPriceBox.textContent = `Total: ₹${totalAmount}`;
         localStorage.setItem("amount", String(totalAmount));
+
+        if (microXeroxSettings) {
+            microXeroxSettings.hidden = colorMode !== "micro_xerox";
+        }
+
+        if (microSummary) {
+            microSummary.innerHTML = `
+                <div>PDF Pages<strong>${pageCount}</strong></div>
+                <div>Pages / Sheet<strong>${pagesPerSheet}</strong></div>
+                <div>Physical Papers<strong>${physicalPapers}</strong></div>
+                <div>Copies<strong>${copies}</strong></div>
+                <div>Total Price<strong>₹${totalAmount}</strong></div>
+            `;
+        }
+
         if (previewSummary) {
             const paper = paperSizeBox?.value || "A4";
-            const orientation = document.querySelector('input[name="orientation"]:checked')?.value || "portrait";
-            const side = document.querySelector('input[name="printSide"]:checked')?.value || "double";
-            const colorLabel = colorMode === "color" ? "Color" : colorMode === "grayscale" ? "Grayscale" : "B&W";
-            previewSummary.textContent = `${paper} · ${orientation} · ${colorLabel} · ${side} · ${copies} ${copies === 1 ? "copy" : "copies"} · ₹${totalAmount}`;
+            const orientation =
+                document.querySelector('input[name="orientation"]:checked')?.value ||
+                "portrait";
+            const side =
+                document.querySelector('input[name="printSide"]:checked')?.value ||
+                "double";
+            const colorLabel = colorMode === "color"
+                ? "Color"
+                : colorMode === "micro_xerox"
+                    ? "Micro Xerox"
+                    : "Black & White";
+
+            previewSummary.textContent = colorMode === "micro_xerox"
+                ? `${paper} · ${orientation} · ${colorLabel} · ${pagesPerSheet} pages/sheet · ${pageOrder} order · ${copies} ${copies === 1 ? "copy" : "copies"} · ₹${totalAmount}`
+                : `${paper} · ${orientation} · ${colorLabel} · ${side} · ${copies} ${copies === 1 ? "copy" : "copies"} · ₹${totalAmount}`;
         }
+
+        updateMicroPreview(pagesPerSheet, pageOrder, colorMode);
     }
 
     copiesBox.addEventListener("input", updateTotalPrice);
-    document.querySelectorAll('input[name="colorMode"], input[name="orientation"], input[name="printSide"]').forEach(input => input.addEventListener("change", updateTotalPrice));
-    [paperSizeBox, pageRangeModeBox, pageRangeBox, printQualityBox, dpiBox, scalingBox, customScaleBox, marginsBox].forEach(input => input?.addEventListener("input", updateTotalPrice));
-    [paperSizeBox, pageRangeModeBox, printQualityBox, dpiBox, scalingBox, marginsBox].forEach(input => input?.addEventListener("change", updateTotalPrice));
+
+    document
+        .querySelectorAll('input[name="colorMode"], input[name="orientation"], input[name="printSide"]')
+        .forEach(input => input.addEventListener("change", updateTotalPrice));
+
+    [
+        paperSizeBox,
+        pageRangeModeBox,
+        pageRangeBox,
+        scalingBox,
+        customScaleBox,
+        marginsBox,
+        pagesPerSheetBox,
+        pageOrderBox
+    ].forEach(input => {
+        input?.addEventListener("input", updateTotalPrice);
+        input?.addEventListener("change", updateTotalPrice);
+    });
+
     updateTotalPrice();
 }
 
@@ -534,7 +633,8 @@ if (paymentBtn) {
         const pageRange = pageRangeModeBox?.value === "custom" ? (pageRangeBox?.value.trim() || "all") : "all";
         const pageCount = countSelectedPages(pageRange, totalPages);
         const colorMode = document.querySelector('input[name="colorMode"]:checked')?.value || "black_white";
-        const amount = copies * pageCount * (colorMode === "color" ? 6 : 2);
+        const pagesPerSheet = Number(pagesPerSheetBox?.value) || 4;
+        const amount = colorMode === "micro_xerox" ? Math.ceil(pageCount / pagesPerSheet) * copies * 3 : copies * pageCount * (colorMode === "color" ? 6 : 2);
 
         localStorage.setItem("copies", copies);
         localStorage.setItem("amount", amount);
@@ -564,8 +664,8 @@ if (paymentBtn) {
 
         localStorage.setItem("paperSize", paperSizeBox?.value || "A4");
         localStorage.setItem("pageRange", pageRangeModeBox?.value === "custom" ? (pageRangeBox?.value.trim() || "all") : "all");
-        localStorage.setItem("printQuality", printQualityBox?.value || "normal");
-        localStorage.setItem("dpi", dpiBox?.value || "300");
+        localStorage.setItem("pagesPerSheet", pagesPerSheet);
+        localStorage.setItem("pageOrder", pageOrderBox?.value || "horizontal");
         localStorage.setItem("scaling", scalingBox?.value || "actual_size");
         localStorage.setItem("customScale", customScaleBox?.value || "100");
         localStorage.setItem("margins", marginsBox?.value || "default");
@@ -596,8 +696,8 @@ if (paymentFile && paymentCopies && paymentAmount) {
     const orientationVal = localStorage.getItem("orientation") || "portrait";
     const paperSizeVal = localStorage.getItem("paperSize") || "A4";
     const pageRangeVal = localStorage.getItem("pageRange") || "all";
-    const printQualityVal = localStorage.getItem("printQuality") || "normal";
-    const dpiVal = localStorage.getItem("dpi") || "300";
+    const pagesPerSheetVal = localStorage.getItem("pagesPerSheet") || "4";
+    const pageOrderVal = localStorage.getItem("pageOrder") || "horizontal";
     const scalingVal = localStorage.getItem("scaling") || "actual_size";
     const customScaleVal = localStorage.getItem("customScale") || "100";
     const marginsVal = localStorage.getItem("margins") || "default";
@@ -607,19 +707,13 @@ if (paymentFile && paymentCopies && paymentAmount) {
     paymentAmount.textContent = "Total Amount: ₹" + amountVal;
 
     if (paymentColorMode) {
-        paymentColorMode.textContent =
-            "Color Mode: " +
-            (colorModeVal === "color" ? "Color Print 🎨" : "Black & White (B&W)");
-    }
-    if (paymentSide) {
-        paymentSide.textContent =
-            "Print Side: " +
-            (printSideVal === "double" ? "Double Side" : "Single Side");
-    }
-    if (paymentOrientation) {
-        paymentOrientation.textContent =
-            "Orientation: " +
-            (orientationVal === "landscape" ? "Landscape" : "Portrait");
+        const colorModeLabel = colorModeVal === "color"
+            ? "Color Print 🎨"
+            : colorModeVal === "micro_xerox"
+                ? `Micro Xerox (${pagesPerSheetVal} pages/sheet, ${pageOrderVal} order)`
+                : "Black & White (B&W)";
+
+        paymentColorMode.textContent = "Color Mode: " + colorModeLabel;
     }
 
     getSavedPdfFile().then(selectedFile => {
@@ -707,8 +801,8 @@ if (payBtn) {
             const printSideVal = localStorage.getItem("printSide") || "double";
             const orientationVal = localStorage.getItem("orientation") || "portrait";
             const paperSizeVal = localStorage.getItem("paperSize") || "A4";
-            const printQualityVal = localStorage.getItem("printQuality") || "normal";
-            const dpiVal = parseInt(localStorage.getItem("dpi") || "300", 10);
+            const pagesPerSheetVal = parseInt(localStorage.getItem("pagesPerSheet") || "4", 10);
+            const pageOrderVal = localStorage.getItem("pageOrder") || "horizontal";
             const scalingVal = localStorage.getItem("scaling") || "actual_size";
             const customScaleVal = parseFloat(localStorage.getItem("customScale") || "100");
             const marginsVal = localStorage.getItem("margins") || "default";
@@ -725,11 +819,11 @@ if (payBtn) {
                     file_size: selectedFile?.size || 0,
                     paper_size: paperSizeVal,
                     page_range: pageRangeVal,
+                    pages_per_sheet: colorModeVal === "micro_xerox" ? pagesPerSheetVal : 1,
+                    page_order: colorModeVal === "micro_xerox" ? pageOrderVal : "horizontal",
                     color_mode: colorModeVal,
                     duplex: printSideVal,
                     orientation: orientationVal,
-                    print_quality: printQualityVal,
-                    dpi: dpiVal,
                     scaling: scalingVal,
                     custom_scale: customScaleVal,
                     margins: marginsVal,
@@ -753,6 +847,7 @@ if (payBtn) {
                     pages: pageCountVal,
                     copies: copiesVal,
                     color_mode: colorModeVal,
+                    pages_per_sheet: colorModeVal === "micro_xerox" ? pagesPerSheetVal : 1,
                     order_id: printData.order.order_id
                 })
             });
@@ -1056,8 +1151,8 @@ function renderAdminOrders(orders) {
             <tr>
                 <td><strong>${order.order_id}</strong><br><small style="color: #64748b;">${order.timestamp || ''}</small></td>
                 <td>${order.customer_mobile || 'Guest'}</td>
-                <td><strong class="admin-file-name" title="${order.file_name}">${order.file_name}</strong><br><small style="color: #ea580c;">${order.pages || 1} Pages</small></td>
-                <td>${order.copies || 1} Copies (${order.duplex === 'double' ? 'Double' : 'Single'} Side)</td>
+                <td><strong class="admin-file-name" title="${order.file_name}">${order.file_name}</strong><br><small style="color: #ea580c;">${order.pages || 1} Pages · ${order.paper_size || 'A4'} · ${order.orientation || 'portrait'}</small></td>
+                <td>${order.copies || 1} Copies (${order.duplex === 'double' ? 'Double' : 'Single'} Side)<br><small>${order.color_mode === 'micro_xerox' ? `Micro Xerox · ${order.pages_per_sheet || 1}/sheet · ${order.page_order || 'horizontal'}` : (order.color_mode === 'color' ? 'Color' : 'B&W')}</small></td>
                 <td><strong>₹${order.amount || 2}</strong></td>
                 <td>
                     <span class="${badgeClass}">

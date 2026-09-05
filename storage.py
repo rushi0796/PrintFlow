@@ -51,8 +51,8 @@ def init_storage():
                         color_mode TEXT NOT NULL,
                         duplex TEXT NOT NULL,
                         orientation TEXT NOT NULL,
-                        print_quality TEXT DEFAULT 'normal',
-                        dpi INTEGER DEFAULT 300,
+                        pages_per_sheet INTEGER DEFAULT 1,
+                        page_order TEXT DEFAULT 'horizontal',
                         scaling TEXT DEFAULT 'actual_size',
                         custom_scale DOUBLE PRECISION DEFAULT 100,
                         margins TEXT DEFAULT 'default',
@@ -83,8 +83,8 @@ def init_storage():
                     "file_size": "BIGINT DEFAULT 0",
                     "paper_size": "TEXT DEFAULT 'A4'",
                     "page_range": "TEXT DEFAULT 'all'",
-                    "print_quality": "TEXT DEFAULT 'normal'",
-                    "dpi": "INTEGER DEFAULT 300",
+                    "pages_per_sheet": "INTEGER DEFAULT 1",
+                    "page_order": "TEXT DEFAULT 'horizontal'",
                     "scaling": "TEXT DEFAULT 'actual_size'",
                     "custom_scale": "DOUBLE PRECISION DEFAULT 100",
                     "margins": "TEXT DEFAULT 'default'",
@@ -120,8 +120,8 @@ def init_storage():
                 "file_size": "INTEGER DEFAULT 0",
                 "paper_size": "TEXT DEFAULT 'A4'",
                 "page_range": "TEXT DEFAULT 'all'",
-                "print_quality": "TEXT DEFAULT 'normal'",
-                "dpi": "INTEGER DEFAULT 300",
+                    "pages_per_sheet": "INTEGER DEFAULT 1",
+                    "page_order": "TEXT DEFAULT 'horizontal'",
                 "scaling": "TEXT DEFAULT 'actual_size'",
                 "custom_scale": "REAL DEFAULT 100",
                 "margins": "TEXT DEFAULT 'default'",
@@ -191,8 +191,8 @@ def save_order(order: dict) -> dict:
     order.setdefault("file_size", 0)
     order.setdefault("paper_size", "A4")
     order.setdefault("page_range", "all")
-    order.setdefault("print_quality", "normal")
-    order.setdefault("dpi", 300)
+    order.setdefault("pages_per_sheet", 1)
+    order.setdefault("page_order", "horizontal")
     order.setdefault("scaling", "actual_size")
     order.setdefault("custom_scale", 100)
     order.setdefault("margins", "default")
@@ -200,7 +200,7 @@ def save_order(order: dict) -> dict:
     order.setdefault("completed_at", None)
     order.setdefault("backup_printer", "")
     order.setdefault("retry_count", 0)
-    columns = ["order_id", "razorpay_order_id", "razorpay_payment_id", "file_name", "file_path", "file_size", "pages", "copies", "paper_size", "page_range", "color_mode", "duplex", "orientation", "print_quality", "dpi", "scaling", "custom_scale", "margins", "amount", "paid", "status", "document_status", "timestamp", "created_at", "completed_at", "print_error", "claimed_at", "printed_by_printer", "backup_printer", "retry_count"]
+    columns = ["order_id", "razorpay_order_id", "razorpay_payment_id", "file_name", "file_path", "file_size", "pages", "copies", "paper_size", "page_range", "pages_per_sheet", "page_order", "color_mode", "duplex", "orientation", "scaling", "custom_scale", "margins", "amount", "paid", "status", "document_status", "timestamp", "created_at", "completed_at", "print_error", "claimed_at", "printed_by_printer", "backup_printer", "retry_count"]
     values = [order.get(column) for column in columns]
     placeholders = ", ".join(["%s"] * len(columns)) if DATABASE_URL else ", ".join(["?"] * len(columns))
     updates = ", ".join(f"{column}=excluded.{column}" for column in columns if column != "order_id")

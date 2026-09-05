@@ -9,7 +9,7 @@
 </head>
 <body>
 
-<div class="container">
+<main class="container print-settings-page">
 
     <div class="logo">🖨️</div>
 
@@ -21,116 +21,57 @@
         Select copies and print settings for your document.
     </p>
 
-    <h3>No. of Copies</h3>
-    <input type="number" id="copies" value="1" min="1" max="999">
+    <section class="settings-section" aria-label="Print settings">
+        <div class="settings-grid">
+            <label class="setting-field">Copies
+                <input type="number" id="copies" value="1" min="1" max="999">
+            </label>
+            <label class="setting-field">Paper Size
+                <select id="paperSize">
+                    <option value="A3">A3</option><option value="A4" selected>A4</option><option value="A5">A5</option>
+                    <option value="Letter">Letter</option><option value="Legal">Legal</option><option value="Executive">Executive</option><option value="Custom">Custom Size</option>
+                </select>
+            </label>
+            <fieldset class="setting-field setting-field-wide"><legend>Print Side</legend>
+                <div class="option-grid"><label><input type="radio" name="printSide" value="single"> Single Side</label><label><input type="radio" name="printSide" value="double" checked> Double Side</label></div>
+            </fieldset>
+            <fieldset class="setting-field setting-field-wide"><legend>Color Mode</legend>
+                <div class="option-grid"><label><input type="radio" name="colorMode" value="black_white" checked> Black &amp; White</label><label><input type="radio" name="colorMode" value="color"> Color</label><label><input type="radio" name="colorMode" value="micro_xerox"> Micro Xerox</label></div>
+            </fieldset>
+            <fieldset class="setting-field setting-field-wide"><legend>Orientation</legend>
+                <div class="option-grid"><label><input type="radio" name="orientation" value="portrait" checked> Portrait</label><label><input type="radio" name="orientation" value="landscape"> Landscape</label><label><input type="radio" name="orientation" value="auto"> Auto Detect</label></div>
+            </fieldset>
+            <label class="setting-field">Page Range
+                <select id="pageRangeMode"><option value="all" selected>All Pages</option><option value="custom">Custom Pages</option></select>
+                <input type="text" id="pageRange" placeholder="1-3,6,9" style="display:none;" pattern="[0-9, -]+">
+            </label>
+            <label class="setting-field">Scaling
+                <select id="scaling"><option value="actual_size" selected>Actual Size (100%)</option><option value="fit">Fit to Page</option><option value="fill">Fill Page</option><option value="custom">Custom Scale</option></select>
+                <input type="number" id="customScale" value="100" min="10" max="500" step="1" style="display:none;" aria-label="Custom scale percentage">
+            </label>
+            <label class="setting-field">Margins
+                <select id="margins"><option value="none">None</option><option value="narrow">Narrow</option><option value="normal">Normal</option><option value="wide">Wide</option><option value="default" selected>Default Printer Margins</option></select>
+            </label>
+        </div>
+    </section>
 
-    <h3>Paper Size</h3>
-    <select id="paperSize">
-        <option value="A3">A3</option>
-        <option value="A4" selected>A4</option>
-        <option value="A5">A5</option>
-        <option value="Letter">Letter</option>
-        <option value="Legal">Legal</option>
-        <option value="Executive">Executive</option>
-        <option value="Custom">Custom Size</option>
-    </select>
+    <section id="microXeroxSettings" class="micro-xerox-panel" hidden aria-label="Micro Xerox settings">
+        <h3>Micro Xerox Settings</h3>
+        <div class="settings-grid">
+            <label class="setting-field">Pages Per Sheet
+                <select id="pagesPerSheet"><option value="2">2</option><option value="4" selected>4</option><option value="6">6</option><option value="9">9</option><option value="16">16</option></select>
+            </label>
+            <label class="setting-field">Page Order
+                <select id="pageOrder"><option value="horizontal" selected>Horizontal</option><option value="vertical">Vertical</option></select>
+            </label>
+        </div>
+        <div class="micro-summary" id="microSummary"></div>
+    </section>
 
-    <h3>Print Side</h3>
-    <div class="radio-option">
-        <label>
-            <input type="radio" name="printSide" value="single">
-            Single Side
-        </label>
-        <label>
-            <input type="radio" name="printSide" value="double" checked>
-            Double Side
-        </label>
-        <label>
-            <input type="radio" name="printSide" value="flip_long">
-            Flip Long Edge
-        </label>
-        <label>
-            <input type="radio" name="printSide" value="flip_short">
-            Flip Short Edge
-        </label>
-    </div>
-
-    <h3>Color Mode</h3>
-    <div class="radio-option">
-        <label>
-            <input type="radio" name="colorMode" value="black_white" checked>
-            Black & White (B&W)
-        </label>
-        <label>
-            <input type="radio" name="colorMode" value="color">
-            Color Print 🎨
-        </label>
-        <label>
-            <input type="radio" name="colorMode" value="grayscale">
-            Grayscale
-        </label>
-    </div>
-
-    <h3>Page Orientation</h3>
-    <div class="radio-option">
-        <label>
-            <input type="radio" name="orientation" value="portrait" checked>
-            Portrait
-        </label>
-        <label>
-            <input type="radio" name="orientation" value="landscape">
-            Landscape
-        </label>
-        <label>
-            <input type="radio" name="orientation" value="auto">
-            Auto Detect
-        </label>
-    </div>
-
-    <h3>Page Range</h3>
-    <select id="pageRangeMode">
-        <option value="all" selected>All Pages</option>
-        <option value="custom">Custom Pages</option>
-    </select>
-    <input type="text" id="pageRange" placeholder="1-3,6,9" style="display:none;" pattern="[0-9, -]+">
-
-    <h3>Print Quality</h3>
-    <select id="printQuality">
-        <option value="draft">Draft</option>
-        <option value="normal" selected>Normal</option>
-        <option value="high">High</option>
-        <option value="best">Best</option>
-    </select>
-
-    <h3>DPI</h3>
-    <select id="dpi">
-        <option value="150">150 DPI</option>
-        <option value="300" selected>300 DPI</option>
-        <option value="600">600 DPI</option>
-        <option value="1200">1200 DPI</option>
-    </select>
-
-    <h3>Scaling</h3>
-    <select id="scaling">
-        <option value="actual_size" selected>Actual Size (100%)</option>
-        <option value="fit">Fit to Page</option>
-        <option value="fill">Fill Page</option>
-        <option value="custom">Custom Scale</option>
-    </select>
-    <input type="number" id="customScale" value="100" min="10" max="500" step="1" style="display:none;" aria-label="Custom scale percentage">
-
-    <h3>Margins</h3>
-    <select id="margins">
-        <option value="none">None</option>
-        <option value="narrow">Narrow</option>
-        <option value="normal">Normal</option>
-        <option value="wide">Wide</option>
-        <option value="default" selected>Default Printer Margins</option>
-    </select>
-
-    <div id="printPreview" style="margin: 20px 0; padding: 18px; border: 1px solid #fed7aa; background: #fff7ed; border-radius: 12px;">
+    <div id="printPreview" class="print-preview">
         <strong>Print Preview</strong>
-        <p id="previewSummary" style="margin: 8px 0 0;">A4 · Portrait · B&W · 1 copy</p>
+        <div id="previewLayout" class="preview-layout" aria-label="Live page preview"></div>
+        <p id="previewSummary">A4 · Portrait · B&amp;W · 1 copy</p>
     </div>
 
     <h2 id="totalPrice">
@@ -142,7 +83,7 @@
         <button type="button" id="paymentBtn">Continue to Payment</button>
     </div>
 
-</div>
+</main>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script src="script.js"></script>

@@ -24,6 +24,7 @@ class OrderReq(BaseModel):
     pages: Optional[int] = None
     copies: Optional[int] = None
     color_mode: str = "black_white"
+    pages_per_sheet: int = 1
     currency: str = "INR"
     order_id: str = None
 
@@ -56,15 +57,43 @@ def create_order(req: OrderReq):
     else:
         amount_in_paise = int(round(req.amount * 100))
 
-    if req.color_mode not in ("black_white", "color", "grayscale"):
+    if req.color_mode not in ("black_white", "color", "micro_xerox"):
         raise HTTPException(status_code=400, detail="Unsupported color mode")
 
-    # Canonical pricing: color is ₹6/page; B&W and grayscale are ₹2/page.
     if req.pages and req.copies and req.pages > 0 and req.copies > 0:
-        expected_rupees = req.pages * req.copies * (6.0 if req.color_mode == "color" else 2.0)
+        if req.color_mode == "micro_xerox":
+            if req.pages_per_sheet not in (2, 4, 6, 9, 16):
+                raise HTTPException(
+                    status_code=400,
+                    detail="Micro Xerox Pages Per Sheet must be 2, 4, 6, 9, or 16"
+                )
+            sheet_count = req.pages_per_sheet
+        else:
+            if req.pages_per_sheet != 1:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Pages per sheet is only available for Micro Xerox"
+                )
+            sheet_count = 1
+
+        physical_papers = (
+            (req.pages + sheet_count - 1) // sheet_count
+        ) * req.copies
+
+        expected_rupees = (
+            physical_papers * 3.0
+            if req.color_mode == "micro_xerox"
+            else req.pages
+            * req.copies
+            * (6.0 if req.color_mode == "color" else 2.0)
+        )
         expected_paise = int(round(expected_rupees * 100))
+
         if amount_in_paise != expected_paise:
-            raise HTTPException(status_code=400, detail=f"Amount must be Rs.{expected_rupees:g}")
+            raise HTTPException(
+                status_code=400,
+                detail=f"Amount must be Rs.{expected_rupees:g}"
+            )
 
     if amount_in_paise < 100:
         raise HTTPException(status_code=400, detail="Minimum order amount must be at least 100 paise (INR 1.00)")

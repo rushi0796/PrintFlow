@@ -55,7 +55,10 @@ def verify_payment(payload: dict):
         raise HTTPException(status_code=404, detail="Print order not found")
     if local_order.get("razorpay_order_id") and local_order["razorpay_order_id"] != razorpay_order_id:
         raise HTTPException(status_code=409, detail="Razorpay order does not match print order")
-    expected_amount = int(local_order.get("pages", 1)) * int(local_order.get("copies", 1)) * (6 if local_order.get("color_mode") == "color" else 2)
+    pages = int(local_order.get("pages", 1))
+    copies = int(local_order.get("copies", 1))
+    pages_per_sheet = int(local_order.get("pages_per_sheet", 1) or 1)
+    expected_amount = ((pages + pages_per_sheet - 1) // pages_per_sheet) * copies * 3 if local_order.get("color_mode") == "micro_xerox" else pages * copies * (6 if local_order.get("color_mode") == "color" else 2)
     if abs(float(local_order.get("amount", expected_amount)) - expected_amount) > 0.01:
         raise HTTPException(status_code=409, detail="Print order amount is inconsistent")
 

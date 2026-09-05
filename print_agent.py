@@ -97,6 +97,95 @@ def download_file(backend_url: str, file_rel_path: str, agent_token: str, origin
 
     return target_path
 
+def paper_size_points(paper_size: str):
+    sizes = {
+        "A3": (841.89, 1190.55),
+        "A4": (595.28, 841.89),
+        "A5": (419.53, 595.28),
+        "Letter": (612.0, 792.0),
+        "Legal": (612.0, 1008.0),
+        "Executive": (522.0, 756.0),
+    }
+    return sizes.get(paper_size, sizes["A4"])
+
+
+def create_fitted_image_pdf(
+    image_path: Path,
+    paper_size: str,
+    orientation: str
+) -> Path | None:
+    """
+    Creates a page-sized PDF with the source image fitted to the largest
+    possible area without cropping or distortion.
+    """
+    try:
+        from PIL import Image
+    except ImportError:
+        print("[AGENT IMAGE WARNING] Pillow is not installed; using native image printing.")
+        return None
+
+    page_width, page_height = paper_size_points(paper_size)
+
+    with Image.open(image_path) as source:
+        source = source.convert("RGB")
+
+        if orientation == "landscape":
+            page_width, page_height = max(page_width, page_height), min(page_width, page_height)
+        else:
+            page_width, page_height = min(page_width, page_height), max(page_width, page_height)
+
+        # Use a high-resolution page canvas to avoid low-resolution PDF output.
+        dpi = 150
+        canvas_width = max(1, round(page_width / 72 * dpi))
+        canvas_height = max(1, round(page_height / 72 * dpi))
+
+        scale = min(
+            canvas_width / source.width,
+            canvas_height / source.height
+        )
+        fitted_size = (
+            max(1, round(source.width * scale)),
+            max(1, round(source.height * scale))
+        )
+
+        fitted = source.resize(fitted_size, Image.Resampling.LANCZOS)
+        canvas = Image.new("RGB", (canvas_width, canvas_height), "white")
+        offset = (
+            (canvas_width - fitted.width) // 2,
+            (canvas_height - fitted.height) // 2
+        )
+        canvas.paste(fitted, offset)
+
+        output_path = TEMP_DOWNLOAD_DIR / f"{image_path.stem}_print_page.pdf"
+        canvas.save(output_path, "PDF", resolution=dpi)
+        return output_path
+
+
+def resolve_print_orientation(file_path: Path, orientation: str) -> str:
+    if orientation in ("portrait", "landscape"):
+        return orientation
+
+    if orientation == "auto" and file_path.suffix.lower() in (
+        ".png", ".jpg", ".jpeg", ".webp"
+    ):
+        try:
+            from PIL import Image
+            with Image.open(file_path) as image:
+                return "landscape" if image.width > image.height else "portrait"
+        except Exception:
+            pass
+
+    return "portrait"
+
+
+def cleanup_generated_file(file_path: Path | None):
+    if file_path and file_path.exists():
+        try:
+            file_path.unlink()
+        except OSError as cleanup_err:
+            print(f"[AGENT GENERATED FILE CLEANUP WARNING]: {cleanup_err}")
+
+
 def print_document_silently(
     file_path: Path,
     printer_name: str,
@@ -107,12 +196,19 @@ def print_document_silently(
     page_range: str = "all",
     scaling: str = "actual_size",
     custom_scale: float = 100,
-    print_quality: str = "normal",
-    dpi: int = 300,
-    margins: str = "default"
+    margins: str = "default",
+    pages_per_sheet: int = 1,
+    page_order: str = "horizontal"
 ):
     ext = file_path.suffix.lower()
-    print(f"[AGENT SILENT PRINT] Printing '{file_path.name}' ({ext}) to '{printer_name}' | Copies: {copies} | Orient: {orientation}")
+    generated_pdf = None
+    effective_orientation = resolve_print_orientation(file_path, orientation)
+
+    print(
+        f"[AGENT SILENT PRINT] Printing '{file_path.name}' ({ext}) "
+        f"to '{printer_name}' | Copies: {copies} | "
+        f"Orient: {effective_orientation} | Paper: {paper_size}"
+    )
 
     if sys.platform != "win32":
         # Linux/macOS CUPS silent print
@@ -123,76 +219,124 @@ def print_document_silently(
             return True
         return True
 
-    # Windows Printing Logic
-    # 1. PDF via SumatraPDF
-    if ext == ".pdf":
-        sumatra = shutil.which("SumatraPDF.exe") or shutil.which("SumatraPDF")
-        if sumatra:
-            settings = [f"{copies}x"]
-            if page_range and page_range != "all":
-                settings.append(page_range.replace(" ", ""))
-            if scaling == "fit":
-                settings.append("fit")
-            elif scaling == "fill":
-                settings.append("shrink")
-            elif scaling == "custom":
-                settings.append(f"scale={max(10, min(500, int(custom_scale)))}")
-            else:
-                # Explicit noscale prevents driver defaults from shrinking PDFs to half-page.
-                settings.append("noscale")
-            if orientation in ("portrait", "landscape"):
-                settings.append(orientation)
-            if paper_size and paper_size != "Custom":
-                settings.append(f"paper={paper_size}")
-            if duplex == "flip_long":
-                settings.append("duplex=long")
-            elif duplex == "flip_short" or duplex == "double":
-                settings.append("duplex=short" if duplex == "flip_short" else "duplex=long")
-            if print_quality in ("draft", "normal", "high", "best"):
-                settings.append(f"quality={print_quality}")
-            if dpi in (150, 300, 600, 1200):
-                settings.append(f"dpi={dpi}")
-            cmd = [sumatra, "-print-to", printer_name, "-print-settings", ",".join(settings), str(file_path)]
-            subprocess.run(cmd, check=True, timeout=20)
-            return True
-
-    # Windows Paint can print raster images directly to a named printer.
+    # Convert raster images to a page-sized PDF before printing.
+    # mspaint /pt uses driver-dependent defaults and was the source of
+    # undersized image output.
     if ext in (".png", ".jpg", ".jpeg", ".webp"):
-        mspaint = shutil.which("mspaint.exe") or shutil.which("mspaint")
-        if mspaint:
-            for _ in range(copies):
-                subprocess.run([mspaint, "/pt", str(file_path), printer_name], check=True, timeout=30)
-            return True
+        generated_pdf = create_fitted_image_pdf(
+            file_path,
+            paper_size,
+            effective_orientation
+        )
+        if generated_pdf:
+            file_path = generated_pdf
+            ext = ".pdf"
 
-    # 2. DOC / DOCX via Word/WordPad COM Automation or PowerShell
-    if ext in (".doc", ".docx"):
-        try:
-            import win32com.client
-            word = win32com.client.Dispatch("Word.Application")
-            word.Visible = False
-            doc = word.Documents.Open(str(file_path))
-            word.ActivePrinter = printer_name
-            doc.PrintOut(Copies=copies)
-            doc.Close(False)
-            word.Quit()
-            return True
-        except Exception as word_err:
-            print("[AGENT WORD COM WARNING]:", word_err)
-
-    # 3. Native Windows ShellExecute printto verb (PNG, JPG, WEBP, TXT, PDF, DOC)
     try:
-        import win32api
-        for _ in range(copies):
-            win32api.ShellExecute(0, "printto", str(file_path), f'"{printer_name}"', ".", 0)
-            time.sleep(0.5)
-        return True
-    except Exception as win_err:
-        print("[AGENT WIN32 SHELL WARNING]:", win_err)
+        # Windows PDF printing through SumatraPDF.
+        if ext == ".pdf":
+            sumatra = shutil.which("SumatraPDF.exe") or shutil.which("SumatraPDF")
+            if sumatra:
+                settings = [f"{copies}x"]
 
-    # 4. PowerShell Out-Printer / Start-Process fallback
-    ps_cmd = f'Start-Process -FilePath "{str(file_path)}" -Verb PrintTo -ArgumentList "{printer_name}" -WindowStyle Hidden -PassThru'
-    subprocess.run(["powershell", "-Command", ps_cmd], check=True, timeout=15)
-    return True
+                if page_range and page_range != "all":
+                    settings.append(page_range.replace(" ", ""))
+
+                # "fit" uses the maximum printable area. "noscale" preserved
+                # small source PDF dimensions and caused undersized output.
+                if scaling == "custom":
+                    settings.append(f"scale={max(10, min(500, int(custom_scale)))}")
+                elif scaling == "fill":
+                    settings.append("shrink")
+                else:
+                    settings.append("fit")
+
+                if effective_orientation in ("portrait", "landscape"):
+                    settings.append(effective_orientation)
+
+                if paper_size and paper_size != "Custom":
+                    settings.append(f"paper={paper_size}")
+
+                if duplex == "double":
+                    settings.append("duplex=long")
+
+                if pages_per_sheet in (2, 4, 6, 9, 16):
+                    settings.append(f"nup={pages_per_sheet}")
+                    settings.append(
+                        f"order={page_order if page_order in ('horizontal', 'vertical') else 'horizontal'}"
+                    )
+
+                cmd = [
+                    sumatra,
+                    "-print-to",
+                    printer_name,
+                    "-print-settings",
+                    ",".join(settings),
+                    str(file_path)
+                ]
+                subprocess.run(cmd, check=True, timeout=20)
+                return True
+
+        # Native fallback for image files when Pillow/SumatraPDF is unavailable.
+        if ext in (".png", ".jpg", ".jpeg", ".webp"):
+            mspaint = shutil.which("mspaint.exe") or shutil.which("mspaint")
+            if mspaint:
+                for _ in range(copies):
+                    subprocess.run(
+                        [mspaint, "/pt", str(file_path), printer_name],
+                        check=True,
+                        timeout=30
+                    )
+                return True
+
+        # 2. DOC / DOCX via Word/WordPad COM Automation or PowerShell
+        if ext in (".doc", ".docx"):
+            try:
+                import win32com.client
+                word = win32com.client.Dispatch("Word.Application")
+                word.Visible = False
+                doc = word.Documents.Open(str(file_path))
+                word.ActivePrinter = printer_name
+                doc.PrintOut(
+                    Copies=copies,
+                    PrintZoomPaperWidth=0,
+                    PrintZoomPaperHeight=0
+                )
+                doc.Close(False)
+                word.Quit()
+                return True
+            except Exception as word_err:
+                print("[AGENT WORD COM WARNING]:", word_err)
+
+        try:
+            import win32api
+            for _ in range(copies):
+                win32api.ShellExecute(
+                    0,
+                    "printto",
+                    str(file_path),
+                    f'"{printer_name}"',
+                    ".",
+                    0
+                )
+                time.sleep(0.5)
+            return True
+        except Exception as win_err:
+            print("[AGENT WIN32 SHELL WARNING]:", win_err)
+
+        ps_cmd = (
+            f'Start-Process -FilePath "{str(file_path)}" '
+            f'-Verb PrintTo -ArgumentList "{printer_name}" '
+            f'-WindowStyle Hidden -PassThru'
+        )
+        subprocess.run(
+            ["powershell", "-Command", ps_cmd],
+            check=True,
+            timeout=15
+        )
+        return True
+    finally:
+        cleanup_generated_file(generated_pdf)
 
 def run_agent():
     print("==================================================")
@@ -258,9 +402,9 @@ def run_agent():
                 page_range = job.get("page_range", "all")
                 scaling = job.get("scaling", "actual_size")
                 custom_scale = float(job.get("custom_scale", 100))
-                print_quality = job.get("print_quality", "normal")
-                dpi = int(job.get("dpi", 300))
                 margins = job.get("margins", "default")
+                pages_per_sheet = int(job.get("pages_per_sheet", 1) or 1)
+                page_order = job.get("page_order", "horizontal")
                 retry_count = int(job.get("retry_count", 0) or 0)
 
                 if not order_id:
@@ -288,6 +432,12 @@ def run_agent():
                     continue
 
                 print(f"[JOB CLAIMED] Order ID: {order_id} | State: PRINTING")
+                print(
+                    f"[PRINT SETTINGS] paper={paper_size}, "
+                    f"orientation={orientation}, copies={copies}, "
+                    f"pages_per_sheet={pages_per_sheet}, "
+                    f"page_order={page_order}"
+                )
 
                 # 3. Download Document File & Select Target Printer
                 target_printer = select_target_printer(color_mode, config, installed_printers)
@@ -309,9 +459,9 @@ def run_agent():
                         page_range,
                         scaling,
                         custom_scale,
-                        print_quality,
-                        dpi,
-                        margins
+                        margins,
+                        pages_per_sheet,
+                        page_order
                     )
                     print(f"[PRINT DISPATCHED] {local_file.name} -> {target_printer}")
 

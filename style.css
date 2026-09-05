@@ -785,3 +785,435 @@ button:disabled {
     background: #e2e8f0;
     color: #1e293b;
 }
+
+/* Responsive print settings surface */
+.print-settings-page {
+    width: min(760px, 100%);
+    text-align: left;
+}
+
+.print-settings-page > h1,
+.print-settings-page > .logo,
+.print-settings-page > #fileName,
+.print-settings-page > #pageCount,
+.print-settings-page > .description,
+.print-settings-page > #totalPrice {
+    text-align: center;
+}
+
+.settings-section,
+.micro-xerox-panel,
+.print-preview {
+    width: 100%;
+    min-width: 0;
+    padding: clamp(14px, 3vw, 22px);
+    margin-top: 16px;
+    border: 1px solid #fed7aa;
+    border-radius: 16px;
+    background: rgba(255, 247, 237, 0.72);
+}
+
+.settings-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 14px;
+}
+
+.setting-field {
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+    min-width: 0;
+    color: #7c2d12;
+    font-size: 13px;
+    font-weight: 700;
+}
+
+fieldset.setting-field {
+    margin: 0;
+    padding: 0;
+    border: 0;
+}
+
+.setting-field-wide {
+    grid-column: 1 / -1;
+}
+
+.setting-field select,
+.setting-field input {
+    width: 100%;
+    min-width: 0;
+    margin: 0;
+}
+
+.option-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+    gap: 8px;
+}
+
+.option-grid label {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    min-width: 0;
+    padding: 11px 12px;
+    border: 1px solid #fed7aa;
+    border-radius: 10px;
+    background: #fffaf5;
+    color: #431407;
+    font-size: 13px;
+    line-height: 1.25;
+}
+
+.option-grid input {
+    width: auto;
+    flex: 0 0 auto;
+    margin: 0;
+}
+
+.micro-xerox-panel[hidden] {
+    display: none;
+}
+
+.micro-xerox-panel h3 {
+    margin-top: 0;
+}
+
+.micro-summary {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+    gap: 8px;
+    margin-top: 14px;
+    color: #78350f;
+    font-size: 13px;
+    line-height: 1.35;
+}
+
+.micro-summary strong {
+    display: block;
+    color: #c2410c;
+    font-size: 16px;
+}
+
+.preview-layout {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 5px;
+    width: min(100%, 280px);
+    margin: 14px auto 10px;
+    padding: 8px;
+    border: 1px solid #fdba74;
+    background: #fff;
+}
+
+.preview-page {
+    aspect-ratio: 3 / 4;
+    min-width: 0;
+    border: 1px solid #fb923c;
+    background: linear-gradient(135deg, #fff7ed, #fed7aa);
+}
+
+.print-preview p {
+    margin: 0;
+    color: #78350f;
+    text-align: center;
+    overflow-wrap: anywhere;
+}
+
+@media (max-width: 640px) {
+    body {
+        align-items: flex-start;
+        padding: 10px;
+    }
+
+    .container,
+    .print-settings-page {
+        width: 100%;
+        max-width: 100%;
+        padding: 22px 14px;
+        border-radius: 16px;
+    }
+
+    .print-settings-page .logo {
+        width: 62px;
+        height: 62px;
+        font-size: 34px;
+        margin-bottom: 12px;
+    }
+
+    .print-settings-page h1 {
+        font-size: 23px;
+    }
+
+    .settings-grid {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .setting-field-wide {
+        grid-column: auto;
+    }
+
+    .option-grid {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .button-row {
+        flex-direction: column-reverse;
+    }
+
+    .button-row button {
+        width: 100%;
+        flex: 1 1 100%;
+    }
+}
+
+@media (max-width: 380px) {
+    body {
+        padding-inline: 6px;
+    }
+
+    .container,
+    .print-settings-page {
+        padding-inline: 10px;
+    }
+
+    .micro-summary {
+        grid-template-columns: 1fr;
+    }
+
+    .print-settings-page .button-row {
+        flex-direction: column-reverse;
+    }
+}
+
+/* Responsive print-settings controls */
+.print-settings-page,
+.print-settings-page *,
+.settings-section,
+.micro-xerox-panel,
+.print-preview {
+    max-width: 100%;
+}
+
+.print-settings-page select,
+.print-settings-page input[type="number"],
+.print-settings-page input[type="text"] {
+    min-height: 46px;
+    padding: 12px 14px;
+    border: 1.5px solid #fdba74;
+    border-radius: 12px;
+    color: #431407;
+    background: #fffbf5;
+    font-size: 15px;
+    outline: none;
+}
+
+.print-settings-page select {
+    width: 100%;
+    appearance: auto;
+}
+
+.print-settings-page select:focus,
+.print-settings-page input:focus {
+    border-color: #f97316;
+    box-shadow: 0 0 0 4px rgba(249, 115, 22, 0.18);
+}
+
+.print-settings-page button,
+.print-settings-page .button-row {
+    min-width: 0;
+}
+
+.print-settings-page .button-row button {
+    overflow-wrap: anywhere;
+}
+
+.preview-layout {
+    width: min(100%, 280px);
+    max-width: 100%;
+    min-width: 0;
+}
+
+.preview-layout.page-order-vertical {
+    grid-auto-flow: column;
+}
+
+.preview-layout.page-order-horizontal {
+    grid-auto-flow: row;
+}
+
+.preview-page {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 0;
+    overflow: hidden;
+    color: #9a3412;
+    font-size: clamp(10px, 2vw, 14px);
+    font-weight: 700;
+}
+
+@media (max-width: 640px) {
+    .print-settings-page .button-row {
+        flex-direction: column-reverse;
+    }
+
+    .print-settings-page .button-row button {
+        width: 100%;
+        flex: 1 1 100%;
+    }
+
+    .radio-option {
+        flex-direction: column;
+        gap: 8px;
+    }
+
+    .radio-option label {
+        width: 100%;
+    }
+
+    .preview-layout {
+        width: min(100%, 240px);
+    }
+}
+
+@media (min-width: 641px) and (max-width: 1024px) {
+    .print-settings-page {
+        width: min(720px, 100%);
+    }
+}
+
+/* Browser print output: hide application chrome and use the full page area. */
+@media print {
+    @page {
+        size: auto;
+        margin: 0;
+    }
+
+    html,
+    body {
+        width: 100% !important;
+        min-width: 0 !important;
+        min-height: 100% !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        overflow: visible !important;
+        background: #fff !important;
+    }
+
+    body::before,
+    body::after {
+        display: none !important;
+    }
+
+    /* Hide normal website UI during printing. */
+    body > *:not(.print-output):not(.print-container):not(#printContainer):not(.print-page) {
+        display: none !important;
+    }
+
+    .print-output,
+    .print-container,
+    #printContainer,
+    .print-page {
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        width: 100% !important;
+        height: 100vh !important;
+        min-width: 0 !important;
+        min-height: 0 !important;
+        max-width: none !important;
+        max-height: none !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        border: 0 !important;
+        border-radius: 0 !important;
+        box-shadow: none !important;
+        background: #fff !important;
+        overflow: hidden !important;
+        page-break-after: always;
+        break-after: page;
+    }
+
+    .print-output:last-child,
+    .print-container:last-child,
+    #printContainer:last-child,
+    .print-page:last-child {
+        page-break-after: auto;
+        break-after: auto;
+    }
+
+    .print-output img,
+    .print-container img,
+    #printContainer img,
+    .print-page img,
+    .print-output canvas,
+    .print-container canvas,
+    #printContainer canvas,
+    .print-page canvas {
+        display: block !important;
+        width: 100% !important;
+        height: 100% !important;
+        max-width: 100% !important;
+        max-height: 100% !important;
+        margin: 0 !important;
+        object-fit: contain !important;
+        object-position: center !important;
+        page-break-inside: avoid;
+        break-inside: avoid;
+    }
+
+    .print-output iframe,
+    .print-container iframe,
+    #printContainer iframe,
+    .print-page iframe {
+        display: block !important;
+        width: 100% !important;
+        height: 100% !important;
+        max-width: none !important;
+        max-height: none !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        border: 0 !important;
+    }
+
+    .print-output.landscape,
+    .print-container.landscape,
+    #printContainer.landscape,
+    .print-page.landscape {
+        width: 100vw !important;
+        height: 100vh !important;
+    }
+
+    .print-output.landscape img,
+    .print-container.landscape img,
+    #printContainer.landscape img,
+    .print-page.landscape img,
+    .print-output.landscape canvas,
+    .print-container.landscape canvas,
+    #printContainer.landscape canvas,
+    .print-page.landscape canvas {
+        object-fit: contain !important;
+    }
+
+    .no-print,
+    nav,
+    header,
+    footer,
+    button,
+    input,
+    select,
+    textarea,
+    .container:not(.print-container),
+    .failed-modal-overlay {
+        display: none !important;
+    }
+}
+
+@media print and (orientation: landscape) {
+    @page {
+        size: A4 landscape;
+        margin: 0;
+    }
+}
