@@ -482,6 +482,8 @@ def create_razorpay_order_endpoint(request: RazorpayOrderRequest):
             "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         }
         save_order(new_order_entry)
+        if not get_order(final_order_id):
+            raise HTTPException(status_code=503, detail="PrintFlow could not persist the order before payment")
 
         return {
             "status": "success",
