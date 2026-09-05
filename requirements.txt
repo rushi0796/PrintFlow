@@ -3,3 +3,4 @@ pydantic
 python-multipart
 razorpay
 requests
+psycopg2-binary
