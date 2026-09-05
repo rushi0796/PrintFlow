@@ -864,28 +864,52 @@ if (payBtn) {
                 throw new Error(`Order creation failed: ${detail}`);
             }
 
-            console.log("Razorpay Order Created:", orderData);
+            const razorpayKeyId = String(orderData.key_id || "");
+            const razorpayOrderId = String(orderData.order_id || "");
+            if (!razorpayKeyId.startsWith("rzp_live_")) {
+                throw new Error("Razorpay LIVE key is not configured on the server.");
+            }
+            if (!razorpayOrderId) {
+                throw new Error("Razorpay order ID was not returned by the server.");
+            }
+            console.log("Razorpay LIVE order created:", razorpayOrderId);
 
             if (typeof Razorpay !== "undefined") {
                 const options = {
-                    "key": orderData.key_id,
+                    "key": razorpayKeyId,
                     "amount": Math.round(Number(orderData.amount)),
                     "currency": orderData.currency || "INR",
                     "name": "PrintFlow",
                     "description": `Print Order Payment - ${fileNameVal}`,
-                    "order_id": orderData.order_id,
+                    "order_id": razorpayOrderId,
                     "prefill": {
                         "contact": cleanContact,
                         "email": "customer@printflow.in"
                     },
                     "handler": async function (response) {
-                        console.log("Razorpay Payment Success:", response);
+                        const {
+                            razorpay_payment_id: paymentId,
+                            razorpay_order_id: callbackOrderId,
+                            razorpay_signature: signature
+                        } = response || {};
+                        console.log("Razorpay callback received:", {
+                            orderId: callbackOrderId,
+                            paymentId
+                        });
+                        if (!paymentId || !callbackOrderId || !signature) {
+                            throw new Error("Razorpay returned an incomplete payment verification response.");
+                        }
+                        if (callbackOrderId !== razorpayOrderId) {
+                            throw new Error("Razorpay order ID mismatch during payment verification.");
+                        }
                         try {
                             const verifyRes = await fetchWithRetry(apiUrl("/api/verify-payment", "/api/verify-payment"), {
                                 method: "POST",
                                 headers: { "Content-Type": "application/json" },
                                 body: JSON.stringify({
-                                    ...response,
+                                    razorpay_payment_id: paymentId,
+                                    razorpay_order_id: callbackOrderId,
+                                    razorpay_signature: signature,
                                     print_order_id: printData.order.order_id,
                                     print_order: printData.order
                                 })

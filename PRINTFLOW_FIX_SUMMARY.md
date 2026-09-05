@@ -11,8 +11,8 @@ The error **"RAZORPAY_KEY_SECRET is not configured"** was caused by:
    
    These files used fallback LIVE credentials when environment variables were missing:
    ```python
-   key_id = (os.environ.get("RAZORPAY_KEY_ID") or "rzp_live_TXZidkYDGHaDOh")
-   key_secret = (os.environ.get("RAZORPAY_KEY_SECRET") or "FKi1Qw6tdcKvY9N2pmX2IjCf")
+   key_id = (os.environ.get("RAZORPAY_KEY_ID") or "")
+   key_secret = (os.environ.get("RAZORPAY_KEY_SECRET") or "")
    ```
    
    This meant the system would silently use LIVE keys instead of failing clearly when the TEST keys weren't configured.
@@ -27,8 +27,8 @@ The error **"RAZORPAY_KEY_SECRET is not configured"** was caused by:
 **Change**: Removed hardcoded fallback credentials
 ```python
 # BEFORE:
-key_id = (os.environ.get("RAZORPAY_KEY_ID") or "rzp_live_TXZidkYDGHaDOh")
-key_secret = (os.environ.get("RAZORPAY_KEY_SECRET") or "FKi1Qw6tdcKvY9N2pmX2IjCf")
+key_id = (os.environ.get("RAZORPAY_KEY_ID") or "")
+key_secret = (os.environ.get("RAZORPAY_KEY_SECRET") or "")
 
 # AFTER:
 key_id = (os.environ.get("RAZORPAY_KEY_ID") or "").strip()

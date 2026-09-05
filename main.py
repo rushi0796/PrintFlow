@@ -483,7 +483,7 @@ def create_razorpay_order(request: RazorpayOrderRequest):
     is_test_key = key_id.startswith("rzp_test_")
     mode_str = "LIVE" if is_live_key else ("TEST" if is_test_key else "UNKNOWN")
     masked_key_id = f"{key_id[:8]}...{key_id[-4:]}" if len(key_id) > 12 else "PRESENT"
-    print(f"[RAZORPAY DIAGNOSTIC] KEY_ID: {masked_key_id}, Mode: {mode_str}, KEY_SECRET configured: true")
+    print(f"[RAZORPAY DIAGNOSTIC] KEY_ID present: {bool(key_id)}, KEY_SECRET present: {bool(key_secret)}, Starts with rzp_live_: {is_live_key}, Masked KEY_ID: {masked_key_id}")
 
     # Handle amount input in either Rupees (e.g. 4.0) or Paise (e.g. 400)
     if request.amount >= 100:
@@ -562,12 +562,12 @@ def verify_razorpay_payment(payload: dict):
             detail="RAZORPAY_KEY_SECRET is not configured in the server environment"
         )
 
-    # Safe diagnostic logging (NEVER logs key_secret)
-    print(f"[RAZORPAY VERIFY DIAGNOSTIC] KEY_SECRET configured: true")
-
     razorpay_order_id = payload.get("razorpay_order_id", "")
     razorpay_payment_id = payload.get("razorpay_payment_id", "")
     razorpay_signature = payload.get("razorpay_signature", "")
+    key_id = (os.environ.get("RAZORPAY_KEY_ID") or "").strip().strip('"').strip("'")
+    masked_key_id = f"{key_id[:8]}...{key_id[-4:]}" if len(key_id) > 12 else ("PRESENT" if key_id else "MISSING")
+    print(f"[RAZORPAY VERIFY DIAGNOSTIC] KEY_ID present: {bool(key_id)}, KEY_SECRET present: {bool(key_secret)}, Starts with rzp_live_: {key_id.startswith('rzp_live_')}, Masked KEY_ID: {masked_key_id}, Order ID: {razorpay_order_id}, Payment ID: {razorpay_payment_id}")
 
     if not (razorpay_order_id and razorpay_payment_id and razorpay_signature):
         raise HTTPException(status_code=400, detail="Missing required payment verification fields (order_id, payment_id, signature)")
