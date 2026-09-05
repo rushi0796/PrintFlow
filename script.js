@@ -268,8 +268,8 @@ function updateOverallUploadSummary() {
 
     if (uploadingIndex !== -1) {
         const currentNum = uploadingIndex + 1;
-        if (statusIcon) statusIcon.innerHTML = `<span class="spin-icon">⟳</span>`;
-        if (mainStatus) mainStatus.innerHTML = `<span class="spin-icon">⟳</span> Uploading ${currentNum} of ${totalCount} file${totalCount > 1 ? 's' : ''}...`;
+        if (statusIcon) statusIcon.textContent = "⏳";
+        if (mainStatus) mainStatus.textContent = `Uploading ${currentNum} of ${totalCount} file${totalCount > 1 ? 's' : ''}...`;
         if (subStatus) subStatus.textContent = `${uploadedCount} of ${totalCount} completed • Uploading ${activeItems[uploadingIndex].name}`;
     } else if (uploadedCount === totalCount) {
         if (statusIcon) statusIcon.textContent = "✓";
@@ -372,7 +372,7 @@ function renderFileRowUI(item) {
         statusBadgeHtml = `<span class="file-status-badge status-waiting">○ Waiting</span>`;
         actionsHtml = `<button type="button" class="btn-remove-file" onclick="removeFileFromQueue('${item.id}')" title="Remove file">✕</button>`;
     } else if (item.status === "UPLOADING") {
-        statusBadgeHtml = `<span class="file-status-badge status-uploading"><span class="spin-icon">⟳</span> ${item.progress > 0 ? item.progress + '%' : 'Uploading...'}</span>`;
+        statusBadgeHtml = `<span class="file-status-badge status-uploading">Uploading...</span>`;
         progressWrapClass += " is-active";
         actionsHtml = `<button type="button" class="btn-remove-file" onclick="removeFileFromQueue('${item.id}')" title="Cancel upload">✕</button>`;
     } else if (item.status === "UPLOADED") {
@@ -513,7 +513,65 @@ async function handleFileSelection(eventOrFiles) {
 }
 window.handleFileSelection = handleFileSelection;
 
-function processUploadQueue() {
+async function uploadSingleFile(item) {
+    item.status = "UPLOADING";
+    item.progress = 50;
+    renderFileRowUI(item);
+    updateOverallUploadSummary();
+
+    const formData = new FormData();
+    formData.append("file", item.file, item.name);
+
+    const endpoints = [
+        apiUrl("/upload-pdf", "/api/upload-pdf"),
+        "/upload-pdf",
+        "/api/upload-pdf",
+        "http://127.0.0.1:8000/upload-pdf",
+        "http://127.0.0.1:8000/api/upload-pdf"
+    ];
+
+    let success = false;
+    let filePath = "";
+    let errorDetail = "Upload failed";
+
+    for (const url of endpoints) {
+        try {
+            const res = await fetch(url, {
+                method: "POST",
+                headers: getAuthHeaders(),
+                body: formData
+            });
+            if (res.ok) {
+                const data = await res.json();
+                if (data && (data.status === "success" || data.file_path)) {
+                    filePath = data.file_path || "";
+                    success = true;
+                    break;
+                }
+            } else {
+                errorDetail = `HTTP ${res.status}`;
+            }
+        } catch (err) {
+            errorDetail = "Network error";
+        }
+    }
+
+    if (success) {
+        item.status = "UPLOADED";
+        item.progress = 100;
+        item.backendPath = filePath;
+        item.error = null;
+    } else {
+        item.status = "FAILED";
+        item.progress = 0;
+        item.error = errorDetail;
+    }
+
+    renderFileRowUI(item);
+    updateOverallUploadSummary();
+}
+
+async function processUploadQueue() {
     if (isQueueProcessing) return;
 
     const nextItem = fileQueue.find(i => i.status === "WAITING");
@@ -523,105 +581,11 @@ function processUploadQueue() {
     }
 
     isQueueProcessing = true;
-    nextItem.status = "UPLOADING";
-    nextItem.progress = 0;
-    renderFileRowUI(nextItem);
+    await uploadSingleFile(nextItem);
+    isQueueProcessing = false;
+
     updateOverallUploadSummary();
-
-    const uploadEndpoints = [
-        apiUrl("/upload-pdf", "/api/upload-pdf"),
-        "/upload-pdf",
-        "/api/upload-pdf",
-        "http://127.0.0.1:8000/upload-pdf",
-        "http://127.0.0.1:8000/api/upload-pdf"
-    ];
-    let endpointIndex = 0;
-
-    function attemptNextUploadEndpoint() {
-        if (endpointIndex >= uploadEndpoints.length) {
-            nextItem.xhr = null;
-            nextItem.status = "FAILED";
-            nextItem.error = "Upload failed";
-            renderFileRowUI(nextItem);
-            isQueueProcessing = false;
-            updateOverallUploadSummary();
-            processUploadQueue();
-            return;
-        }
-
-        const targetUrl = uploadEndpoints[endpointIndex++];
-        const formData = new FormData();
-        formData.append("file", nextItem.file, nextItem.name);
-
-        const xhr = new XMLHttpRequest();
-        nextItem.xhr = xhr;
-        xhr.timeout = 60000;
-
-        xhr.upload.onprogress = function(evt) {
-            if (evt.lengthComputable) {
-                const percent = Math.round((evt.loaded / evt.total) * 100);
-                nextItem.progress = percent;
-                updateFileRowProgressUI(nextItem.id, percent);
-                updateOverallUploadSummary();
-            }
-        };
-
-        xhr.onload = function() {
-            if (xhr.status >= 200 && xhr.status < 300) {
-                nextItem.xhr = null;
-                try {
-                    const res = JSON.parse(xhr.responseText);
-                    nextItem.status = "UPLOADED";
-                    nextItem.progress = 100;
-                    nextItem.backendPath = res.file_path || "";
-                    renderFileRowUI(nextItem);
-                } catch(err) {
-                    nextItem.status = "FAILED";
-                    nextItem.error = "Response error";
-                    renderFileRowUI(nextItem);
-                }
-                isQueueProcessing = false;
-                updateOverallUploadSummary();
-                processUploadQueue();
-            } else {
-                console.warn(`Upload endpoint ${targetUrl} returned HTTP ${xhr.status}, trying fallback...`);
-                attemptNextUploadEndpoint();
-            }
-        };
-
-        xhr.onerror = function() {
-            console.warn(`Upload endpoint ${targetUrl} network error, trying fallback...`);
-            attemptNextUploadEndpoint();
-        };
-
-        xhr.ontimeout = function() {
-            console.warn(`Upload endpoint ${targetUrl} timed out, trying fallback...`);
-            attemptNextUploadEndpoint();
-        };
-
-        xhr.onabort = function() {
-            nextItem.xhr = null;
-            nextItem.status = "CANCELED";
-            renderFileRowUI(nextItem);
-            isQueueProcessing = false;
-            updateOverallUploadSummary();
-            processUploadQueue();
-        };
-
-        try {
-            xhr.open("POST", targetUrl, true);
-            const headers = getAuthHeaders();
-            Object.keys(headers).forEach(key => {
-                try { xhr.setRequestHeader(key, headers[key]); } catch(e) {}
-            });
-            xhr.send(formData);
-        } catch (err) {
-            console.warn(`Upload dispatch error for ${targetUrl}:`, err);
-            attemptNextUploadEndpoint();
-        }
-    }
-
-    attemptNextUploadEndpoint();
+    processUploadQueue();
 }
 
 function removeFileFromQueue(fileId) {
