@@ -3,9 +3,150 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Print Details - PrintFlow</title>
+    <title>Print Settings & Live Preview - PrintFlow</title>
 
     <link rel="stylesheet" href="style.css">
+    <style>
+        .settings-grid {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 16px;
+            margin-top: 14px;
+        }
+
+        .settings-section {
+            background: #ffffff;
+            border-radius: 14px;
+            padding: 16px;
+            border: 1.5px solid #fed7aa;
+            text-align: left;
+        }
+
+        .settings-section h3 {
+            margin: 0 0 10px;
+            font-size: 14px;
+            color: #7c2d12;
+            font-weight: 800;
+        }
+
+        .setting-select, .setting-input {
+            width: 100%;
+            padding: 10px 12px;
+            border-radius: 10px;
+            border: 1.5px solid #cbd5e1;
+            font-size: 14px;
+            outline: none;
+            background: #f8fafc;
+        }
+
+        .setting-select:focus, .setting-input:focus {
+            border-color: #ea580c;
+        }
+
+        /* LIVE PRINT PREVIEW CONTAINER */
+        .preview-card {
+            background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+            border-radius: 18px;
+            padding: 20px;
+            color: #ffffff;
+            margin: 16px 0;
+            box-shadow: 0 10px 24px rgba(15, 23, 42, 0.25);
+            text-align: center;
+        }
+
+        .paper-preview-frame {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 220px;
+            margin-top: 12px;
+        }
+
+        .paper-sheet {
+            background: #ffffff;
+            border-radius: 6px;
+            box-shadow: 0 8px 20px rgba(0, 0, 0, 0.4);
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            padding: 10px;
+            box-sizing: border-box;
+            border: 1px solid #cbd5e1;
+        }
+
+        /* Paper Dimensions based on A4 / Letter / Legal */
+        .paper-sheet.size-a4.portrait { width: 140px; height: 198px; }
+        .paper-sheet.size-a4.landscape { width: 198px; height: 140px; }
+        .paper-sheet.size-letter.portrait { width: 144px; height: 186px; }
+        .paper-sheet.size-letter.landscape { width: 186px; height: 144px; }
+        .paper-sheet.size-legal.portrait { width: 136px; height: 216px; }
+        .paper-sheet.size-legal.landscape { width: 216px; height: 136px; }
+
+        /* Micro Xerox N-Up Grid Preview */
+        .nup-grid {
+            display: grid;
+            gap: 4px;
+            width: 100%;
+            height: 100%;
+        }
+
+        .nup-grid.nup-2-h { grid-template-rows: repeat(2, 1fr); grid-template-columns: 1fr; }
+        .nup-grid.nup-2-v { grid-template-columns: repeat(2, 1fr); grid-template-rows: 1fr; }
+        .nup-grid.nup-4 { grid-template-columns: repeat(2, 1fr); grid-template-rows: repeat(2, 1fr); }
+        .nup-grid.nup-6 { grid-template-columns: repeat(2, 1fr); grid-template-rows: repeat(3, 1fr); }
+        .nup-grid.nup-9 { grid-template-columns: repeat(3, 1fr); grid-template-rows: repeat(3, 1fr); }
+        .nup-grid.nup-16 { grid-template-columns: repeat(4, 1fr); grid-template-rows: repeat(4, 1fr); }
+
+        .nup-cell {
+            background: #f1f5f9;
+            border: 1px dashed #94a3b8;
+            border-radius: 3px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 10px;
+            font-weight: 800;
+            color: #475569;
+        }
+
+        .standard-preview-content {
+            width: 100%;
+            height: 100%;
+            background: #f8fafc;
+            border: 1px dashed #cbd5e1;
+            border-radius: 4px;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            padding: 8px;
+            box-sizing: border-box;
+        }
+
+        .preview-text-line {
+            height: 6px;
+            background: #cbd5e1;
+            border-radius: 3px;
+            margin-bottom: 5px;
+        }
+
+        .footer-legal {
+            margin-top: 30px;
+            padding-top: 14px;
+            border-top: 1px solid #e2e8f0;
+            font-size: 12px;
+            color: #64748b;
+            text-align: center;
+        }
+
+        .footer-legal a {
+            color: #ea580c;
+            text-decoration: none;
+            font-weight: 600;
+            margin: 0 6px;
+        }
+    </style>
 </head>
 <body>
 
@@ -14,132 +155,168 @@
     <div class="logo">🖨️</div>
 
     <h1>Print Details</h1>
-    <p id="fileName">No file selected</p>
-    <p id="pageCount"></p>
+    <p id="fileName" style="font-weight: 700; color: #1e293b;">No file selected</p>
+    <p id="pageCount" style="color: #ea580c; font-weight: 700;"></p>
 
-    <p class="description">
-        Select copies and print settings for your document.
-    </p>
-
-    <h3>No. of Copies</h3>
-    <input type="number" id="copies" value="1" min="1" max="999">
-
-    <h3>Paper Size</h3>
-    <select id="paperSize">
-        <option value="A3">A3</option>
-        <option value="A4" selected>A4</option>
-        <option value="A5">A5</option>
-        <option value="Letter">Letter</option>
-        <option value="Legal">Legal</option>
-        <option value="Executive">Executive</option>
-        <option value="Custom">Custom Size</option>
-    </select>
-
-    <h3>Print Side</h3>
-    <div class="radio-option">
-        <label>
-            <input type="radio" name="printSide" value="single">
-            Single Side
-        </label>
-        <label>
-            <input type="radio" name="printSide" value="double" checked>
-            Double Side
-        </label>
-        <label>
-            <input type="radio" name="printSide" value="flip_long">
-            Flip Long Edge
-        </label>
-        <label>
-            <input type="radio" name="printSide" value="flip_short">
-            Flip Short Edge
-        </label>
+    <!-- LIVE PRINT PREVIEW -->
+    <div class="preview-card">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+            <span style="font-size: 13px; font-weight: 800; color: #cbd5e1;">📄 LIVE PRINT PREVIEW</span>
+            <span id="previewLabelBadge" style="font-size: 11px; background: #ea580c; color: #fff; padding: 2px 8px; border-radius: 10px; font-weight: 700;">Standard</span>
+        </div>
+        <div class="paper-preview-frame">
+            <div id="paperSheetPreview" class="paper-sheet size-a4 portrait">
+                <div id="standardPreviewContent" class="standard-preview-content">
+                    <div>
+                        <div class="preview-text-line" style="width: 80%;"></div>
+                        <div class="preview-text-line" style="width: 100%;"></div>
+                        <div class="preview-text-line" style="width: 90%;"></div>
+                        <div class="preview-text-line" style="width: 60%;"></div>
+                    </div>
+                    <div style="text-align: right; font-size: 9px; color: #94a3b8; font-weight: 700;">Page 1</div>
+                </div>
+                <div id="nupPreviewGrid" class="nup-grid nup-2-h" style="display: none;"></div>
+            </div>
+        </div>
     </div>
 
-    <h3>Color Mode</h3>
-    <div class="radio-option">
-        <label>
-            <input type="radio" name="colorMode" value="black_white" checked>
-            Black & White (B&W)
-        </label>
-        <label>
-            <input type="radio" name="colorMode" value="color">
-            Color Print 🎨
-        </label>
-        <label>
-            <input type="radio" name="colorMode" value="grayscale">
-            Grayscale
-        </label>
-    </div>
+    <form id="printDetailsForm">
+        <div class="settings-grid">
 
-    <h3>Page Orientation</h3>
-    <div class="radio-option">
-        <label>
-            <input type="radio" name="orientation" value="portrait" checked>
-            Portrait
-        </label>
-        <label>
-            <input type="radio" name="orientation" value="landscape">
-            Landscape
-        </label>
-        <label>
-            <input type="radio" name="orientation" value="auto">
-            Auto Detect
-        </label>
-    </div>
+            <!-- Print Mode -->
+            <div class="settings-section">
+                <h3>Print Mode</h3>
+                <div class="radio-option">
+                    <label>
+                        <input type="radio" name="printMode" value="standard" checked>
+                        Standard Print
+                    </label>
+                    <label>
+                        <input type="radio" name="printMode" value="micro_xerox">
+                        Micro Xerox 🔍
+                    </label>
+                </div>
+            </div>
 
-    <h3>Page Range</h3>
-    <select id="pageRangeMode">
-        <option value="all" selected>All Pages</option>
-        <option value="custom">Custom Pages</option>
-    </select>
-    <input type="text" id="pageRange" placeholder="1-3,6,9" style="display:none;" pattern="[0-9, -]+">
+            <!-- Copies -->
+            <div class="settings-section">
+                <h3>No. of Copies</h3>
+                <input type="number" id="copies" class="setting-input" value="1" min="1" max="100">
+            </div>
 
-    <h3>Print Quality</h3>
-    <select id="printQuality">
-        <option value="draft">Draft</option>
-        <option value="normal" selected>Normal</option>
-        <option value="high">High</option>
-        <option value="best">Best</option>
-    </select>
+            <!-- Color Mode -->
+            <div class="settings-section">
+                <h3>Color Mode</h3>
+                <div class="radio-option">
+                    <label>
+                        <input type="radio" name="colorMode" value="black_white" checked>
+                        Black & White (B&W)
+                    </label>
+                    <label>
+                        <input type="radio" name="colorMode" value="color">
+                        Color Print 🎨
+                    </label>
+                </div>
+            </div>
 
-    <h3>DPI</h3>
-    <select id="dpi">
-        <option value="150">150 DPI</option>
-        <option value="300" selected>300 DPI</option>
-        <option value="600">600 DPI</option>
-        <option value="1200">1200 DPI</option>
-    </select>
+            <!-- Print Side (Duplex) -->
+            <div class="settings-section" id="duplexSection">
+                <h3>Print Side</h3>
+                <div class="radio-option">
+                    <label>
+                        <input type="radio" name="printSide" value="single" checked>
+                        Single Side
+                    </label>
+                    <label id="doubleSideLabel">
+                        <input type="radio" name="printSide" id="radioDoubleSide" value="double">
+                        Double Side
+                    </label>
+                </div>
+            </div>
 
-    <h3>Scaling</h3>
-    <select id="scaling">
-        <option value="actual_size" selected>Actual Size (100%)</option>
-        <option value="fit">Fit to Page</option>
-        <option value="fill">Fill Page</option>
-        <option value="custom">Custom Scale</option>
-    </select>
-    <input type="number" id="customScale" value="100" min="10" max="500" step="1" style="display:none;" aria-label="Custom scale percentage">
+            <!-- Paper Size -->
+            <div class="settings-section">
+                <h3>Paper Size</h3>
+                <select id="paperSize" class="setting-select">
+                    <option value="a4" selected>A4 (210 x 297 mm)</option>
+                    <option value="letter">Letter (8.5 x 11 in)</option>
+                    <option value="legal">Legal (8.5 x 14 in)</option>
+                </select>
+            </div>
 
-    <h3>Margins</h3>
-    <select id="margins">
-        <option value="none">None</option>
-        <option value="narrow">Narrow</option>
-        <option value="normal">Normal</option>
-        <option value="wide">Wide</option>
-        <option value="default" selected>Default Printer Margins</option>
-    </select>
+            <!-- Page Orientation -->
+            <div class="settings-section">
+                <h3>Page Orientation</h3>
+                <div class="radio-option">
+                    <label>
+                        <input type="radio" name="orientation" value="portrait" checked>
+                        Portrait
+                    </label>
+                    <label>
+                        <input type="radio" name="orientation" value="landscape">
+                        Landscape
+                    </label>
+                </div>
+            </div>
 
-    <div id="printPreview" style="margin: 20px 0; padding: 18px; border: 1px solid #fed7aa; background: #fff7ed; border-radius: 12px;">
-        <strong>Print Preview</strong>
-        <p id="previewSummary" style="margin: 8px 0 0;">A4 · Portrait · B&W · 1 copy</p>
-    </div>
+            <!-- Scaling -->
+            <div class="settings-section">
+                <h3>Scaling</h3>
+                <div class="radio-option">
+                    <label>
+                        <input type="radio" name="scaleMode" value="fit" checked>
+                        Fit to Page
+                    </label>
+                    <label>
+                        <input type="radio" name="scaleMode" value="actual">
+                        Actual Size
+                    </label>
+                </div>
+            </div>
 
-    <h2 id="totalPrice">
-        Total: --
+            <!-- Micro Xerox Specific Options -->
+            <div class="settings-section" id="microXeroxSection" style="display: none; background: #fff7ed; border-color: #fdba74;">
+                <h3 style="color: #c2410c;">🔍 Micro Xerox Options</h3>
+                <label style="display: block; font-size: 13px; font-weight: 700; margin-bottom: 4px; color: #7c2d12;">Pages Per Sheet (N-Up):</label>
+                <select id="pagesPerSheet" class="setting-select" style="margin-bottom: 10px;">
+                    <option value="2" selected>2 Pages / Sheet (2-Up)</option>
+                    <option value="4">4 Pages / Sheet (4-Up)</option>
+                    <option value="6">6 Pages / Sheet (6-Up)</option>
+                    <option value="9">9 Pages / Sheet (9-Up)</option>
+                    <option value="16">16 Pages / Sheet (16-Up)</option>
+                </select>
+
+                <label style="display: block; font-size: 13px; font-weight: 700; margin-bottom: 4px; color: #7c2d12;">Page Order:</label>
+                <div class="radio-option">
+                    <label>
+                        <input type="radio" name="pageOrder" value="horizontal" checked>
+                        Horizontal
+                    </label>
+                    <label>
+                        <input type="radio" name="pageOrder" value="vertical">
+                        Vertical
+                    </label>
+                </div>
+            </div>
+
+        </div>
+    </form>
+
+    <h2 id="totalPrice" style="margin-top: 20px; color: #ea580c;">
+        Total: ₹2
     </h2>
 
-    <div class="button-row">
+    <div class="button-row" style="margin-top: 18px;">
         <button type="button" id="backBtn" class="secondary-btn">← Back</button>
         <button type="button" id="paymentBtn">Continue to Payment</button>
+    </div>
+
+    <div class="footer-legal">
+        PrintFlow &copy; 2026 | Support: <a href="mailto:printflowindia@gmail.com">printflowindia@gmail.com</a>
+        <br>
+        <a href="#privacy" onclick="alert('PrintFlow Privacy Policy: Customer documents are securely deleted 2-3 seconds after printing.'); return false;">Privacy Policy</a> |
+        <a href="#terms" onclick="alert('PrintFlow Terms: Secure automated xerox and document printing.'); return false;">Terms</a> |
+        <a href="#refund" onclick="alert('PrintFlow Refund Policy: Failed payments or unprinted jobs are automatically refunded in 4-5 business days.'); return false;">Refund Policy</a>
     </div>
 
 </div>

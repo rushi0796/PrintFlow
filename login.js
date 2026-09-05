@@ -247,6 +247,11 @@ function handleVerifyOtp() {
                     if (mobileNumberInput) {
                         localStorage.setItem("mobileNumber", mobileNumberInput.value.trim());
                     }
+                    if (window.clearUserDocumentSession) {
+                        window.clearUserDocumentSession();
+                    } else {
+                        ["fileName", "uploadedFileName", "backendFilePath", "pdfPageCount", "copies", "amount", "pdfDataUrl"].forEach(k => localStorage.removeItem(k));
+                    }
                     window.location.href = "home.html";
                 }, 1400);
             },

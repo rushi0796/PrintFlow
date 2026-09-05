@@ -6,6 +6,8 @@ uploads/*.pdf
 !uploads/test.pdf
 orders/orders.json
 .env
+.env*
 .DS_Store
 .vercel
-.env*
+agent_temp/
+WhatsApp Image*
