@@ -3,17 +3,39 @@ import sys
 import shutil
 import subprocess
 from pathlib import Path
+from typing import Optional
 from printer_manager import get_target_printer
 
 BASE_DIR = Path(__file__).resolve().parent
 UPLOAD_DIR = Path("/tmp/printflow-uploads") if os.environ.get("VERCEL") else BASE_DIR / "uploads"
 
-def create_n_up_pdf(input_pdf_path: Path, pages_per_sheet: int, page_order: str = "horizontal") -> Path:
+def find_sumatra_executable() -> Optional[str]:
+    candidates = [
+        shutil.which("SumatraPDF.exe"),
+        shutil.which("SumatraPDF"),
+        Path(os.environ.get("LOCALAPPDATA", "")) / "SumatraPDF" / "SumatraPDF.exe",
+        Path("C:/Program Files/SumatraPDF/SumatraPDF.exe"),
+        Path("C:/Program Files (x86)/SumatraPDF/SumatraPDF.exe"),
+        Path(os.environ.get("APPDATA", "")) / "SumatraPDF" / "SumatraPDF.exe",
+    ]
+    for c in candidates:
+        if c and Path(c).is_file():
+            return str(c)
+    return None
+
+def create_n_up_pdf(
+    input_pdf_path: Path,
+    pages_per_sheet: int,
+    page_order: str = "horizontal",
+    paper_size: str = "a4",
+    orientation: str = "portrait"
+) -> Path:
     if pages_per_sheet <= 1:
         return input_pdf_path
 
     try:
         import pypdf
+        from pypdf import Transformation
         reader = pypdf.PdfReader(str(input_pdf_path))
         num_pages = len(reader.pages)
         if num_pages == 0:
@@ -21,20 +43,34 @@ def create_n_up_pdf(input_pdf_path: Path, pages_per_sheet: int, page_order: str 
 
         writer = pypdf.PdfWriter()
 
-        if pages_per_sheet == 2:
-            cols, rows = 1, 2
-        elif pages_per_sheet == 4:
-            cols, rows = 2, 2
-        elif pages_per_sheet == 6:
-            cols, rows = 2, 3
-        elif pages_per_sheet == 9:
-            cols, rows = 3, 3
-        elif pages_per_sheet == 16:
-            cols, rows = 4, 4
-        else:
-            cols, rows = 1, 1
+        grid_map = {
+            2: (1, 2),
+            4: (2, 2),
+            6: (2, 3),
+            9: (3, 3),
+            16: (4, 4),
+        }
+        cols, rows = grid_map.get(pages_per_sheet, (1, 1))
 
-        sheet_w, sheet_h = 595.0, 842.0
+        paper_dims = {
+            "a4": (595.28, 841.89),
+            "letter": (612.0, 792.0),
+            "legal": (612.0, 1008.0)
+        }
+        pw, ph = paper_dims.get(paper_size.lower(), (595.28, 841.89))
+        if orientation.lower() == "landscape":
+            sheet_w, sheet_h = max(pw, ph), min(pw, ph)
+            if pages_per_sheet == 2:
+                cols, rows = 2, 1
+            elif pages_per_sheet == 6:
+                cols, rows = 3, 2
+        else:
+            sheet_w, sheet_h = min(pw, ph), max(pw, ph)
+            if pages_per_sheet == 2:
+                cols, rows = 1, 2
+            elif pages_per_sheet == 6:
+                cols, rows = 2, 3
+
         cell_w = sheet_w / cols
         cell_h = sheet_h / rows
 
@@ -56,7 +92,8 @@ def create_n_up_pdf(input_pdf_path: Path, pages_per_sheet: int, page_order: str 
                         tx = c * cell_w + (cell_w - scaled_w) / 2.0
                         ty = sheet_h - ((r + 1) * cell_h) + (cell_h - scaled_h) / 2.0
 
-                        blank_page.merge_scaled_page(src_page, scale, tx=tx, ty=ty)
+                        op = Transformation().scale(scale, scale).translate(tx, ty)
+                        blank_page.merge_transformed_page(src_page, op)
             i += pages_per_sheet
 
         output_path = input_pdf_path.parent / f"nup_{pages_per_sheet}_{input_pdf_path.name}"
@@ -64,7 +101,7 @@ def create_n_up_pdf(input_pdf_path: Path, pages_per_sheet: int, page_order: str 
             writer.write(f_out)
         return output_path
     except Exception as nup_err:
-        print("[MICRO XEROX N-UP WARNING]:", nup_err)
+        print(f"[MICRO XEROX N-UP WARNING]: {nup_err}")
         return input_pdf_path
 
 def dispatch_print_job(order_data: dict) -> dict:
@@ -84,7 +121,7 @@ def dispatch_print_job(order_data: dict) -> dict:
     abs_file_path = UPLOAD_DIR / clean_filename
 
     target_printer = get_target_printer(color_mode)
-    print(f"[PRINT DISPATCH] Order {order_id} | File: '{clean_filename}' | Mode: {color_mode} | Printer: '{target_printer}' | Duplex: {duplex} | Paper: {paper_size} | Copies: {copies}")
+    print(f"[PRINT DISPATCH] Order {order_id} | File: '{clean_filename}' | Mode: {color_mode} | Printer: '{target_printer}' | Duplex: {duplex} | Paper: {paper_size} | Copies: {copies} | Scale: {scale_mode}")
 
     if not abs_file_path.exists():
         print(f"[PRINT DISPATCH WARNING] File '{abs_file_path}' not found on disk. Simulating spooling queue.")
@@ -100,26 +137,34 @@ def dispatch_print_job(order_data: dict) -> dict:
     ext = abs_file_path.suffix.lower()
     target_print_file = abs_file_path
     if ext == ".pdf" and pages_per_sheet > 1:
-        target_print_file = create_n_up_pdf(abs_file_path, pages_per_sheet, page_order)
+        target_print_file = create_n_up_pdf(
+            abs_file_path,
+            pages_per_sheet,
+            page_order,
+            paper_size=paper_size,
+            orientation=orientation
+        )
 
     # Windows Direct Silent Printing Execution
     if sys.platform == "win32":
         try:
             # 1. SumatraPDF silent printing if available
-            sumatra = shutil.which("SumatraPDF.exe") or shutil.which("SumatraPDF")
+            sumatra = find_sumatra_executable()
             if sumatra:
                 settings_parts = []
-                if scale_mode != "actual":
+                if scale_mode in ("actual", "actual_size"):
+                    settings_parts.append("noscale")
+                else:
                     settings_parts.append("fit")
                 
-                if duplex in ("double", "duplex", "duplexlong"):
+                if duplex in ("double", "duplex", "duplexlong", "vertical"):
                     settings_parts.append("duplexlong")
-                elif duplex in ("duplexshort", "short"):
+                elif duplex in ("duplexshort", "short", "horizontal"):
                     settings_parts.append("duplexshort")
                 else:
                     settings_parts.append("noduplex")
 
-                if orientation == "landscape":
+                if orientation.lower() == "landscape":
                     settings_parts.append("landscape")
                 else:
                     settings_parts.append("portrait")
@@ -127,7 +172,7 @@ def dispatch_print_job(order_data: dict) -> dict:
                 if paper_size:
                     settings_parts.append(f"paper={paper_size.lower()}")
 
-                settings_parts.append(f"{copies}x")
+                settings_parts.append(f"{max(1, copies)}x")
 
                 if color_mode.lower() in ("color", "colour"):
                     settings_parts.append("color")
@@ -135,7 +180,7 @@ def dispatch_print_job(order_data: dict) -> dict:
                     settings_parts.append("monochrome")
 
                 settings_str = ",".join(settings_parts)
-                cmd = [sumatra, "-print-to", target_printer, "-print-settings", settings_str, str(target_print_file)]
+                cmd = [sumatra, "-print-to", target_printer, "-print-settings", settings_str, str(target_print_file.resolve())]
                 subprocess.run(cmd, check=True, timeout=25)
                 print(f"[PRINT DISPATCH SUCCESS] Order {order_id} printed via SumatraPDF to '{target_printer}'")
                 return {

@@ -913,6 +913,44 @@ if (printDetailsFileName) {
 
     const settingsForm = document.getElementById("printDetailsForm");
     if (settingsForm) {
+        const savedScale = localStorage.getItem("scaleMode");
+        if (savedScale) {
+            const scaleVal = (savedScale === "actual") ? "actual" : "fit";
+            const scaleRadio = document.querySelector(`input[name="scaleMode"][value="${scaleVal}"]`);
+            if (scaleRadio) scaleRadio.checked = true;
+        }
+        const savedPaper = localStorage.getItem("paperSize");
+        const paperEl = document.getElementById("paperSize");
+        if (savedPaper && paperEl) paperEl.value = savedPaper;
+
+        const savedOrient = localStorage.getItem("orientation");
+        if (savedOrient) {
+            const orientRadio = document.querySelector(`input[name="orientation"][value="${savedOrient}"]`);
+            if (orientRadio) orientRadio.checked = true;
+        }
+
+        const savedCopies = localStorage.getItem("copies");
+        const copiesEl = document.getElementById("copies");
+        if (savedCopies && copiesEl) copiesEl.value = savedCopies;
+
+        const savedColor = localStorage.getItem("colorMode");
+        if (savedColor) {
+            const colorRadio = document.querySelector(`input[name="colorMode"][value="${savedColor}"]`);
+            if (colorRadio) colorRadio.checked = true;
+        }
+
+        const savedSide = localStorage.getItem("printSide");
+        if (savedSide) {
+            const sideRadio = document.querySelector(`input[name="printSide"][value="${savedSide}"]`);
+            if (sideRadio) sideRadio.checked = true;
+        }
+
+        const savedPrintMode = localStorage.getItem("printMode");
+        if (savedPrintMode) {
+            const modeRadio = document.querySelector(`input[name="printMode"][value="${savedPrintMode}"]`);
+            if (modeRadio) modeRadio.checked = true;
+        }
+
         settingsForm.addEventListener("change", updatePrintDetailsAndPreview);
         settingsForm.addEventListener("input", updatePrintDetailsAndPreview);
     }
