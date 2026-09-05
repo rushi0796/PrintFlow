@@ -274,6 +274,67 @@
             justify-content: center;
             gap: 6px;
         }
+
+        /* FINAL PRINT SUCCESS ANIMATION CARD */
+        .final-success {
+            display: none;
+            flex-direction: column;
+            align-items: center;
+            text-align: center;
+            margin-top: 16px;
+            padding: 22px 18px;
+            background: #ffffff;
+            border-radius: 18px;
+            border: 1.5px solid #86efac;
+            box-shadow: 0 12px 30px rgba(22, 163, 74, 0.15);
+            opacity: 0;
+            transform: translateY(20px) scale(0.96);
+        }
+
+        .final-success.receipt-animation-started {
+            display: flex;
+            animation: finalSuccess 0.8s cubic-bezier(0.22, 0.8, 0.25, 1) forwards;
+        }
+
+        .final-success-icon {
+            width: 68px;
+            height: 68px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #15803d 0%, #22c55e 100%);
+            color: #ffffff;
+            font-size: 34px;
+            font-weight: 800;
+            box-shadow: 0 10px 24px rgba(34, 197, 94, 0.4);
+            animation: badgePop 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+        }
+
+        .final-success-title {
+            margin: 14px 0 6px;
+            font-size: 22px;
+            font-weight: 800;
+            color: #0f172a;
+        }
+
+        .final-success-subtext {
+            margin: 0;
+            font-size: 14px;
+            color: #15803d;
+            font-weight: 600;
+        }
+
+        @keyframes finalSuccess {
+            from {
+                opacity: 0;
+                transform: translateY(20px) scale(0.96);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0) scale(1);
+            }
+        }
     </style>
 </head>
 <body>
@@ -381,6 +442,13 @@
     <!-- PRIVACY BADGE -->
     <div id="privacyToast" class="privacy-toast" style="display: none;">
         🔒 <span>Your documents are automatically deleted 2-3 seconds after printing.</span>
+    </div>
+
+    <!-- FINAL PRINT SUCCESS ANIMATION CARD -->
+    <div id="finalSuccess" class="final-success" aria-hidden="true">
+        <div class="final-success-icon">✓</div>
+        <h3 class="final-success-title">Print Successful!</h3>
+        <p class="final-success-subtext">Your document has been printed successfully on the physical printer.</p>
     </div>
 
     <!-- 60-SECOND AUTO LOGOUT BANNER -->

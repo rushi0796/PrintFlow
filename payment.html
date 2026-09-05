@@ -90,6 +90,24 @@
     </div>
 </div>
 
+<!-- Animated Payment Success Custom Modal Overlay -->
+<div id="successModalOverlay" class="failed-modal-overlay" role="dialog" aria-modal="true">
+    <div class="failed-modal-card" style="box-shadow: 0 25px 50px -12px rgba(22, 163, 74, 0.35), 0 0 0 1px rgba(34, 197, 94, 0.2);">
+        <div class="merged-success-badge" style="width: 80px; height: 80px; margin: 0 auto 16px;">
+            <svg class="checkmark-svg" style="width: 44px; height: 44px;" viewBox="0 0 24 24">
+                <polyline points="20 6 9 17 4 12"></polyline>
+            </svg>
+        </div>
+        <h2 id="successModalTitle" class="failed-modal-title" style="color: #15803d; margin-bottom: 8px;">Payment Successful!</h2>
+        <p id="successModalDesc" class="failed-modal-desc" style="color: #166534; font-weight: 600; margin-bottom: 14px;">
+            ✓ Payment verified. Your document is queued for printing.
+        </p>
+        <div class="success-text-anim" style="font-size: 13px; color: #15803d;">
+            Connecting to print queue...
+        </div>
+    </div>
+</div>
+
 <!-- Razorpay Checkout JS SDK -->
 <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
 
