@@ -7,6 +7,17 @@ import urllib.request
 import subprocess
 from pathlib import Path
 
+if hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+if hasattr(sys.stderr, "reconfigure"):
+    try:
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 BASE_DIR = Path(__file__).resolve().parent
 CONFIG_FILE = BASE_DIR / "agent_config.json"
 EXAMPLE_CONFIG_FILE = BASE_DIR / "agent_config.example.json"
@@ -230,8 +241,9 @@ def print_document_silently(
             hdc.CreatePrinterDC(printer_name)
             printable_width = hdc.GetDeviceCaps(8)
             printable_height = hdc.GetDeviceCaps(10)
+            safe_doc_name = "".join(c for c in target_print_file.name if ord(c) < 128) or "document"
             for _ in range(copies):
-                hdc.StartDoc(f"PrintFlow - {target_print_file.name}")
+                hdc.StartDoc(f"PrintFlow - {safe_doc_name}")
                 hdc.StartPage()
                 img_w, img_h = img.size
                 scale = min(printable_width / img_w, printable_height / img_h)
