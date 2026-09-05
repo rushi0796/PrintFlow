@@ -7,6 +7,20 @@ from typing import Any, Optional
 from uuid import uuid4
 
 DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
+if not DATABASE_URL:
+    for env_file in [Path(__file__).resolve().parent / ".env.local", Path(__file__).resolve().parent / ".env"]:
+        if env_file.exists():
+            for line in env_file.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    k, v = line.split("=", 1)
+                    if k.strip() == "DATABASE_URL":
+                        DATABASE_URL = v.strip().strip('"').strip("'")
+                        os.environ["DATABASE_URL"] = DATABASE_URL
+                        break
+        if DATABASE_URL:
+            break
+
 LOCAL_DB = Path(__file__).resolve().parent / "orders" / "printflow.sqlite3"
 _STORAGE_INITIALIZED = False
 
