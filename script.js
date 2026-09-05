@@ -1086,7 +1086,14 @@ if (payBtn) {
 
             if (!orderRes.ok) {
                 const errText = await orderRes.text();
-                throw new Error(`Server returned HTTP ${orderRes.status}`);
+                let errorDetail = `HTTP ${orderRes.status}`;
+                try {
+                    const errorData = JSON.parse(errText);
+                    errorDetail = errorData.detail || errorDetail;
+                } catch (parseError) {
+                    if (errText) errorDetail = errText;
+                }
+                throw new Error(`Order creation failed: ${errorDetail}`);
             }
 
             const orderData = await orderRes.json();
@@ -1115,7 +1122,10 @@ if (payBtn) {
                         const fullVerificationPayload = {
                             ...payload,
                             ...response,
-                            razorpay_order_id: response.razorpay_order_id || orderData.order_id
+                            razorpay_payment_id: response.razorpay_payment_id,
+                            razorpay_order_id: response.razorpay_order_id || orderData.order_id,
+                            razorpay_signature: response.razorpay_signature,
+                            print_order_id: orderData.order_id
                         };
 
                         const verifyRes = await fetch(apiUrl("/api/verify-payment", "/api/verify-payment"), {
@@ -1124,24 +1134,20 @@ if (payBtn) {
                             body: JSON.stringify(fullVerificationPayload)
                         });
 
-                        if (verifyRes.ok) {
+                        const verifyData = await verifyRes.json().catch(() => ({}));
+                        if (verifyRes.ok && verifyData.status === "success" && verifyData.order_status === "PRINT_QUEUED") {
                             window.location.href = "success.html";
                         } else {
-                            const verifyData = await verifyRes.json().catch(() => ({}));
                             showPaymentFailedModal("Verification Error", verifyData.detail || "Payment verification failed.");
                             isPaymentInFlight = false;
                             payBtn.disabled = false;
                             payBtn.textContent = originalText;
                         }
                     } catch (vErr) {
-                        if (response && response.razorpay_payment_id) {
-                            window.location.href = "success.html";
-                        } else {
-                            showPaymentFailedModal("Verification Error", vErr.message || "Payment verification error occurred.");
-                            isPaymentInFlight = false;
-                            payBtn.disabled = false;
-                            payBtn.textContent = originalText;
-                        }
+                        showPaymentFailedModal("Verification Error", vErr.message || "Payment verification error occurred.");
+                        isPaymentInFlight = false;
+                        payBtn.disabled = false;
+                        payBtn.textContent = originalText;
                     }
                 },
                 "theme": {
