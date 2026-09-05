@@ -887,22 +887,22 @@ if (payBtn) {
                         "email": "customer@printflow.in"
                     },
                     "handler": async function (response) {
-                        const {
-                            razorpay_payment_id: paymentId,
-                            razorpay_order_id: callbackOrderId,
-                            razorpay_signature: signature
-                        } = response || {};
-                        console.log("Razorpay callback received:", {
-                            orderId: callbackOrderId,
-                            paymentId
-                        });
-                        if (!paymentId || !callbackOrderId || !signature) {
-                            throw new Error("Razorpay returned an incomplete payment verification response.");
-                        }
-                        if (callbackOrderId !== razorpayOrderId) {
-                            throw new Error("Razorpay order ID mismatch during payment verification.");
-                        }
                         try {
+                            const {
+                                razorpay_payment_id: paymentId,
+                                razorpay_order_id: callbackOrderId,
+                                razorpay_signature: signature
+                            } = response || {};
+                            console.log("Razorpay callback received:", {
+                                orderId: callbackOrderId,
+                                paymentId
+                            });
+                            if (!paymentId || !callbackOrderId || !signature) {
+                                throw new Error("Razorpay returned an incomplete payment verification response.");
+                            }
+                            if (callbackOrderId !== razorpayOrderId) {
+                                throw new Error("Razorpay order ID mismatch during payment verification.");
+                            }
                             const verifyRes = await fetchWithRetry(apiUrl("/api/verify-payment", "/api/verify-payment"), {
                                 method: "POST",
                                 headers: { "Content-Type": "application/json" },
