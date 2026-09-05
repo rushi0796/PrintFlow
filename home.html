@@ -116,11 +116,27 @@
 
     <div class="logo">🖨️</div>
 
-    <h1>Upload Document</h1>
+    <h1>Upload Documents</h1>
 
     <p class="description">
-        Select your PDF, image, or document files to print.
+        Select or drag & drop your PDF, image, or document files to print.
     </p>
+
+    <!-- Upload Dropzone Container -->
+    <div id="uploadDropzone" class="upload-dropzone" tabIndex="0" role="region" aria-label="File upload dropzone">
+        <div class="dropzone-icon">📁</div>
+        <div class="dropzone-text">
+            <strong>Drag & Drop files here</strong>
+            <span>or click to browse from your device</span>
+        </div>
+        <div class="dropzone-actions">
+            <button type="button" id="choosePdfBtn" class="btn-choose">📄 Choose Files</button>
+            <button type="button" id="addMoreBtn" class="btn-add-more" style="display: none;">➕ Add More Files</button>
+        </div>
+        <div class="dropzone-hints">
+            Supported formats: PDF, PNG, JPG, JPEG, WEBP, DOC, DOCX, TXT
+        </div>
+    </div>
 
     <input
         type="file"
@@ -128,19 +144,43 @@
         accept=".pdf,.png,.jpg,.jpeg,.webp,.doc,.docx,.txt"
         multiple
         style="display: none;"
-        onchange="if(window.handleFileSelection) window.handleFileSelection(event);"
     >
 
-    <button type="button" id="choosePdfBtn" onclick="var el=document.getElementById('pdfFile'); if(el){ el.value=''; el.click(); }">
-        📄 Choose File(s)
-    </button>
+    <!-- Compact Upload Status & Queue Container -->
+    <div id="uploadQueueCard" class="upload-queue-card" style="display: none;">
+        <div class="queue-header-summary">
+            <div class="queue-status-text">
+                <span id="queueSummaryIcon" class="queue-status-icon">⏳</span>
+                <div class="queue-summary-titles">
+                    <strong id="queueMainStatus">Uploading 0 files</strong>
+                    <span id="queueSubStatus">0 of 0 completed</span>
+                </div>
+            </div>
+            <div class="queue-header-actions">
+                <button type="button" id="clearAllBtn" class="btn-clear-all" title="Clear all files">Clear All</button>
+                <button type="button" id="toggleQueueBtn" class="btn-toggle-queue" aria-expanded="true">
+                    <span id="toggleQueueText">▾ Details</span>
+                </button>
+            </div>
+        </div>
+
+        <!-- Overall Progress Bar -->
+        <div class="overall-progress-bar-container">
+            <div id="overallProgressBar" class="overall-progress-bar" style="width: 0%;"></div>
+        </div>
+
+        <!-- Expandable File Queue List -->
+        <div id="fileQueueList" class="file-queue-list is-expanded">
+            <!-- Dynamic File Rows rendered by script.js -->
+        </div>
+    </div>
 
     <!-- PDF First Page Preview Thumbnail Container -->
     <div id="pdfPreviewContainer" style="display: none; margin-top: 14px; text-align: center;">
         <canvas id="pdfCanvas" style="max-width: 140px; max-height: 180px; border-radius: 10px; border: 2px solid #fed7aa; box-shadow: 0 4px 12px rgba(234, 88, 12, 0.12); margin-bottom: 8px;"></canvas>
     </div>
 
-    <p id="fileName" style="font-weight: 700; color: #1e293b; margin-top: 10px;">
+    <p id="fileName" style="display: none; font-weight: 700; color: #1e293b; margin-top: 10px;">
         No File Selected
     </p>
     <p id="uploadConfirmation" class="upload-confirmation" role="status" aria-live="polite"></p>
@@ -148,17 +188,17 @@
         <span class="page-counter-icon" aria-hidden="true">📄</span>
         <span>
             <strong id="pageCount" class="page-counter-number">0</strong>
-            <span class="page-counter-label">pages detected in your document(s)</span>
+            <span class="page-counter-label">total pages detected in your document(s)</span>
         </span>
     </div>
 
     <button type="button" id="continueBtn" style="margin-top: 18px;">
-        Continue
+        Continue to Print Settings →
     </button>
 
     <!-- Inline Validation Error Message below Continue button -->
     <div id="pdfErrorMsg" class="otp-error-msg" style="display: none; margin-top: 18px; margin-bottom: 0;">
-        📄 Please select a printable file first
+        📄 Please select or complete file upload before continuing
     </div>
 
 </div>

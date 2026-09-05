@@ -158,181 +158,550 @@ function clearSavedPdfFile() {
     });
 }
 
-async function uploadPdfToBackend(file) {
-    if (!file) return null;
-    try {
-        const formData = new FormData();
-        formData.append("file", file, file.name);
+/* ======================================================
+   MULTIPLE FILE UPLOAD ENGINE
+   ====================================================== */
 
-        const res = await fetch(apiUrl("/upload-pdf", "/api/upload-pdf"), {
-            method: "POST",
-            body: formData
-        });
+let fileQueue = []; // Array of item objects
+let isQueueProcessing = false;
 
-        if (res.ok) {
-            const data = await res.json();
-            console.log("PDF uploaded to backend:", data);
-            if (data && data.file_path) {
-                localStorage.setItem("backendFilePath", data.file_path);
-            }
-            return { ok: true, data };
-        }
-    } catch (err) {
-        console.warn("Backend upload note:", err);
-    }
-    return null;
+function generateFileId(file) {
+    const safeName = (file.name || "file").replace(/[^a-zA-Z0-9]/g, "_");
+    return `file_${safeName}_${file.size}_${file.lastModified || 0}`;
 }
 
-const fileInput = document.getElementById("pdfFile");
-const choosePdfBtn = document.getElementById("choosePdfBtn");
-const fileName = document.getElementById("fileName");
-const continueBtn = document.getElementById("continueBtn");
-const pageCountDisplay = document.getElementById("pageCount");
-const pdfErrorMsg = document.getElementById("pdfErrorMsg");
-const pageCounterCard = document.getElementById("pageCounterCard");
-const uploadConfirmation = document.getElementById("uploadConfirmation");
+function formatFileSize(bytes) {
+    if (bytes === 0) return "0 Bytes";
+    const k = 1024;
+    const sizes = ["Bytes", "KB", "MB", "GB"];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + " " + sizes[i];
+}
 
-function countPdfPages(file) {
-    return new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = function () {
-            const typedarray = new Uint8Array(this.result);
-            if (typeof pdfjsLib === "undefined") {
-                reject("PDF.js library is not loaded.");
-                return;
-            }
-            pdfjsLib.getDocument(typedarray).promise.then(function (pdf) {
-                resolve(pdf.numPages);
-            }).catch(function (error) {
-                reject(error);
-            });
-        };
-        reader.onerror = function (error) {
-            reject(error);
-        };
-        reader.readAsArrayBuffer(file);
+function getFileTypeDetails(file) {
+    const ext = (file.name || "").split('.').pop().toLowerCase();
+    if (ext === "pdf" || file.type === "application/pdf") {
+        return { category: "pdf", icon: "📄", badge: "PDF" };
+    }
+    if (["png", "jpg", "jpeg", "webp"].includes(ext) || (file.type && file.type.startsWith("image/"))) {
+        return { category: "image", icon: "🖼️", badge: "IMG" };
+    }
+    if (["doc", "docx"].includes(ext)) {
+        return { category: "doc", icon: "📝", badge: "DOC" };
+    }
+    return { category: "txt", icon: "📑", badge: "TXT" };
+}
+
+function updateOverallUploadSummary() {
+    const queueCard = document.getElementById("uploadQueueCard");
+    const mainStatus = document.getElementById("queueMainStatus");
+    const subStatus = document.getElementById("queueSubStatus");
+    const statusIcon = document.getElementById("queueSummaryIcon");
+    const progressBar = document.getElementById("overallProgressBar");
+    const addMoreBtn = document.getElementById("addMoreBtn");
+
+    if (!queueCard) return;
+
+    const activeItems = fileQueue.filter(i => i.status !== "CANCELED");
+    if (activeItems.length === 0) {
+        queueCard.style.display = "none";
+        if (addMoreBtn) addMoreBtn.style.display = "none";
+        if (progressBar) progressBar.style.width = "0%";
+        updateTotalPagesDisplay(0);
+        return;
+    }
+
+    queueCard.style.display = "block";
+    if (addMoreBtn) addMoreBtn.style.display = "inline-flex";
+
+    const totalCount = activeItems.length;
+    const uploadedCount = activeItems.filter(i => i.status === "UPLOADED").length;
+    const failedCount = activeItems.filter(i => i.status === "FAILED").length;
+    const uploadingItem = activeItems.find(i => i.status === "UPLOADING");
+
+    let totalProgressSum = 0;
+    activeItems.forEach(i => {
+        if (i.status === "UPLOADED") totalProgressSum += 100;
+        else if (i.status === "UPLOADING") totalProgressSum += (i.progress || 0);
     });
-}
+    const overallPct = Math.round(totalProgressSum / totalCount);
+    if (progressBar) progressBar.style.width = `${overallPct}%`;
 
-function renderPdfFirstPageThumbnail(file) {
-    const previewContainer = document.getElementById("pdfPreviewContainer");
-    const canvas = document.getElementById("pdfCanvas");
-    if (!previewContainer || !canvas) return;
-
-    if (file.type && file.type.startsWith("image/")) {
-        const reader = new FileReader();
-        reader.onload = function(e) {
-            const img = new Image();
-            img.onload = function() {
-                canvas.width = 140;
-                canvas.height = 180;
-                const ctx = canvas.getContext("2d");
-                ctx.drawImage(img, 0, 0, 140, 180);
-                previewContainer.style.display = "block";
-            };
-            img.src = e.target.result;
-        };
-        reader.readAsDataURL(file);
-        return;
+    if (uploadingItem) {
+        if (statusIcon) statusIcon.textContent = "⏳";
+        if (mainStatus) mainStatus.textContent = `Uploading ${totalCount} file${totalCount > 1 ? 's' : ''}`;
+        if (subStatus) subStatus.textContent = `${uploadedCount} of ${totalCount} completed • Uploading ${uploadingItem.name}`;
+    } else if (uploadedCount === totalCount) {
+        if (statusIcon) statusIcon.textContent = "✓";
+        if (mainStatus) mainStatus.textContent = `✓ ${totalCount} file${totalCount > 1 ? 's' : ''} uploaded successfully`;
+        if (subStatus) subStatus.textContent = "All documents ready for print configuration";
+    } else if (failedCount > 0) {
+        if (statusIcon) statusIcon.textContent = "⚠️";
+        if (mainStatus) mainStatus.textContent = `${uploadedCount} of ${totalCount} uploaded, ${failedCount} failed`;
+        if (subStatus) subStatus.textContent = "Click Retry on failed files to resume upload";
+    } else {
+        if (statusIcon) statusIcon.textContent = "○";
+        if (mainStatus) mainStatus.textContent = `Waiting to upload ${totalCount} file${totalCount > 1 ? 's' : ''}`;
+        if (subStatus) subStatus.textContent = "Upload starting...";
     }
 
-    if (file.type !== "application/pdf" && !file.name.toLowerCase().endsWith(".pdf")) {
-        previewContainer.style.display = "none";
-        return;
-    }
-
-    const reader = new FileReader();
-    reader.onload = function () {
-        const typedarray = new Uint8Array(this.result);
-        if (typeof pdfjsLib === "undefined") return;
-        pdfjsLib.getDocument(typedarray).promise.then(function (pdf) {
-            pdf.getPage(1).then(function (page) {
-                const viewport = page.getViewport({ scale: 0.5 });
-                const context = canvas.getContext("2d");
-                canvas.height = viewport.height;
-                canvas.width = viewport.width;
-                page.render({
-                    canvasContext: context,
-                    viewport: viewport
-                }).promise.then(function () {
-                    previewContainer.style.display = "block";
-                });
-            });
-        }).catch(err => {
-            console.warn("Thumbnail render note:", err);
-            previewContainer.style.display = "none";
-        });
-    };
-    reader.readAsArrayBuffer(file);
+    calculateAndUpdateTotalPages();
+    saveUploadStateToLocalStorage();
 }
 
-async function handleFileSelection(e) {
-    const files = e && e.target && e.target.files ? Array.from(e.target.files) : [];
-    if (!files.length) return;
-
-    if (pdfErrorMsg) pdfErrorMsg.style.display = "none";
-
+function calculateAndUpdateTotalPages() {
+    const activeItems = fileQueue.filter(i => i.status !== "CANCELED");
     let totalPages = 0;
-    const fileNames = files.map(f => f.name).join(", ");
+    activeItems.forEach(item => {
+        totalPages += (item.pages || 1);
+    });
+    updateTotalPagesDisplay(totalPages);
+}
 
-    for (const f of files) {
-        if (f.type === "application/pdf" || f.name.toLowerCase().endsWith(".pdf")) {
-            try {
-                const pages = await countPdfPages(f);
-                totalPages += pages;
-            } catch (err) {
-                totalPages += 1;
-            }
-        } else {
-            totalPages += 1;
-        }
-    }
-
-    if (fileName) {
-        fileName.textContent = fileNames;
-    }
-
-    if (uploadConfirmation) {
-        uploadConfirmation.textContent = `✓ Selected: ${fileNames}`;
-        uploadConfirmation.classList.add("is-visible");
-    }
+function updateTotalPagesDisplay(count) {
+    const pageCountDisplay = document.getElementById("pageCount");
+    const pageCounterCard = document.getElementById("pageCounterCard");
 
     if (pageCountDisplay) {
-        pageCountDisplay.textContent = totalPages;
-        if (pageCounterCard) pageCounterCard.classList.add("is-visible");
+        pageCountDisplay.textContent = count;
+    }
+    if (pageCounterCard) {
+        if (count > 0) pageCounterCard.classList.add("is-visible");
+        else pageCounterCard.classList.remove("is-visible");
+    }
+}
+
+function saveUploadStateToLocalStorage() {
+    const activeItems = fileQueue.filter(i => i.status !== "CANCELED");
+    if (activeItems.length === 0) {
+        localStorage.removeItem("fileName");
+        localStorage.removeItem("pdfPageCount");
+        localStorage.removeItem("backendFilePath");
+        localStorage.removeItem("fileListDetails");
+        return;
     }
 
-    localStorage.setItem("fileName", fileNames);
+    const fileNamesStr = activeItems.map(i => i.name).join(", ");
+    let totalPages = 0;
+    activeItems.forEach(i => { totalPages += (i.pages || 1); });
+
+    const uploadedItems = activeItems.filter(i => i.status === "UPLOADED");
+    const primaryPath = uploadedItems.length > 0 ? uploadedItems[0].backendPath : "";
+
+    const detailsList = activeItems.map(i => ({
+        name: i.name,
+        size: i.size,
+        pages: i.pages,
+        path: i.backendPath,
+        status: i.status,
+        sequence: i.sequence
+    }));
+
+    localStorage.setItem("fileName", fileNamesStr);
     localStorage.setItem("pdfPageCount", String(totalPages));
-
-    if (files.length > 0) {
-        renderPdfFirstPageThumbnail(files[0]);
-        await savePdfFile(files[0]);
-        uploadPdfToBackend(files[0]);
+    if (primaryPath) {
+        localStorage.setItem("backendFilePath", primaryPath);
     }
+    localStorage.setItem("fileListDetails", JSON.stringify(detailsList));
+
+    if (activeItems.length > 0 && activeItems[0].file) {
+        renderPdfFirstPageThumbnail(activeItems[0].file);
+        savePdfFile(activeItems[0].file);
+    }
+}
+
+function renderFileRowUI(item) {
+    const listContainer = document.getElementById("fileQueueList");
+    if (!listContainer) return;
+
+    let row = document.getElementById(`row_${item.id}`);
+    if (!row) {
+        row = document.createElement("div");
+        row.id = `row_${item.id}`;
+        row.className = "file-row";
+        row.setAttribute("data-type", item.typeCategory);
+        listContainer.appendChild(row);
+    }
+
+    let statusBadgeHtml = "";
+    let progressWrapClass = "file-progress-bar-wrap";
+    let actionsHtml = "";
+
+    if (item.status === "WAITING") {
+        statusBadgeHtml = `<span class="file-status-badge status-waiting">○ Waiting</span>`;
+        actionsHtml = `<button type="button" class="btn-remove-file" onclick="removeFileFromQueue('${item.id}')" title="Remove file">✕</button>`;
+    } else if (item.status === "UPLOADING") {
+        statusBadgeHtml = `<span class="file-status-badge status-uploading">↑ ${item.progress}%</span>`;
+        progressWrapClass += " is-active";
+        actionsHtml = `<button type="button" class="btn-remove-file" onclick="removeFileFromQueue('${item.id}')" title="Cancel upload">✕</button>`;
+    } else if (item.status === "UPLOADED") {
+        statusBadgeHtml = `<span class="file-status-badge status-uploaded">✓ Uploaded</span>`;
+        actionsHtml = `<button type="button" class="btn-remove-file" onclick="removeFileFromQueue('${item.id}')" title="Remove file">✕</button>`;
+    } else if (item.status === "FAILED") {
+        const errorText = item.error || "Failed";
+        statusBadgeHtml = `<span class="file-status-badge status-failed">✕ ${errorText}</span>`;
+        actionsHtml = `
+            <button type="button" class="btn-retry-file" onclick="retryFileInQueue('${item.id}')" title="Retry upload">Retry</button>
+            <button type="button" class="btn-remove-file" onclick="removeFileFromQueue('${item.id}')" title="Remove file">✕</button>
+        `;
+    }
+
+    row.innerHTML = `
+        <div class="file-icon-badge" aria-hidden="true">${item.typeIcon}</div>
+        <div class="file-info-col">
+            <span class="file-name-text" title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</span>
+            <div class="file-meta-row">
+                <span>${formatFileSize(item.size)}</span>
+                <span>•</span>
+                <span>${item.pages} page${item.pages > 1 ? 's' : ''}</span>
+                <span>•</span>
+                ${statusBadgeHtml}
+            </div>
+            <div class="${progressWrapClass}">
+                <div class="file-progress-bar-fill" style="width: ${item.progress}%;"></div>
+            </div>
+        </div>
+        <div class="file-actions-col">
+            ${actionsHtml}
+        </div>
+    `;
+}
+
+function updateFileRowProgressUI(fileId, percent) {
+    const row = document.getElementById(`row_${fileId}`);
+    if (!row) return;
+    const progressFill = row.querySelector(".file-progress-bar-fill");
+    const statusBadge = row.querySelector(".file-status-badge");
+    if (progressFill) progressFill.style.width = `${percent}%`;
+    if (statusBadge) statusBadge.textContent = `↑ ${percent}%`;
+}
+
+function escapeHtml(str) {
+    return String(str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+async function uploadPdfToBackend(file) {
+    if (!file) return null;
+    handleFileSelection([file]);
+    return { ok: true, data: { file_name: file.name } };
+}
+
+async function handleFileSelection(eventOrFiles) {
+    let rawFiles = [];
+    if (eventOrFiles && eventOrFiles.target && eventOrFiles.target.files) {
+        rawFiles = Array.from(eventOrFiles.target.files);
+    } else if (Array.isArray(eventOrFiles)) {
+        rawFiles = eventOrFiles;
+    } else if (eventOrFiles instanceof FileList) {
+        rawFiles = Array.from(eventOrFiles);
+    } else if (eventOrFiles instanceof File) {
+        rawFiles = [eventOrFiles];
+    }
+    if (!rawFiles.length) return;
+
+    const pdfErrorMsg = document.getElementById("pdfErrorMsg");
+    if (pdfErrorMsg) pdfErrorMsg.style.display = "none";
+
+    const allowedExtensions = ["pdf", "png", "jpg", "jpeg", "webp", "doc", "docx", "txt"];
+    let nextSequence = fileQueue.length + 1;
+
+    for (const file of rawFiles) {
+        const ext = (file.name || "").split('.').pop().toLowerCase();
+        if (!allowedExtensions.includes(ext)) {
+            console.warn(`File '${file.name}' rejected: unsupported extension .${ext}`);
+            continue;
+        }
+
+        const fileId = generateFileId(file);
+        if (fileQueue.some(i => i.id === fileId && i.status !== "CANCELED")) {
+            console.log(`File '${file.name}' already exists in upload queue.`);
+            continue;
+        }
+
+        const typeInfo = getFileTypeDetails(file);
+        const item = {
+            id: fileId,
+            file: file,
+            name: file.name,
+            size: file.size,
+            typeCategory: typeInfo.category,
+            typeIcon: typeInfo.icon,
+            status: "WAITING",
+            progress: 0,
+            pages: 1,
+            backendPath: "",
+            xhr: null,
+            error: null,
+            sequence: nextSequence++
+        };
+
+        fileQueue.push(item);
+        renderFileRowUI(item);
+
+        if (ext === "pdf" || file.type === "application/pdf") {
+            countPdfPages(file).then(pages => {
+                item.pages = pages;
+                renderFileRowUI(item);
+                calculateAndUpdateTotalPages();
+                saveUploadStateToLocalStorage();
+            }).catch(err => {
+                item.pages = 1;
+                renderFileRowUI(item);
+            });
+        }
+    }
+
+    updateOverallUploadSummary();
+    processUploadQueue();
 }
 window.handleFileSelection = handleFileSelection;
 
-if (choosePdfBtn && fileInput) {
-    choosePdfBtn.addEventListener("click", function () {
-        fileInput.value = "";
-        fileInput.click();
-    });
+function processUploadQueue() {
+    if (isQueueProcessing) return;
 
-    fileInput.addEventListener("change", handleFileSelection);
-}
+    const nextItem = fileQueue.find(i => i.status === "WAITING");
+    if (!nextItem) {
+        updateOverallUploadSummary();
+        return;
+    }
 
-if (continueBtn) {
-    continueBtn.addEventListener("click", function (e) {
-        if (e && e.preventDefault) e.preventDefault();
-        const savedName = localStorage.getItem("fileName");
-        if (!savedName || savedName === "No File Selected") {
-            if (pdfErrorMsg) pdfErrorMsg.style.display = "block";
-            return;
+    isQueueProcessing = true;
+    nextItem.status = "UPLOADING";
+    nextItem.progress = 0;
+    renderFileRowUI(nextItem);
+    updateOverallUploadSummary();
+
+    const formData = new FormData();
+    formData.append("file", nextItem.file, nextItem.name);
+
+    const xhr = new XMLHttpRequest();
+    nextItem.xhr = xhr;
+
+    xhr.upload.onprogress = function(evt) {
+        if (evt.lengthComputable) {
+            const percent = Math.round((evt.loaded / evt.total) * 100);
+            nextItem.progress = percent;
+            updateFileRowProgressUI(nextItem.id, percent);
+            updateOverallUploadSummary();
         }
-        window.location.href = "print-details.html";
-    });
+    };
+
+    xhr.onload = function() {
+        nextItem.xhr = null;
+        if (xhr.status >= 200 && xhr.status < 300) {
+            try {
+                const res = JSON.parse(xhr.responseText);
+                nextItem.status = "UPLOADED";
+                nextItem.progress = 100;
+                nextItem.backendPath = res.file_path || "";
+                renderFileRowUI(nextItem);
+            } catch(err) {
+                nextItem.status = "FAILED";
+                nextItem.error = "Response error";
+                renderFileRowUI(nextItem);
+            }
+        } else {
+            nextItem.status = "FAILED";
+            nextItem.error = `HTTP ${xhr.status}`;
+            renderFileRowUI(nextItem);
+        }
+        isQueueProcessing = false;
+        updateOverallUploadSummary();
+        processUploadQueue();
+    };
+
+    xhr.onerror = function() {
+        nextItem.xhr = null;
+        nextItem.status = "FAILED";
+        nextItem.error = "Network error";
+        renderFileRowUI(nextItem);
+        isQueueProcessing = false;
+        updateOverallUploadSummary();
+        processUploadQueue();
+    };
+
+    xhr.onabort = function() {
+        nextItem.xhr = null;
+        nextItem.status = "CANCELED";
+        renderFileRowUI(nextItem);
+        isQueueProcessing = false;
+        updateOverallUploadSummary();
+        processUploadQueue();
+    };
+
+    xhr.open("POST", apiUrl("/upload-pdf", "/api/upload-pdf"), true);
+    xhr.send(formData);
 }
+
+function removeFileFromQueue(fileId) {
+    const idx = fileQueue.findIndex(i => i.id === fileId);
+    if (idx === -1) return;
+
+    const item = fileQueue[idx];
+    if (item.xhr) {
+        try { item.xhr.abort(); } catch(e) {}
+    }
+    item.status = "CANCELED";
+
+    fileQueue.splice(idx, 1);
+
+    const row = document.getElementById(`row_${fileId}`);
+    if (row && row.parentNode) {
+        row.parentNode.removeChild(row);
+    }
+
+    updateOverallUploadSummary();
+    processUploadQueue();
+}
+window.removeFileFromQueue = removeFileFromQueue;
+
+function retryFileInQueue(fileId) {
+    const item = fileQueue.find(i => i.id === fileId);
+    if (!item) return;
+
+    item.status = "WAITING";
+    item.progress = 0;
+    item.error = null;
+    renderFileRowUI(item);
+    updateOverallUploadSummary();
+    processUploadQueue();
+}
+window.retryFileInQueue = retryFileInQueue;
+
+function clearAllFilesFromQueue() {
+    fileQueue.forEach(item => {
+        if (item.xhr) {
+            try { item.xhr.abort(); } catch(e) {}
+        }
+    });
+
+    fileQueue = [];
+    const listContainer = document.getElementById("fileQueueList");
+    if (listContainer) listContainer.innerHTML = "";
+
+    updateOverallUploadSummary();
+}
+window.clearAllFilesFromQueue = clearAllFilesFromQueue;
+
+// Attach Upload UI Event Listeners
+document.addEventListener("DOMContentLoaded", function() {
+    const dropzone = document.getElementById("uploadDropzone");
+    const fileInput = document.getElementById("pdfFile");
+    const choosePdfBtn = document.getElementById("choosePdfBtn");
+    const addMoreBtn = document.getElementById("addMoreBtn");
+    const clearAllBtn = document.getElementById("clearAllBtn");
+    const toggleQueueBtn = document.getElementById("toggleQueueBtn");
+    const continueBtn = document.getElementById("continueBtn");
+
+    if (choosePdfBtn && fileInput) {
+        choosePdfBtn.addEventListener("click", function(e) {
+            e.stopPropagation();
+            fileInput.value = "";
+            fileInput.click();
+        });
+    }
+
+    if (addMoreBtn && fileInput) {
+        addMoreBtn.addEventListener("click", function(e) {
+            e.stopPropagation();
+            fileInput.value = "";
+            fileInput.click();
+        });
+    }
+
+    if (fileInput) {
+        fileInput.addEventListener("change", function(e) {
+            handleFileSelection(e);
+        });
+    }
+
+    if (dropzone) {
+        dropzone.addEventListener("click", function(e) {
+            if (e.target.closest("button")) return;
+            if (fileInput) {
+                fileInput.value = "";
+                fileInput.click();
+            }
+        });
+
+        ["dragenter", "dragover"].forEach(evtName => {
+            dropzone.addEventListener(evtName, function(e) {
+                e.preventDefault();
+                e.stopPropagation();
+                dropzone.classList.add("is-dragover");
+            }, false);
+        });
+
+        ["dragleave", "drop"].forEach(evtName => {
+            dropzone.addEventListener(evtName, function(e) {
+                e.preventDefault();
+                e.stopPropagation();
+                dropzone.classList.remove("is-dragover");
+            }, false);
+        });
+
+        dropzone.addEventListener("drop", function(e) {
+            const dt = e.dataTransfer;
+            if (dt && dt.files && dt.files.length) {
+                handleFileSelection(dt.files);
+            }
+        }, false);
+    }
+
+    if (clearAllBtn) {
+        clearAllBtn.addEventListener("click", function(e) {
+            e.stopPropagation();
+            clearAllFilesFromQueue();
+        });
+    }
+
+    if (toggleQueueBtn) {
+        toggleQueueBtn.addEventListener("click", function(e) {
+            e.stopPropagation();
+            const queueList = document.getElementById("fileQueueList");
+            const toggleText = document.getElementById("toggleQueueText");
+            if (queueList) {
+                const isExpanded = queueList.classList.contains("is-expanded");
+                if (isExpanded) {
+                    queueList.classList.remove("is-expanded");
+                    queueList.classList.add("is-collapsed");
+                    if (toggleText) toggleText.textContent = "▴ Details";
+                    toggleQueueBtn.setAttribute("aria-expanded", "false");
+                } else {
+                    queueList.classList.remove("is-collapsed");
+                    queueList.classList.add("is-expanded");
+                    if (toggleText) toggleText.textContent = "▾ Details";
+                    toggleQueueBtn.setAttribute("aria-expanded", "true");
+                }
+            }
+        });
+    }
+
+    if (continueBtn) {
+        continueBtn.addEventListener("click", function(e) {
+            if (e && e.preventDefault) e.preventDefault();
+            const pdfErrorMsg = document.getElementById("pdfErrorMsg");
+            const activeItems = fileQueue.filter(i => i.status !== "CANCELED");
+
+            const savedName = localStorage.getItem("fileName");
+            if (activeItems.length === 0 && (!savedName || savedName === "No File Selected")) {
+                if (pdfErrorMsg) pdfErrorMsg.style.display = "block";
+                return;
+            }
+
+            const isStillUploading = activeItems.some(i => i.status === "UPLOADING" || i.status === "WAITING");
+            if (isStillUploading) {
+                if (pdfErrorMsg) {
+                    pdfErrorMsg.textContent = "⏳ Please wait for files to finish uploading before continuing";
+                    pdfErrorMsg.style.display = "block";
+                }
+                return;
+            }
+
+            window.location.href = "print-details.html";
+        });
+    }
+});
 
 // Centralized Canonical Pricing Rules
 const PRICING = {
