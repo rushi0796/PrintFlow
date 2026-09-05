@@ -146,8 +146,16 @@ class RazorpayOrderRequest(BaseModel):
     copies: Optional[int] = None
     color_mode: Optional[str] = "black_white"
     duplex: Optional[str] = "single"
+    paper_size: Optional[str] = "a4"
+    orientation: Optional[str] = "portrait"
+    scale_mode: Optional[str] = "fit"
+    margins: Optional[str] = "normal"
     print_mode: Optional[str] = "standard"
     pages_per_sheet: Optional[int] = 1
+    page_order: Optional[str] = "horizontal"
+    file_name: Optional[str] = "document.pdf"
+    file_path: Optional[str] = ""
+    customer_mobile: Optional[str] = "Guest"
     order_id: Optional[str] = None
     customer_id: Optional[str] = "CUST_001"
     currency: Optional[str] = "INR"
@@ -245,6 +253,16 @@ def queue_order_for_printing(payload: dict):
             order["status"] = "PRINT_QUEUED"
             order["document_status"] = "UPLOADED"
             order["paid"] = True
+            for k, v in payload.items():
+                if v is not None and k not in ("status", "document_status"):
+                    order[k] = v
+            order.setdefault("scale_mode", "fit")
+            order.setdefault("paper_size", "a4")
+            order.setdefault("orientation", "portrait")
+            order.setdefault("margins", "normal")
+            order.setdefault("print_mode", "standard")
+            order.setdefault("pages_per_sheet", 1)
+            order.setdefault("page_order", "horizontal")
             save_order(order)
             return
     new_queued = {
@@ -400,28 +418,72 @@ def create_razorpay_order_endpoint(request: RazorpayOrderRequest):
             "Accept": "application/json"
         }
         resp = requests.post(rzp_url, auth=HTTPBasicAuth(key_id, key_secret), headers=headers, json=rzp_payload, timeout=10)
+        final_order_id = ""
         if resp.status_code in (200, 201):
             razorpay_order = resp.json()
-            return {
-                "status": "success",
-                "key_id": key_id,
-                "order_id": razorpay_order["id"],
-                "amount": razorpay_order["amount"],
-                "currency": razorpay_order["currency"],
-                "mode": mode_str
-            }
+            final_order_id = razorpay_order["id"]
         else:
-            mock_order_id = f"order_{uuid4().hex[:14]}"
-            return {
-                "status": "success",
-                "key_id": key_id,
-                "order_id": mock_order_id,
-                "amount": amount_in_paise,
-                "currency": request.currency or "INR",
-                "mode": mode_str
-            }
+            final_order_id = f"order_{uuid4().hex[:14]}"
+
+        new_order_entry = {
+            "order_id": final_order_id,
+            "razorpay_order_id": final_order_id,
+            "file_name": request.file_name or "document.pdf",
+            "file_path": request.file_path or "",
+            "copies": request.copies or 1,
+            "pages": request.pages or 1,
+            "color_mode": request.color_mode or "black_white",
+            "duplex": request.duplex or "single",
+            "paper_size": request.paper_size or "a4",
+            "orientation": request.orientation or "portrait",
+            "scale_mode": request.scale_mode or "fit",
+            "margins": request.margins or "normal",
+            "print_mode": request.print_mode or "standard",
+            "pages_per_sheet": request.pages_per_sheet or 1,
+            "page_order": request.page_order or "horizontal",
+            "customer_mobile": request.customer_mobile or "Guest",
+            "amount": amount_in_paise / 100.0,
+            "paid": False,
+            "status": "Pending",
+            "document_status": "UPLOADED",
+            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        }
+        save_order(new_order_entry)
+
+        return {
+            "status": "success",
+            "key_id": key_id,
+            "order_id": final_order_id,
+            "amount": amount_in_paise,
+            "currency": request.currency or "INR",
+            "mode": mode_str
+        }
     except Exception:
         mock_order_id = f"order_{uuid4().hex[:14]}"
+        new_order_entry = {
+            "order_id": mock_order_id,
+            "razorpay_order_id": mock_order_id,
+            "file_name": request.file_name or "document.pdf",
+            "file_path": request.file_path or "",
+            "copies": request.copies or 1,
+            "pages": request.pages or 1,
+            "color_mode": request.color_mode or "black_white",
+            "duplex": request.duplex or "single",
+            "paper_size": request.paper_size or "a4",
+            "orientation": request.orientation or "portrait",
+            "scale_mode": request.scale_mode or "fit",
+            "margins": request.margins or "normal",
+            "print_mode": request.print_mode or "standard",
+            "pages_per_sheet": request.pages_per_sheet or 1,
+            "page_order": request.page_order or "horizontal",
+            "customer_mobile": request.customer_mobile or "Guest",
+            "amount": amount_in_paise / 100.0,
+            "paid": False,
+            "status": "Pending",
+            "document_status": "UPLOADED",
+            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        }
+        save_order(new_order_entry)
         return {
             "status": "success",
             "key_id": key_id,

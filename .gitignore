@@ -5,6 +5,7 @@ api/orders/[order_id]/__pycache__/
 uploads/*.pdf
 !uploads/test.pdf
 orders/orders.json
+orders/*.sqlite3
 .env
 .env*
 .DS_Store
