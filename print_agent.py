@@ -218,6 +218,32 @@ def print_document_silently(
             subprocess.run(cmd, check=True, timeout=25)
             return True
 
+    if ext in (".jpg", ".jpeg", ".png", ".webp", ".bmp"):
+        try:
+            import win32ui
+            from PIL import Image, ImageWin
+            img = Image.open(target_print_file)
+            hdc = win32ui.CreateDC()
+            hdc.CreatePrinterDC(printer_name)
+            printable_width = hdc.GetDeviceCaps(8)
+            printable_height = hdc.GetDeviceCaps(10)
+            for _ in range(copies):
+                hdc.StartDoc(f"PrintFlow - {target_print_file.name}")
+                hdc.StartPage()
+                img_w, img_h = img.size
+                scale = min(printable_width / img_w, printable_height / img_h)
+                new_w = int(img_w * scale)
+                new_h = int(img_h * scale)
+                x = (printable_width - new_w) // 2
+                y = (printable_height - new_h) // 2
+                dib = ImageWin.Dib(img)
+                dib.draw(hdc.GetHandleOutput(), (x, y, x + new_w, y + new_h))
+                hdc.EndPage()
+                hdc.EndDoc()
+            return True
+        except Exception as img_err:
+            print("[AGENT GDI IMAGE PRINT WARNING]:", img_err)
+
     if ext in (".doc", ".docx"):
         try:
             import win32com.client
