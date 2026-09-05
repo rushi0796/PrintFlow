@@ -267,9 +267,9 @@ def verify_agent_token(header_token: Optional[str]):
         raise HTTPException(status_code=401, detail="Unauthorized PrintAgent Token")
 
 def queue_order_for_printing(payload: dict):
-    order_id = payload.get("razorpay_order_id") or payload.get("order_id")
+    order_id = payload.get("print_order_id") or payload.get("razorpay_order_id") or payload.get("order_id")
     if not order_id:
-        return
+        raise HTTPException(status_code=400, detail="Missing PrintFlow order ID for verified payment")
     orders = load_orders()
     for order in orders:
         if order.get("order_id") == order_id or order.get("razorpay_order_id") == order_id:
@@ -287,30 +287,8 @@ def queue_order_for_printing(payload: dict):
             order.setdefault("pages_per_sheet", 1)
             order.setdefault("page_order", "horizontal")
             save_order(order)
-            return
-    new_queued = {
-        "order_id": order_id,
-        "file_name": payload.get("file_name", "document.pdf"),
-        "file_path": payload.get("file_path", "/uploads/test.pdf"),
-        "color_mode": payload.get("color_mode", "black_white"),
-        "copies": int(payload.get("copies", 1)),
-        "pages": int(payload.get("pages", 1)),
-        "duplex": payload.get("duplex", "single"),
-        "paper_size": payload.get("paper_size", "a4"),
-        "orientation": payload.get("orientation", "portrait"),
-        "scale_mode": payload.get("scale_mode", "fit"),
-        "margins": payload.get("margins", "normal"),
-        "print_mode": payload.get("print_mode", "standard"),
-        "pages_per_sheet": int(payload.get("pages_per_sheet", 1)),
-        "page_order": payload.get("page_order", "horizontal"),
-        "customer_mobile": payload.get("customer_mobile", "Guest"),
-        "amount": float(payload.get("amount", 2.0)),
-        "paid": True,
-        "status": "PRINT_QUEUED",
-        "document_status": "UPLOADED",
-        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    }
-    save_order(new_queued)
+            return order
+    raise HTTPException(status_code=404, detail=f"PrintFlow order {order_id} not found")
 
 @app.post("/api/agent/poll")
 def agent_poll_endpoint(req: dict, x_print_agent_token: Optional[str] = Header(None)):
@@ -541,15 +519,13 @@ def verify_razorpay_payment(payload: dict):
     if not hmac.compare_digest(generated_signature, razorpay_signature):
         raise HTTPException(status_code=400, detail="Invalid Razorpay payment signature - payment verification failed")
 
-    try:
-        queue_order_for_printing(payload)
-    except Exception as q_err:
-        print("[QUEUE PRINT JOB EXCEPTION]:", q_err)
+    queued_order = queue_order_for_printing(payload)
 
     return {
         "status": "success",
         "message": "Razorpay Payment verified successfully. Job queued for PrintAgent.",
         "order_status": "PRINT_QUEUED",
+        "order": queued_order,
         "payload": payload
     }
 
