@@ -63,7 +63,8 @@ if UPLOAD_DIR.exists():
 def load_orders():
     try:
         return durable_list_orders()
-    except Exception:
+    except Exception as exc:
+        print(f"[STORAGE LOAD ERROR] {type(exc).__name__}: {exc}")
         return []
 
 def save_orders(orders):
