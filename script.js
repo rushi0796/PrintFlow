@@ -959,26 +959,27 @@ function showPaymentFailedModal(title, description) {
     };
 }
 
+let isPaymentInFlight = false;
+
 if (payBtn) {
     payBtn.addEventListener("click", async function (e) {
         if (e && e.preventDefault) e.preventDefault();
 
-        const amountVal = localStorage.getItem("amount") || "2";
+        if (isPaymentInFlight) return;
 
+        if (typeof Razorpay === "undefined") {
+            showPaymentFailedModal("SDK Error", "Razorpay SDK is loading. Please check your internet connection and try again.");
+            return;
+        }
+
+        isPaymentInFlight = true;
         payBtn.disabled = true;
-        payBtn.textContent = "Processing Payment...";
+        const originalText = payBtn.textContent;
+        payBtn.textContent = "Processing...";
+
+        const tClick = performance.now();
 
         try {
-            const selectedFile = window.selectedPdfFile || await getSavedPdfFile();
-            let uploadedPath = localStorage.getItem("backendFilePath") || "";
-
-            if (selectedFile) {
-                const uploadRes = await uploadPdfToBackend(selectedFile);
-                if (uploadRes && uploadRes.data && uploadRes.data.file_path) {
-                    uploadedPath = uploadRes.data.file_path;
-                }
-            }
-
             const fileNameVal = localStorage.getItem("fileName") || "document.pdf";
             const copiesVal = parseInt(localStorage.getItem("copies") || "1", 10);
             const pageCountVal = parseInt(localStorage.getItem("pdfPageCount") || "1", 10);
@@ -991,149 +992,135 @@ if (payBtn) {
             const printModeVal = localStorage.getItem("printMode") || "standard";
             const pagesPerSheetVal = parseInt(localStorage.getItem("pagesPerSheet") || "1", 10);
             const pageOrderVal = localStorage.getItem("pageOrder") || "horizontal";
+            const amountVal = parseFloat(localStorage.getItem("amount") || "2");
+            const uploadedPath = localStorage.getItem("backendFilePath") || "";
             const rawMobile = localStorage.getItem("mobileNumber") || "9876543210";
             const cleanContact = rawMobile.replace(/\D/g, "").slice(-10) || "9876543210";
 
-            const printResponse = await fetch(apiUrl("/print-order", "/api/print-order"), {
+            const payload = {
+                amount: amountVal,
+                pages: pageCountVal,
+                copies: copiesVal,
+                color_mode: colorModeVal,
+                duplex: printSideVal,
+                paper_size: paperSizeVal,
+                orientation: orientationVal,
+                scale_mode: scaleModeVal,
+                margins: marginsVal,
+                print_mode: printModeVal,
+                pages_per_sheet: pagesPerSheetVal,
+                page_order: pageOrderVal,
+                file_name: fileNameVal,
+                file_path: uploadedPath,
+                customer_mobile: cleanContact
+            };
+
+            const tReqStart = performance.now();
+
+            const orderRes = await fetch(apiUrl("/api/create-razorpay-order", "/api/create-razorpay-order"), {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    file_name: fileNameVal,
-                    copies: copiesVal,
-                    pages: pageCountVal,
-                    color_mode: colorModeVal,
-                    duplex: printSideVal,
-                    paper_size: paperSizeVal,
-                    orientation: orientationVal,
-                    scale_mode: scaleModeVal,
-                    margins: marginsVal,
-                    print_mode: printModeVal,
-                    pages_per_sheet: pagesPerSheetVal,
-                    page_order: pageOrderVal,
-                    customer_mobile: cleanContact,
-                    amount: parseFloat(amountVal),
-                    file_path: uploadedPath
-                })
+                body: JSON.stringify(payload)
             });
-            if (!printResponse.ok) {
-                throw new Error(`Order creation failed with HTTP ${printResponse.status}`);
-            }
-            const printData = await printResponse.json();
-            publishOrderUpdate(printData.order);
 
-            if (printData && printData.order && printData.order.order_id) {
-                localStorage.setItem("lastOrderId", printData.order.order_id);
-            }
+            const tReqEnd = performance.now();
+            console.log(`[PAYMENT PERF] Order creation latency: ${(tReqEnd - tReqStart).toFixed(1)}ms (Total since click: ${(tReqEnd - tClick).toFixed(1)}ms)`);
 
-            const orderRes = await fetchWithRetry(apiUrl("/api/create-order", "/api/create-order"), {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    amount: parseFloat(amountVal),
-                    pages: pageCountVal,
-                    copies: copiesVal,
-                    color_mode: colorModeVal,
-                    duplex: printSideVal,
-                    print_mode: printModeVal,
-                    pages_per_sheet: pagesPerSheetVal,
-                    order_id: `PF_ORDER_${Date.now()}`
-                })
-            });
-            const resText = await orderRes.text();
-            let orderData;
-            try {
-                orderData = JSON.parse(resText);
-            } catch (pErr) {
-                throw new Error(`API server returned invalid response (HTTP ${orderRes.status}). Please ensure backend server is running.`);
+            if (!orderRes.ok) {
+                const errText = await orderRes.text();
+                throw new Error(`Server returned HTTP ${orderRes.status}`);
             }
 
-            if (!orderRes.ok || !orderData || orderData.status === "error") {
-                const detail = (orderData && orderData.detail) ? orderData.detail : `HTTP ${orderRes.status}`;
-                throw new Error(`Order creation failed: ${detail}`);
+            const orderData = await orderRes.json();
+            if (!orderData || orderData.status === "error" || !orderData.order_id) {
+                throw new Error(orderData?.detail || "Invalid Razorpay order payload");
             }
 
-            if (typeof Razorpay !== "undefined") {
-                const options = {
-                    "key": orderData.key_id,
-                    "amount": Math.round(Number(orderData.amount)),
-                    "currency": orderData.currency || "INR",
-                    "name": "PrintFlow",
-                    "description": `Print Order Payment - ${fileNameVal}`,
-                    "order_id": orderData.order_id,
-                    "prefill": {
-                        "contact": cleanContact,
-                        "email": "customer@printflow.in"
-                    },
-                    "handler": async function (response) {
-                        try {
-                            const verifyRes = await fetchWithRetry(apiUrl("/api/verify-payment", "/api/verify-payment"), {
-                                method: "POST",
-                                headers: { "Content-Type": "application/json" },
-                                body: JSON.stringify(response)
-                            });
-                            const vText = await verifyRes.text();
-                            let verifyData;
-                            try {
-                                verifyData = JSON.parse(vText);
-                            } catch (vPErr) {
-                                throw new Error("Payment verification server response was invalid.");
-                            }
+            if (orderData.order_id) {
+                localStorage.setItem("lastOrderId", orderData.order_id);
+                localStorage.setItem("razorpayOrderId", orderData.order_id);
+            }
 
-                            if ((verifyRes.ok && verifyData && verifyData.status === "success") || (response && response.razorpay_payment_id)) {
-                                window.location.href = "success.html";
-                            } else {
-                                const vDetail = (verifyData && verifyData.detail) ? verifyData.detail : "Payment signature verification failed.";
-                                showPaymentFailedModal("Verification Failed", vDetail);
-                                payBtn.disabled = false;
-                                payBtn.textContent = "Pay with Razorpay";
-                            }
-                        } catch (vErr) {
-                            if (response && response.razorpay_payment_id) {
-                                window.location.href = "success.html";
-                            } else {
-                                showPaymentFailedModal("Verification Error", vErr.message || "Payment verification error occurred.");
-                                payBtn.disabled = false;
-                                payBtn.textContent = "Pay with Razorpay";
-                            }
-                        }
-                    },
-                    "theme": {
-                        "color": "#ea580c"
-                    },
-                    "modal": {
-                        "escape": true,
-                        "backdropclose": false,
-                        "ondismiss": function() {
+            const options = {
+                "key": orderData.key_id,
+                "amount": Math.round(Number(orderData.amount)),
+                "currency": orderData.currency || "INR",
+                "name": "PrintFlow",
+                "description": `Print Order - ${fileNameVal.substring(0, 30)}`,
+                "order_id": orderData.order_id,
+                "prefill": {
+                    "contact": cleanContact,
+                    "email": "customer@printflow.in"
+                },
+                "handler": async function (response) {
+                    try {
+                        const fullVerificationPayload = {
+                            ...payload,
+                            ...response,
+                            razorpay_order_id: response.razorpay_order_id || orderData.order_id
+                        };
+
+                        const verifyRes = await fetch(apiUrl("/api/verify-payment", "/api/verify-payment"), {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify(fullVerificationPayload)
+                        });
+
+                        if (verifyRes.ok) {
+                            window.location.href = "success.html";
+                        } else {
+                            const verifyData = await verifyRes.json().catch(() => ({}));
+                            showPaymentFailedModal("Verification Error", verifyData.detail || "Payment verification failed.");
+                            isPaymentInFlight = false;
                             payBtn.disabled = false;
-                            payBtn.textContent = "Pay with Razorpay";
+                            payBtn.textContent = originalText;
+                        }
+                    } catch (vErr) {
+                        if (response && response.razorpay_payment_id) {
+                            window.location.href = "success.html";
+                        } else {
+                            showPaymentFailedModal("Verification Error", vErr.message || "Payment verification error occurred.");
+                            isPaymentInFlight = false;
+                            payBtn.disabled = false;
+                            payBtn.textContent = originalText;
                         }
                     }
-                };
-
-                const rzp = new Razorpay(options);
-                rzp.on("payment.failed", function (response) {
-                    const errorDesc = response.error.description || "Your payment didn't go through due to a temporary issue. Any debited amount will be refunded in 4-5 business days.";
-                    showPaymentFailedModal("Payment Failed", errorDesc);
-                    payBtn.disabled = false;
-                    payBtn.textContent = "Pay with Razorpay";
-                });
-                rzp.open();
-
-                setTimeout(() => {
-                    if (payBtn) {
+                },
+                "theme": {
+                    "color": "#ea580c"
+                },
+                "modal": {
+                    "escape": true,
+                    "backdropclose": false,
+                    "ondismiss": function() {
+                        isPaymentInFlight = false;
                         payBtn.disabled = false;
-                        payBtn.textContent = "Pay with Razorpay";
+                        payBtn.textContent = originalText;
                     }
-                }, 1500);
-            } else {
-                showPaymentFailedModal("SDK Error", "Razorpay SDK failed to load. Please check your internet connection.");
+                }
+            };
+
+            const rzp = new Razorpay(options);
+            rzp.on("payment.failed", function (response) {
+                const errorDesc = response?.error?.description || "Payment failed or cancelled.";
+                showPaymentFailedModal("Payment Failed", errorDesc);
+                isPaymentInFlight = false;
                 payBtn.disabled = false;
-                payBtn.textContent = "Pay with Razorpay";
-            }
+                payBtn.textContent = originalText;
+            });
+
+            const tOpen = performance.now();
+            console.log(`[PAYMENT PERF] Razorpay checkout.open() invoked at ${(tOpen - tClick).toFixed(1)}ms total`);
+
+            rzp.open();
+            isPaymentInFlight = false;
+
         } catch (err) {
-            showPaymentFailedModal("Order Error", "Order creation failed: " + (err.message || "Please try again."));
+            console.error("[PAYMENT ERROR]:", err);
+            showPaymentFailedModal("Payment Error", "Unable to start payment: " + (err.message || "Please try again."));
+            isPaymentInFlight = false;
             payBtn.disabled = false;
-            payBtn.textContent = "Pay with Razorpay";
+            payBtn.textContent = originalText;
         }
     });
 }
