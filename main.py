@@ -575,10 +575,19 @@ def download_document(document_id: str, x_print_agent_token: Optional[str] = Hea
     document = get_document(document_id)
     if not document:
         raise HTTPException(status_code=404, detail="Document not found")
+
+    import urllib.parse
+    raw_name = Path(document.get("file_name", "document.pdf")).name
+    ascii_name = raw_name.encode("ascii", "ignore").decode("ascii").strip()
+    if not ascii_name or ascii_name.startswith("."):
+        ascii_name = f"document{Path(raw_name).suffix or '.pdf'}"
+    encoded_name = urllib.parse.quote(raw_name)
+    content_disposition = f'inline; filename="{ascii_name}"; filename*=UTF-8\'\'{encoded_name}'
+
     return Response(
         content=document["content"],
-        media_type=document["mime_type"],
-        headers={"Content-Disposition": f'inline; filename="{Path(document["file_name"]).name}"'}
+        media_type=document.get("mime_type", "application/octet-stream"),
+        headers={"Content-Disposition": content_disposition}
     )
 
 @app.post("/api/orders/{order_id}/retry")

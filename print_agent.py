@@ -86,8 +86,11 @@ def select_target_printer(color_mode: str, config: dict, installed_printers: lis
     return target
 
 def download_file(backend_url: str, file_rel_path: str, agent_token: str = "", original_file_name: str = "") -> Path:
-    filename = Path(original_file_name or Path(file_rel_path).name).name
-    target_path = TEMP_DOWNLOAD_DIR / filename
+    raw_filename = Path(original_file_name or Path(file_rel_path).name).name
+    clean_name = "".join(c for c in raw_filename if c.isalnum() or c in "._- ")
+    if not clean_name.strip() or clean_name.startswith("."):
+        clean_name = f"doc_{Path(file_rel_path).name}{Path(raw_filename).suffix or '.pdf'}"
+    target_path = TEMP_DOWNLOAD_DIR / clean_name
     full_url = f"{backend_url.rstrip('/')}{file_rel_path if file_rel_path.startswith('/') else '/' + file_rel_path}"
 
     req = urllib.request.Request(full_url, headers={"User-Agent": "PrintFlowAgent/1.0", "X-Print-Agent-Token": agent_token})
@@ -353,6 +356,12 @@ def run_agent():
                         if claim_res.get("status") != "success":
                             print(f"[AGENT CLAIM REJECTED] Order {order_id} already claimed by another worker.")
                             continue
+                except urllib.error.HTTPError as http_err:
+                    if http_err.code == 409:
+                        print(f"[AGENT CLAIM REJECTED] Order {order_id} already claimed by another worker.")
+                        continue
+                    print(f"[AGENT CLAIM ERROR] Skipping order {order_id}:", http_err)
+                    continue
                 except Exception as claim_err:
                     print(f"[AGENT CLAIM ERROR] Skipping order {order_id}:", claim_err)
                     continue
