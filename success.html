@@ -4,397 +4,112 @@
     <script src="auth_guard.js"></script>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Print Receipt - PrintFlow</title>
+    <title>Print Successful — PrintFlow</title>
     <link rel="stylesheet" href="style.css">
-    <style>
-        body {
-            background-color: #f8fafc;
-            margin: 0;
-            padding: 0;
-            min-height: 100vh;
-            font-family: system-ui, -apple-system, sans-serif;
-        }
-
-        .receipt-page-container {
-            max-width: 480px;
-            margin: 0 auto;
-            padding: 20px 16px;
-            text-align: center;
-        }
-
-        /* METALLIC PRINTER HOOD */
-        .machine-unit {
-            position: relative;
-            z-index: 20;
-            background: linear-gradient(180deg, #1e293b 0%, #0f172a 100%);
-            border-radius: 20px;
-            padding: 20px;
-            box-shadow: 0 16px 36px rgba(15, 23, 42, 0.35), inset 0 2px 1px rgba(255, 255, 255, 0.2);
-            border: 1.5px solid #334155;
-        }
-
-        .machine-brand-header {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            color: #f8fafc;
-        }
-
-        .brand-title {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            font-size: 18px;
-            font-weight: 900;
-            letter-spacing: 1.5px;
-            color: #ea580c;
-        }
-
-        .status-led-pill {
-            display: flex;
-            align-items: center;
-            gap: 6px;
-            background: #020617;
-            padding: 4px 10px;
-            border-radius: 20px;
-            font-size: 11px;
-            font-weight: 700;
-            color: #cbd5e1;
-            border: 1px solid #1e293b;
-        }
-
-        .led-dot {
-            width: 8px;
-            height: 8px;
-            border-radius: 50%;
-            background: #eab308;
-            box-shadow: 0 0 8px #eab308;
-        }
-
-        .led-dot.online {
-            background: #22c55e;
-            box-shadow: 0 0 8px #22c55e;
-        }
-
-        .led-dot.failed {
-            background: #ef4444;
-            box-shadow: 0 0 8px #ef4444;
-        }
-
-        .machine-slot-slit {
-            height: 12px;
-            background: #020617;
-            border-radius: 6px;
-            margin-top: 14px;
-            box-shadow: inset 0 4px 8px rgba(0, 0, 0, 0.9);
-            border: 1px solid #1e293b;
-        }
-
-        /* RECEIPT PAPER VIEWPORT */
-        .paper-viewport {
-            position: relative;
-            z-index: 10;
-            overflow: hidden;
-            margin-top: -6px;
-            padding: 0 10px 20px;
-        }
-
-        .receipt-paper-wrapper {
-            background: #ffffff;
-            border-radius: 0 0 4px 4px;
-            box-shadow: 0 16px 32px rgba(0, 0, 0, 0.14), 0 3px 8px rgba(0, 0, 0, 0.08);
-            transform: translateY(-80%);
-            opacity: 0.2;
-            transition: transform 1.2s cubic-bezier(0.25, 1, 0.5, 1), opacity 0.6s ease;
-            position: relative;
-            max-width: 380px;
-            margin: 0 auto;
-            border-left: 1px dashed #cbd5e1;
-            border-right: 1px dashed #cbd5e1;
-        }
-
-        .receipt-paper-wrapper.emerging {
-            transform: translateY(-25%);
-            opacity: 0.9;
-        }
-
-        .receipt-paper-wrapper.settled {
-            transform: translateY(0);
-            opacity: 1;
-        }
-
-        .receipt-content {
-            padding: 24px 20px 18px;
-            font-family: 'Courier New', Courier, monospace;
-            color: #0f172a;
-            text-align: left;
-        }
-
-        .receipt-header {
-            text-align: center;
-            border-bottom: 2px dashed #0f172a;
-            padding-bottom: 12px;
-            margin-bottom: 14px;
-        }
-
-        .receipt-header h2 {
-            margin: 0;
-            font-size: 22px;
-            font-weight: 900;
-            letter-spacing: 3px;
-            color: #0f172a;
-        }
-
-        .receipt-header p {
-            margin: 4px 0 0;
-            font-size: 11px;
-            font-weight: 700;
-            color: #475569;
-            letter-spacing: 1px;
-        }
-
-        .receipt-row {
-            display: flex;
-            justify-content: space-between;
-            margin-bottom: 8px;
-            font-size: 13px;
-        }
-
-        .receipt-label {
-            color: #475569;
-            font-weight: 600;
-        }
-
-        .receipt-value {
-            font-weight: 800;
-            color: #0f172a;
-            text-align: right;
-            max-width: 200px;
-            overflow-wrap: anywhere;
-        }
-
-        .receipt-divider {
-            border-top: 1px dashed #94a3b8;
-            margin: 12px 0;
-        }
-
-        .receipt-amount-section {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 10px 0;
-            border-top: 2px dashed #0f172a;
-            border-bottom: 2px dashed #0f172a;
-            margin: 14px 0;
-        }
-
-        .receipt-amount-title {
-            font-size: 14px;
-            font-weight: 900;
-        }
-
-        .receipt-amount-value {
-            font-size: 20px;
-            font-weight: 900;
-            color: #ea580c;
-        }
-
-        .receipt-status-badge {
-            display: inline-block;
-            padding: 4px 10px;
-            border-radius: 4px;
-            font-size: 11px;
-            font-weight: 800;
-            text-transform: uppercase;
-            letter-spacing: 1px;
-        }
-
-        .status-preparing { background: #fef3c7; color: #d97706; }
-        .status-printing { background: #fed7aa; color: #c2410c; }
-        .status-completed { background: #dcfce7; color: #16a34a; }
-        .status-failed { background: #fee2e2; color: #dc2626; }
-
-        .serrated-edge {
-            height: 14px;
-            background-image: linear-gradient(135deg, #ffffff 50%, transparent 50%), linear-gradient(45deg, #ffffff 50%, transparent 50%);
-            background-position: top left;
-            background-repeat: repeat-x;
-            background-size: 14px 14px;
-            margin-top: -1px;
-        }
-
-        .headline-card {
-            margin-top: 12px;
-            padding: 16px;
-            background: #ffffff;
-            border-radius: 14px;
-            box-shadow: 0 4px 14px rgba(0, 0, 0, 0.05);
-            border: 1px solid #e2e8f0;
-        }
-
-        .status-headline {
-            margin: 0 0 6px;
-            font-size: 20px;
-            font-weight: 800;
-            color: #0f172a;
-        }
-
-        .status-subtext {
-            font-size: 13px;
-            color: #475569;
-            margin: 0;
-        }
-
-        .action-button-row {
-            display: flex;
-            gap: 12px;
-            margin-top: 16px;
-        }
-
-        .action-button-row button {
-            flex: 1;
-            padding: 12px;
-            border-radius: 10px;
-            font-weight: 700;
-            font-size: 14px;
-            cursor: pointer;
-        }
-
-        .privacy-toast {
-            margin-top: 14px;
-            padding: 10px 14px;
-            background: #f0fdf4;
-            border: 1px solid #bbf7d0;
-            border-radius: 10px;
-            color: #15803d;
-            font-size: 12px;
-            font-weight: 700;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 6px;
-        }
-    </style>
+    <link rel="stylesheet" href="print-success.css">
 </head>
 <body>
 
-<div class="receipt-page-container">
+  <main class="success-page" id="successPage">
 
-    <div class="brand-header">
-        <div class="brand-logo-wrapper">
-            <img src="logo.png" alt="PrintFlow Logo" class="brand-logo-img">
+    <!-- PRINTFLOW BRAND -->
+    <header class="success-header">
+      <div class="brand">
+        <div class="brand-logo-wrap">
+          <img src="logo.png" alt="PrintFlow" class="brand-logo">
         </div>
-    </div>
+        <div class="brand-name">
+          <span class="brand-print">Print</span><span class="brand-flow">Flow</span>
+        </div>
+      </div>
+    </header>
 
-    <!-- METALLIC PRINTER UNIT -->
-    <div class="machine-unit">
-        <div class="machine-brand-header">
-            <div class="brand-title"><img src="logo.png" style="height: 22px; width: auto; vertical-align: middle; margin-right: 6px;" alt="PF"> PRINTFLOW</div>
-            <div class="status-led-pill">
-                <span id="ledDot" class="led-dot"></span>
-                <span id="agentStateText">ONLINE</span>
+    <!-- RECEIPT PRINTER -->
+    <section class="printer-scene" id="printerScene">
+
+      <div class="receipt-printer" id="receiptPrinter" aria-label="PrintFlow receipt printer">
+
+        <!-- TOP -->
+        <div class="printer-top">
+          <div class="printer-top-light"></div>
+          <div class="printer-top-panel">
+            <span class="printer-status-dot" id="printerStatusDot"></span>
+            <span id="printerStatusText">PRINTFLOW</span>
+          </div>
+        </div>
+
+        <!-- MAIN PRINTER BODY -->
+        <div class="printer-body">
+          <div class="printer-brand">PRINTFLOW</div>
+
+          <!-- PRINTER SLOT -->
+          <div class="printer-slot">
+            <div class="receipt-paper" id="receiptPaper">
+              <div class="receipt-content" id="receiptContent">
+                <div class="receipt-title">PRINTFLOW</div>
+                <div class="receipt-subtitle">DIGITAL PRINTING SERVICE</div>
+                <div class="receipt-line"></div>
+
+                <div class="receipt-success">
+                  <span class="success-symbol">✓</span>
+                  <span>PRINT SUCCESSFUL</span>
+                </div>
+
+                <div class="receipt-line"></div>
+
+                <div class="receipt-data">
+                  <div class="receipt-row">
+                    <span>Order</span>
+                    <strong id="receiptOrder">—</strong>
+                  </div>
+                  <div class="receipt-row">
+                    <span>Files</span>
+                    <strong id="receiptFiles">—</strong>
+                  </div>
+                  <div class="receipt-row">
+                    <span>Pages</span>
+                    <strong id="receiptPages">—</strong>
+                  </div>
+                  <div class="receipt-row">
+                    <span>Copies</span>
+                    <strong id="receiptCopies">—</strong>
+                  </div>
+                </div>
+
+                <div class="receipt-line"></div>
+
+                <div class="receipt-thank-you">THANK YOU!</div>
+                <p class="receipt-message">Thank you for using PrintFlow.</p>
+                <p class="receipt-message">Your documents have been successfully printed.</p>
+                <div class="receipt-line"></div>
+                <div class="receipt-footer">PRINT • FLOW • PRINT</div>
+              </div>
             </div>
+          </div>
+
+          <!-- CUTTER -->
+          <div class="printer-cutter" id="printerCutter">
+            <div class="cutter-blade"></div>
+          </div>
         </div>
-        <div class="machine-slot-slit"></div>
-    </div>
 
-    <!-- RECEIPT PAPER VIEWPORT -->
-    <div class="paper-viewport">
-        <div id="receiptPaper" class="receipt-paper-wrapper">
-            <div class="receipt-content">
-                <div class="receipt-header">
-                    <h2>PRINTFLOW</h2>
-                    <p>SMART XEROX PRINT RECEIPT</p>
-                </div>
-
-                <div class="receipt-row">
-                    <span class="receipt-label">Order Reference:</span>
-                    <span id="rcptOrderId" class="receipt-value">PF-XXXXXX</span>
-                </div>
-
-                <div class="receipt-row">
-                    <span class="receipt-label">Document:</span>
-                    <span id="rcptFileName" class="receipt-value">document.pdf</span>
-                </div>
-
-                <div class="receipt-row">
-                    <span class="receipt-label">Pages:</span>
-                    <span id="rcptPages" class="receipt-value">1</span>
-                </div>
-
-                <div class="receipt-row">
-                    <span class="receipt-label">Copies:</span>
-                    <span id="rcptCopies" class="receipt-value">1</span>
-                </div>
-
-                <div class="receipt-row">
-                    <span class="receipt-label">Print Mode:</span>
-                    <span id="rcptPrintMode" class="receipt-value">Standard</span>
-                </div>
-
-                <div class="receipt-row">
-                    <span class="receipt-label">Color Mode:</span>
-                    <span id="rcptColorMode" class="receipt-value">Black & White</span>
-                </div>
-
-                <div class="receipt-row">
-                    <span class="receipt-label">Sides:</span>
-                    <span id="rcptSides" class="receipt-value">Single Side</span>
-                </div>
-
-                <div class="receipt-row">
-                    <span class="receipt-label">Paper Size:</span>
-                    <span id="rcptPaperSize" class="receipt-value">A4</span>
-                </div>
-
-                <div class="receipt-row">
-                    <span class="receipt-label">Orientation:</span>
-                    <span id="rcptOrientation" class="receipt-value">Portrait</span>
-                </div>
-
-                <div class="receipt-divider"></div>
-
-                <div class="receipt-row">
-                    <span class="receipt-label">Payment Status:</span>
-                    <span id="rcptPaymentStatus" class="receipt-value" style="color:#16a34a;">PAID ✓</span>
-                </div>
-
-                <div class="receipt-amount-section">
-                    <span class="receipt-amount-title">TOTAL AMOUNT</span>
-                    <span id="rcptAmount" class="receipt-amount-value">₹2.00</span>
-                </div>
-
-                <div style="text-align: center; margin-top: 10px;">
-                    <span id="rcptStatusBadge" class="receipt-status-badge status-preparing">PRINT_QUEUED</span>
-                </div>
-            </div>
-            <div class="serrated-edge"></div>
+        <!-- PRINTER BOTTOM -->
+        <div class="printer-bottom">
+          <div class="printer-foot left"></div>
+          <div class="printer-foot right"></div>
         </div>
-    </div>
+      </div>
 
-    <!-- STATUS HEADLINE CARD -->
-    <div class="headline-card">
-        <h3 id="statusHeadline" class="status-headline">Preparing your print...</h3>
-        <p id="statusSubtext" class="status-subtext">Your payment has been received. Queueing document for physical printer.</p>
-    </div>
+      <!-- SUCCESS MESSAGE -->
+      <div class="final-success" id="finalSuccess" aria-hidden="true">
+        <div class="final-success-icon">✓</div>
+        <h1>Print Successful</h1>
+        <p>Thank You for using PrintFlow</p>
+      </div>
 
-    <!-- PRIVACY BADGE -->
-    <div id="privacyToast" class="privacy-toast" style="display: none;">
-        🔒 <span>Your documents are automatically deleted 2-3 seconds after printing.</span>
-    </div>
+    </section>
 
-    <!-- 60-SECOND AUTO LOGOUT BANNER -->
-    <div id="autoLogoutBanner" style="display: flex; align-items: center; justify-content: center; gap: 8px; margin-top: 12px; padding: 10px 14px; background: #fff7ed; border: 1.5px solid #fed7aa; border-radius: 12px; color: #c2410c; font-size: 13px; font-weight: 700;">
-        ⏱️ <span id="autoLogoutTimerText">Automatic security logout in 60s...</span>
-    </div>
-
-    <!-- ACTION BUTTONS -->
-    <div class="action-button-row">
-        <button type="button" id="retryBtn" class="secondary-btn" style="display: none;" onclick="retryPrintJob()">Retry Print</button>
-        <button type="button" id="homeBtn" class="primary-btn" onclick="clearSessionAndReturnHome()">Back to Home</button>
-    </div>
-
-    <footer class="app-footer">
+    <footer class="app-footer" style="margin-top: 40px;">
         <div class="footer-links">
             <a href="privacy-policy.html" class="footer-link">Privacy Policy</a>
             <span class="footer-divider">|</span>
@@ -409,16 +124,15 @@
         </div>
     </footer>
 
-</div>
+  </main>
 
-<script src="script.js"></script>
-<script>
+  <script src="script.js"></script>
+  <script>
     document.addEventListener("DOMContentLoaded", function() {
         if (window.initSuccessReceiptPage) {
             window.initSuccessReceiptPage();
         }
     });
-</script>
-
+  </script>
 </body>
 </html>

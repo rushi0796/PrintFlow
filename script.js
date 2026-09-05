@@ -1500,53 +1500,64 @@ window.clearUserDocumentSession = clearUserDocumentSession;
 
 let successPollingInterval = null;
 
+async function logoutAfterPrint() {
+    try {
+        await fetch(apiUrl("/api/logout", "/api/logout"), {
+            method: "POST",
+            headers: getAuthHeaders()
+        });
+    } catch (err) {
+        console.error("PrintFlow logout request error:", err);
+    }
+
+    try {
+        clearUserDocumentSession();
+        localStorage.removeItem("mobileNumber");
+        localStorage.removeItem("loggedIn");
+        localStorage.removeItem("isAuthenticated");
+        localStorage.removeItem("user");
+        sessionStorage.clear();
+    } catch (err) {
+        console.warn("Client session cleanup warning:", err);
+    }
+
+    window.location.replace("login.html?logout=true");
+}
+window.logoutAfterPrint = logoutAfterPrint;
+
 function initSuccessReceiptPage() {
+    const printer = document.getElementById("receiptPrinter");
     const rcptPaper = document.getElementById("receiptPaper");
-    const rcptOrderId = document.getElementById("rcptOrderId");
-    const rcptFileName = document.getElementById("rcptFileName");
-    const rcptPages = document.getElementById("rcptPages");
-    const rcptCopies = document.getElementById("rcptCopies");
-    const rcptPrintMode = document.getElementById("rcptPrintMode");
-    const rcptColorMode = document.getElementById("rcptColorMode");
-    const rcptSides = document.getElementById("rcptSides");
-    const rcptPaperSize = document.getElementById("rcptPaperSize");
-    const rcptOrientation = document.getElementById("rcptOrientation");
-    const rcptAmount = document.getElementById("rcptAmount");
-    const rcptStatusBadge = document.getElementById("rcptStatusBadge");
-    const statusHeadline = document.getElementById("statusHeadline");
-    const statusSubtext = document.getElementById("statusSubtext");
-    const ledDot = document.getElementById("ledDot");
-    const agentStateText = document.getElementById("agentStateText");
-    const privacyToast = document.getElementById("privacyToast");
-    const retryBtn = document.getElementById("retryBtn");
+    const receiptOrder = document.getElementById("receiptOrder");
+    const receiptFiles = document.getElementById("receiptFiles");
+    const receiptPages = document.getElementById("receiptPages");
+    const receiptCopies = document.getElementById("receiptCopies");
+    const printerStatusDot = document.getElementById("printerStatusDot");
+    const printerStatusText = document.getElementById("printerStatusText");
+    const finalSuccess = document.getElementById("finalSuccess");
 
-    if (!rcptOrderId && !rcptPaper) return;
+    if (!printer && !rcptPaper && !receiptOrder) return;
 
-    const orderId = localStorage.getItem("lastOrderId") || localStorage.getItem("razorpayOrderId") || `PF-${Math.floor(100000 + Math.random() * 900000)}`;
+    const params = new URLSearchParams(window.location.search);
+    const orderId = params.get("order_id") || localStorage.getItem("lastOrderId") || localStorage.getItem("razorpayOrderId") || `PF-${Math.floor(100000 + Math.random() * 900000)}`;
     const fileName = localStorage.getItem("fileName") || "document.pdf";
     const pages = localStorage.getItem("pdfPageCount") || "1";
     const copies = localStorage.getItem("copies") || "1";
-    const printMode = localStorage.getItem("printMode") === "micro_xerox" ? "Micro Xerox" : "Standard";
-    const colorMode = localStorage.getItem("colorMode") === "color" ? "Color Print 🎨" : "Black & White";
-    const sides = localStorage.getItem("printSide") === "double" ? "Double Side" : "Single Side";
-    const paperSize = (localStorage.getItem("paperSize") || "a4").toUpperCase();
-    const orientation = (localStorage.getItem("orientation") || "portrait").toUpperCase();
-    const amount = localStorage.getItem("amount") || "2.00";
 
-    if (rcptOrderId) rcptOrderId.textContent = orderId;
-    if (rcptFileName) rcptFileName.textContent = fileName;
-    if (rcptPages) rcptPages.textContent = pages;
-    if (rcptCopies) rcptCopies.textContent = copies;
-    if (rcptPrintMode) rcptPrintMode.textContent = printMode;
-    if (rcptColorMode) rcptColorMode.textContent = colorMode;
-    if (rcptSides) rcptSides.textContent = sides;
-    if (rcptPaperSize) rcptPaperSize.textContent = paperSize;
-    if (rcptOrientation) rcptOrientation.textContent = orientation;
-    if (rcptAmount) rcptAmount.textContent = `₹${amount}`;
-
-    if (rcptPaper) {
-        setTimeout(() => rcptPaper.classList.add("emerging"), 150);
+    let selectedFiles = [];
+    try {
+        selectedFiles = JSON.parse(localStorage.getItem("printflowUploadedFiles") || "[]");
+    } catch (e) {
+        selectedFiles = [];
     }
+    const fileCount = selectedFiles.length > 0 ? selectedFiles.length : 1;
+
+    if (receiptOrder) receiptOrder.textContent = orderId;
+    if (receiptFiles) receiptFiles.textContent = fileCount;
+    if (receiptPages) receiptPages.textContent = pages;
+    if (receiptCopies) receiptCopies.textContent = copies;
+
+    let hasTriggeredCompletedSequence = false;
 
     async function pollStatus() {
         try {
@@ -1554,9 +1565,9 @@ function initSuccessReceiptPage() {
                 headers: getAuthHeaders()
             });
 
-            if (res.status === 403 || res.status === 404) {
+            if (res.status === 401 || res.status === 403 || res.status === 404) {
                 if (successPollingInterval) clearInterval(successPollingInterval);
-                const container = document.querySelector(".receipt-page-container") || document.body;
+                const container = document.getElementById("successPage") || document.body;
                 container.innerHTML = `
                     <div class="card" style="text-align:center; padding:30px; margin: 40px auto; max-width: 480px; background: white; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.1);">
                         <div style="font-size: 48px; margin-bottom: 16px;">🔒</div>
@@ -1572,39 +1583,34 @@ function initSuccessReceiptPage() {
             if (data && data.status === "success") {
                 const orderState = data.order_status || "PRINT_QUEUED";
 
-                if (rcptStatusBadge) {
-                    rcptStatusBadge.textContent = orderState;
-                    rcptStatusBadge.className = `receipt-status-badge status-${orderState.toLowerCase()}`;
-                }
+                if (printerStatusText) printerStatusText.textContent = orderState;
 
                 if (orderState === "PRINT_QUEUED") {
-                    if (statusHeadline) statusHeadline.textContent = "Preparing your print...";
-                    if (statusSubtext) statusSubtext.textContent = "Your payment has been received. Queueing document for physical printer.";
-                    if (ledDot) ledDot.className = "led-dot";
-                    if (agentStateText) agentStateText.textContent = "QUEUED";
+                    if (printerStatusDot) printerStatusDot.style.background = "#eab308";
                 } else if (orderState === "PRINTING") {
-                    if (statusHeadline) statusHeadline.textContent = "Printing your document...";
-                    if (statusSubtext) statusSubtext.textContent = "The physical printer is actively printing your file.";
-                    if (ledDot) ledDot.className = "led-dot";
-                    if (agentStateText) agentStateText.textContent = "PRINTING";
-                    if (rcptPaper) rcptPaper.classList.add("emerging");
-                } else if (orderState === "COMPLETED") {
-                    if (statusHeadline) statusHeadline.textContent = "Print Successful! 🎉";
-                    if (statusSubtext) statusSubtext.textContent = "Your document has been printed successfully.";
-                    if (ledDot) ledDot.className = "led-dot online";
-                    if (agentStateText) agentStateText.textContent = "COMPLETED";
-                    if (rcptPaper) {
-                        rcptPaper.classList.remove("emerging");
-                        rcptPaper.classList.add("settled");
-                    }
-                    if (privacyToast) privacyToast.style.display = "flex";
+                    if (printerStatusDot) printerStatusDot.style.background = "#ea580c";
+                } else if (orderState === "COMPLETED" || orderState === "PRINTED") {
+                    if (printerStatusDot) printerStatusDot.style.background = "#22c55e";
                     if (successPollingInterval) clearInterval(successPollingInterval);
+
+                    if (!hasTriggeredCompletedSequence) {
+                        hasTriggeredCompletedSequence = true;
+                        if (printer) {
+                            printer.classList.remove("receipt-animation-started");
+                            void printer.offsetWidth;
+                            printer.classList.add("receipt-animation-started");
+                        }
+                        if (finalSuccess) {
+                            finalSuccess.classList.add("receipt-animation-started");
+                        }
+
+                        // Logout and redirect after cut-to-cut receipt sequence finishes (5.7s)
+                        setTimeout(async () => {
+                            await logoutAfterPrint();
+                        }, 5700);
+                    }
                 } else if (orderState === "FAILED") {
-                    if (statusHeadline) statusHeadline.textContent = "Printing Failed";
-                    if (statusSubtext) statusSubtext.textContent = "We couldn't complete your print job on the physical printer.";
-                    if (ledDot) ledDot.className = "led-dot failed";
-                    if (agentStateText) agentStateText.textContent = "FAILED";
-                    if (retryBtn) retryBtn.style.display = "inline-block";
+                    if (printerStatusDot) printerStatusDot.style.background = "#ef4444";
                     if (successPollingInterval) clearInterval(successPollingInterval);
                 }
             }
@@ -1616,25 +1622,6 @@ function initSuccessReceiptPage() {
     pollStatus();
     if (successPollingInterval) clearInterval(successPollingInterval);
     successPollingInterval = setInterval(pollStatus, 1500);
-
-    // 60-Second Automatic Security Logout Timer
-    let autoLogoutSeconds = 60;
-    const autoLogoutTimerText = document.getElementById("autoLogoutTimerText");
-
-    const logoutCountdownInterval = setInterval(() => {
-        autoLogoutSeconds--;
-        if (autoLogoutTimerText) {
-            autoLogoutTimerText.textContent = `Automatic security logout in ${autoLogoutSeconds}s...`;
-        }
-        if (autoLogoutSeconds <= 0) {
-            clearInterval(logoutCountdownInterval);
-            if (successPollingInterval) clearInterval(successPollingInterval);
-            clearUserDocumentSession();
-            localStorage.removeItem("mobileNumber");
-            sessionStorage.clear();
-            window.location.href = "login.html?logout=true";
-        }
-    }, 1000);
 }
 window.initSuccessReceiptPage = initSuccessReceiptPage;
 

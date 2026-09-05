@@ -373,6 +373,7 @@ def agent_complete_job_endpoint(order_id: str, req: dict, x_print_agent_token: O
             }
     raise HTTPException(status_code=404, detail="Order not found")
 
+@app.get("/api/orders/{order_id}")
 @app.get("/api/orders/{order_id}/status")
 def get_order_status_endpoint(
     order_id: str,
@@ -392,7 +393,7 @@ def get_order_status_endpoint(
     order_mobile = matching_order.get("customer_mobile")
     is_admin = (x_admin_token == "Admin@123")
 
-    if order_mobile and not is_admin:
+    if order_mobile and str(order_mobile).strip().lower() != "guest" and not is_admin:
         if not x_customer_mobile or x_customer_mobile.strip() != str(order_mobile).strip():
             raise HTTPException(status_code=403, detail="Access denied: Unauthorized order access")
 
@@ -403,6 +404,15 @@ def get_order_status_endpoint(
         "document_status": matching_order.get("document_status", "UPLOADED"),
         "deleted": matching_order.get("document_status") == "DELETED",
         "order": matching_order
+    }
+
+@app.post("/api/logout")
+def logout_endpoint(
+    x_customer_mobile: Optional[str] = Header(None)
+):
+    return {
+        "status": "success",
+        "message": "Session invalidated successfully"
     }
 
 @app.get("/api/agent/status")
