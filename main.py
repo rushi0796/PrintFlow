@@ -429,8 +429,11 @@ def agent_status_endpoint():
 @app.post("/create-razorpay-order")
 @app.post("/api/create-razorpay-order")
 def create_razorpay_order_endpoint(request: RazorpayOrderRequest):
-    key_id = (os.environ.get("RAZORPAY_KEY_ID") or "rzp_live_TXZidkYDGHaDOh").strip().strip('"').strip("'")
-    key_secret = (os.environ.get("RAZORPAY_KEY_SECRET") or "FKi1Qw6tdcKvY9N2pmX2IjCf").strip().strip('"').strip("'")
+    key_id = (os.environ.get("RAZORPAY_KEY_ID") or "").strip().strip('"').strip("'")
+    key_secret = (os.environ.get("RAZORPAY_KEY_SECRET") or "").strip().strip('"').strip("'")
+
+    if not key_id or not key_secret:
+        raise HTTPException(status_code=500, detail="Razorpay LIVE credentials are not configured")
 
     is_live_key = key_id.startswith("rzp_live_")
     mode_str = "LIVE" if is_live_key else "TEST"
@@ -462,12 +465,16 @@ def create_razorpay_order_endpoint(request: RazorpayOrderRequest):
             "Accept": "application/json"
         }
         resp = requests.post(rzp_url, auth=HTTPBasicAuth(key_id, key_secret), headers=headers, json=rzp_payload, timeout=10)
-        final_order_id = ""
-        if resp.status_code in (200, 201):
-            razorpay_order = resp.json()
-            final_order_id = razorpay_order["id"]
-        else:
-            final_order_id = f"order_{uuid4().hex[:14]}"
+        if resp.status_code not in (200, 201):
+            try:
+                razorpay_error = resp.json().get("error", {})
+                detail = razorpay_error.get("description") or razorpay_error.get("reason") or resp.text
+            except ValueError:
+                detail = resp.text
+            raise HTTPException(status_code=resp.status_code, detail=f"Razorpay order creation failed: {detail}")
+
+        razorpay_order = resp.json()
+        final_order_id = razorpay_order["id"]
 
         new_order_entry = {
             "order_id": final_order_id,
@@ -502,46 +509,18 @@ def create_razorpay_order_endpoint(request: RazorpayOrderRequest):
             "currency": request.currency or "INR",
             "mode": mode_str
         }
-    except Exception:
-        mock_order_id = f"order_{uuid4().hex[:14]}"
-        new_order_entry = {
-            "order_id": mock_order_id,
-            "razorpay_order_id": mock_order_id,
-            "file_name": request.file_name or "document.pdf",
-            "file_path": request.file_path or "",
-            "copies": request.copies or 1,
-            "pages": request.pages or 1,
-            "color_mode": request.color_mode or "black_white",
-            "duplex": request.duplex or "single",
-            "paper_size": request.paper_size or "a4",
-            "orientation": request.orientation or "portrait",
-            "scale_mode": request.scale_mode or "fit",
-            "margins": request.margins or "normal",
-            "print_mode": request.print_mode or "standard",
-            "pages_per_sheet": request.pages_per_sheet or 1,
-            "page_order": request.page_order or "horizontal",
-            "customer_mobile": request.customer_mobile or "Guest",
-            "amount": amount_in_paise / 100.0,
-            "paid": False,
-            "status": "Pending",
-            "document_status": "UPLOADED",
-            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        }
-        save_order(new_order_entry)
-        return {
-            "status": "success",
-            "key_id": key_id,
-            "order_id": mock_order_id,
-            "amount": amount_in_paise,
-            "currency": request.currency or "INR",
-            "mode": mode_str
-        }
+    except HTTPException:
+        raise
+    except requests.RequestException as exc:
+        raise HTTPException(status_code=502, detail=f"Razorpay order service unavailable: {exc}") from exc
+    except (KeyError, ValueError) as exc:
+        raise HTTPException(status_code=502, detail=f"Invalid Razorpay order response: {exc}") from exc
 
 @app.post("/api/verify-payment")
 @app.post("/verify-razorpay-payment")
 @app.post("/api/verify-razorpay-payment")
 def verify_razorpay_payment(payload: dict):
-    key_secret = (os.environ.get("RAZORPAY_KEY_SECRET") or "FKi1Qw6tdcKvY9N2pmX2IjCf").strip().strip('"').strip("'")
+    key_secret = (os.environ.get("RAZORPAY_KEY_SECRET") or "").strip().strip('"').strip("'")
     if not key_secret:
         raise HTTPException(status_code=400, detail="RAZORPAY_KEY_SECRET not configured in server environment variables.")
 

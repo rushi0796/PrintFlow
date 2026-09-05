@@ -60,8 +60,11 @@ def calculate_order_amount(
 @app.post("/create-razorpay-order")
 @app.post("/api/create-razorpay-order")
 def create_order(req: OrderReq):
-    key_id = (os.environ.get("RAZORPAY_KEY_ID") or "rzp_live_TXZidkYDGHaDOh").strip().strip('"').strip("'")
-    key_secret = (os.environ.get("RAZORPAY_KEY_SECRET") or "FKi1Qw6tdcKvY9N2pmX2IjCf").strip().strip('"').strip("'")
+    key_id = (os.environ.get("RAZORPAY_KEY_ID") or "").strip().strip('"').strip("'")
+    key_secret = (os.environ.get("RAZORPAY_KEY_SECRET") or "").strip().strip('"').strip("'")
+
+    if not key_id or not key_secret:
+        raise HTTPException(status_code=500, detail="Razorpay LIVE credentials are not configured")
 
     has_key_id = bool(key_id)
     has_key_secret = bool(key_secret)
@@ -119,22 +122,13 @@ def create_order(req: OrderReq):
                 "mode": mode_str
             }
         else:
-            mock_order_id = f"order_{uuid4().hex[:14]}"
-            return {
-                "status": "success",
-                "key_id": key_id,
-                "order_id": mock_order_id,
-                "amount": amount_in_paise,
-                "currency": req.currency or "INR",
-                "mode": mode_str
-            }
-    except Exception:
-        mock_order_id = f"order_{uuid4().hex[:14]}"
-        return {
-            "status": "success",
-            "key_id": key_id,
-            "order_id": mock_order_id,
-            "amount": amount_in_paise,
-            "currency": req.currency or "INR",
-            "mode": mode_str
-        }
+            try:
+                razorpay_error = resp.json().get("error", {})
+                detail = razorpay_error.get("description") or razorpay_error.get("reason") or resp.text
+            except ValueError:
+                detail = resp.text
+            raise HTTPException(status_code=resp.status_code, detail=f"Razorpay order creation failed: {detail}")
+    except HTTPException:
+        raise
+    except requests.RequestException as exc:
+        raise HTTPException(status_code=502, detail=f"Razorpay order service unavailable: {exc}") from exc
