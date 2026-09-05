@@ -346,7 +346,9 @@ function saveUploadStateToLocalStorage() {
     localStorage.setItem("fileListDetails", JSON.stringify(detailsList));
 
     if (activeItems.length > 0 && activeItems[0].file) {
-        renderPdfFirstPageThumbnail(activeItems[0].file);
+        if (typeof renderPdfFirstPageThumbnail === "function") {
+            renderPdfFirstPageThumbnail(activeItems[0].file);
+        }
         savePdfFile(activeItems[0].file);
     }
 }
@@ -414,7 +416,7 @@ function updateFileRowProgressUI(fileId, percent) {
     const progressFill = row.querySelector(".file-progress-bar-fill");
     const statusBadge = row.querySelector(".file-status-badge");
     if (progressFill) progressFill.style.width = `${percent}%`;
-    if (statusBadge) statusBadge.innerHTML = `<span class="spin-icon">⟳</span> ${percent}%`;
+    if (statusBadge) statusBadge.textContent = "Uploading...";
 }
 
 function escapeHtml(str) {
@@ -439,8 +441,18 @@ async function countPdfPages(file) {
 
 async function uploadPdfToBackend(file) {
     if (!file) return null;
-    handleFileSelection([file]);
-    return { ok: true, data: { file_name: file.name } };
+    const formData = new FormData();
+    formData.append("file", file, file.name);
+    const response = await fetch(apiUrl("/upload-pdf", "/api/upload-pdf"), {
+        method: "POST",
+        headers: getAuthHeaders(),
+        body: formData
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || data.status !== "success") {
+        throw new Error(data.detail || `Upload failed (HTTP ${response.status})`);
+    }
+    return { ok: true, data };
 }
 
 async function handleFileSelection(eventOrFiles) {
@@ -515,56 +527,32 @@ window.handleFileSelection = handleFileSelection;
 
 async function uploadSingleFile(item) {
     item.status = "UPLOADING";
-    item.progress = 50;
+    item.progress = 0;
     renderFileRowUI(item);
     updateOverallUploadSummary();
 
     const formData = new FormData();
     formData.append("file", item.file, item.name);
 
-    const endpoints = [
-        apiUrl("/upload-pdf", "/api/upload-pdf"),
-        "/upload-pdf",
-        "/api/upload-pdf",
-        "http://127.0.0.1:8000/upload-pdf",
-        "http://127.0.0.1:8000/api/upload-pdf"
-    ];
-
-    let success = false;
-    let filePath = "";
-    let errorDetail = "Upload failed";
-
-    for (const url of endpoints) {
-        try {
-            const res = await fetch(url, {
-                method: "POST",
-                headers: getAuthHeaders(),
-                body: formData
-            });
-            if (res.ok) {
-                const data = await res.json();
-                if (data && (data.status === "success" || data.file_path)) {
-                    filePath = data.file_path || "";
-                    success = true;
-                    break;
-                }
-            } else {
-                errorDetail = `HTTP ${res.status}`;
-            }
-        } catch (err) {
-            errorDetail = "Network error";
+    try {
+        const response = await fetch(apiUrl("/upload-pdf", "/api/upload-pdf"), {
+            method: "POST",
+            headers: getAuthHeaders(),
+            body: formData
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok || data.status !== "success" || !data.file_path) {
+            throw new Error(data.detail || `Upload failed (HTTP ${response.status})`);
         }
-    }
 
-    if (success) {
         item.status = "UPLOADED";
         item.progress = 100;
-        item.backendPath = filePath;
+        item.backendPath = data.file_path;
         item.error = null;
-    } else {
+    } catch (err) {
         item.status = "FAILED";
         item.progress = 0;
-        item.error = errorDetail;
+        item.error = err.message || "Network error";
     }
 
     renderFileRowUI(item);
@@ -581,8 +569,11 @@ async function processUploadQueue() {
     }
 
     isQueueProcessing = true;
-    await uploadSingleFile(nextItem);
-    isQueueProcessing = false;
+    try {
+        await uploadSingleFile(nextItem);
+    } finally {
+        isQueueProcessing = false;
+    }
 
     updateOverallUploadSummary();
     processUploadQueue();
@@ -754,9 +745,12 @@ document.addEventListener("DOMContentLoaded", function() {
             }
 
             const isStillUploading = activeItems.some(i => i.status === "UPLOADING" || i.status === "WAITING");
-            if (isStillUploading) {
+            const hasFailed = activeItems.some(i => i.status === "FAILED");
+            if (isStillUploading || hasFailed) {
                 if (pdfErrorMsg) {
-                    pdfErrorMsg.textContent = "⏳ Please wait for files to finish uploading before continuing";
+                    pdfErrorMsg.textContent = isStillUploading
+                        ? "Please wait for files to finish uploading before continuing"
+                        : "Please retry failed uploads before continuing";
                     pdfErrorMsg.style.display = "block";
                 }
                 return;

@@ -29,13 +29,7 @@
             return;
         }
 
-        // 2. Authenticated user accessing login.html or index.html without logout param -> redirect to home.html
-        if ((currentPage === 'login.html' || currentPage === 'index.html') && isAuthenticated && !isLogoutParam) {
-            window.location.replace('home.html');
-            return;
-        }
-
-        // Always ensure document element is visible on allowed public or authenticated pages
+        // Always keep the login page available so every new website visit can authenticate explicitly.
         if (document.documentElement) {
             document.documentElement.style.display = '';
         }

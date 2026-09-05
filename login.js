@@ -204,56 +204,15 @@ function handleVerifyOtp() {
                 if (resendContainer) resendContainer.style.display = "none";
                 if (resendSuccessMsg) resendSuccessMsg.style.display = "none";
                 if (verifyOtpBtn) verifyOtpBtn.style.display = "none";
-
-                // Step 1: Staggered morph from rectangular boxes to circles (0ms to 350ms)
-                otpBoxes.forEach(box => {
-                    box.classList.add("circle-morph");
-                    box.readOnly = true;
-                });
-
-                // Step 2: Orbit rotation & convergence toward center (350ms to 750ms)
-                setTimeout(() => {
-                    otpBoxes.forEach((box, i) => {
-                        box.classList.add(`circle-orbit-${i + 1}`);
-                    });
-                }, 350);
-
-                // Step 3: Merge into glowing green success badge with SVG checkmark & text (at 750ms)
-                setTimeout(() => {
-                    if (otpBoxContainer) {
-                        otpBoxContainer.style.display = "none";
-                    }
-
-                    let badgeContainer = document.getElementById("successBadgeContainer");
-                    if (!badgeContainer) {
-                        badgeContainer = document.createElement("div");
-                        badgeContainer.id = "successBadgeContainer";
-                        otpSection.appendChild(badgeContainer);
-                    }
-                    badgeContainer.innerHTML = `
-                        <div class="merged-success-badge">
-                            <svg class="checkmark-svg" viewBox="0 0 24 24">
-                                <polyline points="20 6 9 17 4 12"></polyline>
-                            </svg>
-                        </div>
-                        <div class="success-text-anim">
-                            ✓ OTP Verified
-                        </div>
-                    `;
-                }, 750);
-
-                // Step 4: After 1400ms (1.4s visible duration), save mobile & redirect automatically to home.html
-                setTimeout(() => {
-                    if (mobileNumberInput) {
-                        localStorage.setItem("mobileNumber", mobileNumberInput.value.trim());
-                    }
-                    if (window.clearUserDocumentSession) {
-                        window.clearUserDocumentSession();
-                    } else {
-                        ["fileName", "uploadedFileName", "backendFilePath", "pdfPageCount", "copies", "amount", "pdfDataUrl"].forEach(k => localStorage.removeItem(k));
-                    }
-                    window.location.href = "home.html";
-                }, 1400);
+                if (mobileNumberInput) {
+                    localStorage.setItem("mobileNumber", mobileNumberInput.value.trim());
+                }
+                if (window.clearUserDocumentSession) {
+                    window.clearUserDocumentSession();
+                } else {
+                    ["fileName", "uploadedFileName", "backendFilePath", "pdfPageCount", "copies", "amount", "pdfDataUrl"].forEach(k => localStorage.removeItem(k));
+                }
+                window.location.href = "home.html";
             },
             function (error) {
                 console.error("MSG91 OTP verification failed", error);
@@ -450,4 +409,4 @@ if (resendBtn) {
         e.preventDefault();
         handleResendOtp();
     });
-}
+}
