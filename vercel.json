@@ -30,11 +30,11 @@
     },
     {
       "source": "/api/orders",
-      "destination": "/api/orders.py"
+      "destination": "/api/index.py"
     },
     {
       "source": "/orders",
-      "destination": "/api/orders.py"
+      "destination": "/api/index.py"
     },
     {
       "source": "/customer",
