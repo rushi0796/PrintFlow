@@ -243,8 +243,11 @@ def schedule_secure_document_cleanup(order_id: str, delay_seconds: float = 2.5):
                 file_rel_path = order.get("file_path", "")
                 if file_rel_path:
                     clean_name = Path(file_rel_path).name
+                    if file_rel_path.startswith("/api/documents/"):
+                        delete_document(clean_name)
+                        print(f"[PRIVACY CLEANUP SUCCESS] Durable document '{clean_name}' for Order {order_id} deleted 2.5s after completion.")
                     allowed_exts = {".pdf", ".png", ".jpg", ".jpeg", ".webp", ".doc", ".docx", ".txt"}
-                    if Path(clean_name).suffix.lower() in allowed_exts:
+                    if not file_rel_path.startswith("/api/documents/") and Path(clean_name).suffix.lower() in allowed_exts:
                         target_file = UPLOAD_DIR / clean_name
                         if target_file.exists() and target_file.is_file():
                             try:
@@ -542,13 +545,9 @@ async def upload_pdf(file: UploadFile = File(...)):
             raise HTTPException(status_code=400, detail=f"Unsupported file format '{file_ext}'")
 
         original_name = Path(file.filename).name
-        saved_filename = f"{uuid4().hex[:8]}_{original_name}"
-        file_path = UPLOAD_DIR / saved_filename
-
-        with file_path.open("wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
-
-        returned_path = f"/uploads/{saved_filename}"
+        content = await file.read()
+        document_id = save_document(original_name, file.content_type or "application/octet-stream", content)
+        returned_path = f"/api/documents/{document_id}"
 
         return {
             "status": "success",
@@ -560,6 +559,19 @@ async def upload_pdf(file: UploadFile = File(...)):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/documents/{document_id}")
+def download_document(document_id: str, x_print_agent_token: Optional[str] = Header(None)):
+    if x_print_agent_token:
+        verify_agent_token(x_print_agent_token)
+    document = get_document(document_id)
+    if not document:
+        raise HTTPException(status_code=404, detail="Document not found")
+    return Response(
+        content=document["content"],
+        media_type=document["mime_type"],
+        headers={"Content-Disposition": f'inline; filename="{Path(document["file_name"]).name}"'}
+    )
 
 @app.post("/api/orders/{order_id}/retry")
 def retry_order_endpoint(
