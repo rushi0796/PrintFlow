@@ -7,7 +7,7 @@
         const pathParts = window.location.pathname.split('/');
         const currentPage = (pathParts[pathParts.length - 1] || 'index.html').toLowerCase();
 
-        const publicPages = ['login.html', 'index.html', ''];
+        const publicPages = ['login.html', 'index.html', '', 'privacy-policy.html', 'terms.html', 'refund-policy.html'];
         const isPublicPage = publicPages.includes(currentPage);
         const isAdminPage = currentPage === 'admin.html';
         const isCustomerPage = ['home.html', 'print-details.html', 'payment.html', 'success.html'].includes(currentPage);

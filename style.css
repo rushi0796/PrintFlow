@@ -1200,3 +1200,58 @@ button:disabled {
     background: #e2e8f0;
     color: #1e293b;
 }
+
+/* GLOBAL PRINTFLOW FOOTER */
+.app-footer {
+    margin-top: 32px;
+    padding: 20px 16px 16px;
+    text-align: center;
+    border-top: 1px solid #e2e8f0;
+    color: #64748b;
+    font-size: 13px;
+    clear: both;
+    width: 100%;
+    box-sizing: border-box;
+}
+
+.footer-links {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    gap: 8px 12px;
+    margin-bottom: 8px;
+}
+
+.footer-link {
+    color: #ea580c;
+    text-decoration: none;
+    font-weight: 600;
+    transition: color 0.2s ease;
+}
+
+.footer-link:hover {
+    color: #c2410c;
+    text-decoration: underline;
+}
+
+.footer-divider {
+    color: #cbd5e1;
+    font-weight: 400;
+}
+
+.footer-copyright {
+    font-size: 11px;
+    color: #94a3b8;
+    margin-top: 4px;
+}
+
+@media (max-width: 480px) {
+    .footer-links {
+        gap: 6px 10px;
+        font-size: 12px;
+    }
+    .footer-divider {
+        display: inline;
+    }
+}
