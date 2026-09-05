@@ -286,6 +286,17 @@ h3 {
     flex-shrink: 0;
 }
 
+@keyframes spinSlow {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
+
+.spin-icon {
+    display: inline-block;
+    animation: spinSlow 0.9s linear infinite;
+    transform-origin: center center;
+}
+
 .queue-summary-titles strong {
     display: block;
     font-size: 14px;

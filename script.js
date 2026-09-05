@@ -206,6 +206,30 @@ function getFileTypeDetails(file) {
     return { category: "txt", icon: "📑", badge: "TXT" };
 }
 
+function updateContinueButtonState() {
+    const continueBtn = document.getElementById("continueBtn");
+    if (!continueBtn) return;
+
+    const activeItems = fileQueue.filter(i => i.status !== "CANCELED");
+    if (activeItems.length === 0) {
+        continueBtn.disabled = true;
+        continueBtn.style.opacity = "0.5";
+        continueBtn.style.cursor = "not-allowed";
+        return;
+    }
+
+    const allUploaded = activeItems.every(i => i.status === "UPLOADED");
+    if (allUploaded) {
+        continueBtn.disabled = false;
+        continueBtn.style.opacity = "1";
+        continueBtn.style.cursor = "pointer";
+    } else {
+        continueBtn.disabled = true;
+        continueBtn.style.opacity = "0.5";
+        continueBtn.style.cursor = "not-allowed";
+    }
+}
+
 function updateOverallUploadSummary() {
     const queueCard = document.getElementById("uploadQueueCard");
     const mainStatus = document.getElementById("queueMainStatus");
@@ -222,6 +246,7 @@ function updateOverallUploadSummary() {
         if (addMoreBtn) addMoreBtn.style.display = "none";
         if (progressBar) progressBar.style.width = "0%";
         updateTotalPagesDisplay(0);
+        updateContinueButtonState();
         return;
     }
 
@@ -231,7 +256,7 @@ function updateOverallUploadSummary() {
     const totalCount = activeItems.length;
     const uploadedCount = activeItems.filter(i => i.status === "UPLOADED").length;
     const failedCount = activeItems.filter(i => i.status === "FAILED").length;
-    const uploadingItem = activeItems.find(i => i.status === "UPLOADING");
+    const uploadingIndex = activeItems.findIndex(i => i.status === "UPLOADING");
 
     let totalProgressSum = 0;
     activeItems.forEach(i => {
@@ -241,26 +266,28 @@ function updateOverallUploadSummary() {
     const overallPct = Math.round(totalProgressSum / totalCount);
     if (progressBar) progressBar.style.width = `${overallPct}%`;
 
-    if (uploadingItem) {
-        if (statusIcon) statusIcon.textContent = "⏳";
-        if (mainStatus) mainStatus.textContent = `Uploading ${totalCount} file${totalCount > 1 ? 's' : ''}`;
-        if (subStatus) subStatus.textContent = `${uploadedCount} of ${totalCount} completed • Uploading ${uploadingItem.name}`;
+    if (uploadingIndex !== -1) {
+        const currentNum = uploadingIndex + 1;
+        if (statusIcon) statusIcon.innerHTML = `<span class="spin-icon">⟳</span>`;
+        if (mainStatus) mainStatus.innerHTML = `<span class="spin-icon">⟳</span> Uploading ${currentNum} of ${totalCount} file${totalCount > 1 ? 's' : ''}...`;
+        if (subStatus) subStatus.textContent = `${uploadedCount} of ${totalCount} completed • Uploading ${activeItems[uploadingIndex].name}`;
     } else if (uploadedCount === totalCount) {
         if (statusIcon) statusIcon.textContent = "✓";
-        if (mainStatus) mainStatus.textContent = `✓ ${totalCount} file${totalCount > 1 ? 's' : ''} uploaded successfully`;
+        if (mainStatus) mainStatus.textContent = `✓ All ${totalCount} file${totalCount > 1 ? 's' : ''} uploaded successfully`;
         if (subStatus) subStatus.textContent = "All documents ready for print configuration";
     } else if (failedCount > 0) {
         if (statusIcon) statusIcon.textContent = "⚠️";
-        if (mainStatus) mainStatus.textContent = `${uploadedCount} of ${totalCount} uploaded, ${failedCount} failed`;
-        if (subStatus) subStatus.textContent = "Click Retry on failed files to resume upload";
+        if (mainStatus) mainStatus.textContent = `⚠️ ${failedCount} of ${totalCount} file${totalCount > 1 ? 's' : ''} failed to upload`;
+        if (subStatus) subStatus.textContent = `${uploadedCount} of ${totalCount} completed • Click Retry on failed file`;
     } else {
         if (statusIcon) statusIcon.textContent = "○";
-        if (mainStatus) mainStatus.textContent = `Waiting to upload ${totalCount} file${totalCount > 1 ? 's' : ''}`;
+        if (mainStatus) mainStatus.textContent = `Ready to upload ${totalCount} file${totalCount > 1 ? 's' : ''}`;
         if (subStatus) subStatus.textContent = "Upload starting...";
     }
 
     calculateAndUpdateTotalPages();
     saveUploadStateToLocalStorage();
+    updateContinueButtonState();
 }
 
 function calculateAndUpdateTotalPages() {
@@ -345,7 +372,7 @@ function renderFileRowUI(item) {
         statusBadgeHtml = `<span class="file-status-badge status-waiting">○ Waiting</span>`;
         actionsHtml = `<button type="button" class="btn-remove-file" onclick="removeFileFromQueue('${item.id}')" title="Remove file">✕</button>`;
     } else if (item.status === "UPLOADING") {
-        statusBadgeHtml = `<span class="file-status-badge status-uploading">↑ ${item.progress}%</span>`;
+        statusBadgeHtml = `<span class="file-status-badge status-uploading"><span class="spin-icon">⟳</span> ${item.progress > 0 ? item.progress + '%' : 'Uploading...'}</span>`;
         progressWrapClass += " is-active";
         actionsHtml = `<button type="button" class="btn-remove-file" onclick="removeFileFromQueue('${item.id}')" title="Cancel upload">✕</button>`;
     } else if (item.status === "UPLOADED") {
@@ -387,7 +414,7 @@ function updateFileRowProgressUI(fileId, percent) {
     const progressFill = row.querySelector(".file-progress-bar-fill");
     const statusBadge = row.querySelector(".file-status-badge");
     if (progressFill) progressFill.style.width = `${percent}%`;
-    if (statusBadge) statusBadge.textContent = `↑ ${percent}%`;
+    if (statusBadge) statusBadge.innerHTML = `<span class="spin-icon">⟳</span> ${percent}%`;
 }
 
 function escapeHtml(str) {
@@ -543,8 +570,19 @@ function processUploadQueue() {
         processUploadQueue();
     };
 
-    xhr.open("POST", apiUrl("/upload-pdf", "/api/upload-pdf"), true);
-    xhr.send(formData);
+    try {
+        xhr.open("POST", apiUrl("/upload-pdf", "/api/upload-pdf"), true);
+        xhr.send(formData);
+    } catch (err) {
+        console.warn("XHR upload send error:", err);
+        nextItem.xhr = null;
+        nextItem.status = "FAILED";
+        nextItem.error = "Dispatch error";
+        renderFileRowUI(nextItem);
+        isQueueProcessing = false;
+        updateOverallUploadSummary();
+        processUploadQueue();
+    }
 }
 
 function removeFileFromQueue(fileId) {
@@ -564,6 +602,7 @@ function removeFileFromQueue(fileId) {
         row.parentNode.removeChild(row);
     }
 
+    isQueueProcessing = false;
     updateOverallUploadSummary();
     processUploadQueue();
 }
@@ -577,6 +616,7 @@ function retryFileInQueue(fileId) {
     item.progress = 0;
     item.error = null;
     renderFileRowUI(item);
+    isQueueProcessing = false;
     updateOverallUploadSummary();
     processUploadQueue();
 }
@@ -590,6 +630,7 @@ function clearAllFilesFromQueue() {
     });
 
     fileQueue = [];
+    isQueueProcessing = false;
     const listContainer = document.getElementById("fileQueueList");
     if (listContainer) listContainer.innerHTML = "";
 
