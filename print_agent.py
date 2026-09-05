@@ -273,7 +273,7 @@ def print_document_silently(
 
 def run_agent():
     print("==================================================")
-    print("  🖨️  PrintFlow Local Windows Print Agent v1.0   ")
+    print("  [PRINTFLOW] Local Windows Print Agent v1.0      ")
     print("==================================================")
 
     config = load_agent_config()
