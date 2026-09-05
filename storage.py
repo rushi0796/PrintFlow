@@ -235,7 +235,8 @@ def get_order(order_id: str) -> Optional[dict]:
 
 def list_orders() -> list[dict]:
     init_storage()
-    return _execute("SELECT * FROM printflow_orders", fetch="all")
+    rows = _execute("SELECT order_id FROM printflow_orders", fetch="all")
+    return [order for row in rows if (order := get_order(row["order_id"]))]
 
 
 def queue_paid_order(order_id: str, razorpay_order_id: str, payment_id: str) -> Optional[dict]:
