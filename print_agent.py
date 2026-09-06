@@ -297,6 +297,15 @@ def print_document_silently(
 ):
     ext = file_path.suffix.lower()
     target_print_file = file_path
+    is_image = ext in (".jpg", ".jpeg", ".png", ".webp", ".bmp")
+
+    raw_color = str(color_mode).lower()
+    is_color = raw_color in ("color", "colour")
+    if is_color:
+        duplex = "single"
+        color_mode = "color"
+    else:
+        color_mode = "black_white"
 
     # Convert DOC / DOCX to PDF via Word COM if available
     if ext in (".doc", ".docx"):
@@ -316,7 +325,7 @@ def print_document_silently(
             print("[AGENT WORD COM EXPORT WARNING]:", word_err)
 
     # Universal Image-to-PDF Conversion for Rock-Solid Printing (Single page & Micro Xerox)
-    if ext in (".jpg", ".jpeg", ".png", ".webp", ".bmp"):
+    if is_image:
         try:
             from PIL import Image
             img = Image.open(target_print_file)
@@ -347,7 +356,7 @@ def print_document_silently(
             paper_size=paper_size,
             orientation=orientation
         )
-    elif ext == ".pdf" and pages_per_sheet <= 1 and scale_mode not in ("actual", "actual_size"):
+    elif ext == ".pdf" and pages_per_sheet <= 1 and (is_image or scale_mode not in ("actual", "actual_size")):
         target_print_file = optimize_pdf_for_full_page(
             target_print_file,
             paper_size=paper_size,
@@ -369,20 +378,19 @@ def print_document_silently(
         settings_parts = []
 
         # Full Page vs Actual Size:
-        # When Full Page is selected, optimize_pdf_for_full_page has already proportionally
-        # scaled the complete original canvas to the maximum printable area of the target paper.
-        # Using 'noscale' prevents SumatraPDF from applying a redundant second shrink.
-        # For Actual Size, the document retains its natural un-maximized scale.
-        if scale_mode in ("actual", "actual_size"):
+        # For images, unconditional Full Page is enforced with noscale.
+        if scale_mode in ("actual", "actual_size") and not is_image:
             settings_parts.append("shrink")
         else:
             settings_parts.append("noscale")
 
         # Duplex (Kyocera hardware duplex support)
-        if duplex in ("double", "duplex", "duplexlong", "vertical"):
-            settings_parts.append("duplexlong")
-        elif duplex in ("duplexshort", "short", "horizontal"):
+        if is_color or duplex == "single":
+            settings_parts.append("noduplex")
+        elif duplex in ("duplex_short", "duplexshort", "short_edge", "short", "horizontal"):
             settings_parts.append("duplexshort")
+        elif duplex in ("duplex_long", "duplexlong", "long_edge", "double", "duplex", "vertical"):
+            settings_parts.append("duplexlong")
         else:
             settings_parts.append("noduplex")
 
@@ -429,8 +437,8 @@ def print_document_silently(
                 devmode.Orientation = 2 if orientation.lower() == "landscape" else 1
                 paper_map = {"letter": 1, "legal": 5, "a4": 9}
                 devmode.PaperSize = paper_map.get(paper_size.lower(), 9)
-                devmode.Duplex = 2 if duplex.lower() in ("double", "duplex", "duplexlong", "vertical") else 1
-                devmode.Color = 2 if color_mode.lower() in ("color", "colour") else 1
+                devmode.Duplex = 1 if is_color else (3 if duplex.lower() in ("duplex_short", "duplexshort", "short_edge", "short", "horizontal") else (2 if duplex.lower() in ("duplex_long", "duplexlong", "long_edge", "double", "duplex", "vertical") else 1))
+                devmode.Color = 2 if is_color else 1
                 devmode.Copies = max(1, copies)
 
                 hdc_handle = win32gui.CreateDC("WINSPOOL", printer_name, devmode)
@@ -443,7 +451,7 @@ def print_document_silently(
                 printable_height = hdc.GetDeviceCaps(10)
                 img_w, img_h = img.size
 
-                if scale_mode in ("actual", "actual_size"):
+                if scale_mode in ("actual", "actual_size") and not is_image:
                     dpi_x = hdc.GetDeviceCaps(88)
                     dpi_y = hdc.GetDeviceCaps(90)
                     img_dpi = img.info.get("dpi", (96, 96))
@@ -613,9 +621,19 @@ def run_agent():
                             continue
                         if claim_res.get("order"):
                             claimed_order = claim_res["order"]
-                            color_mode = claimed_order.get("color_mode", color_mode)
+                            raw_color = str(claimed_order.get("color_mode", color_mode)).lower()
+                            is_color = raw_color in ("color", "colour")
+                            color_mode = "color" if is_color else "black_white"
+                            if is_color:
+                                duplex = "single"
+                                binding = ""
+                            else:
+                                duplex = str(claimed_order.get("duplex", duplex)).lower()
+                                binding = str(claimed_order.get("binding", "")).lower()
+                                if duplex in ("double", "duplex"):
+                                    duplex = "duplex_short" if binding == "short_edge" else "duplex_long"
+
                             copies = int(claimed_order.get("copies", copies))
-                            duplex = claimed_order.get("duplex", duplex)
                             paper_size = claimed_order.get("paper_size", paper_size)
                             orientation = claimed_order.get("orientation", orientation)
                             scale_mode = claimed_order.get("scale_mode", scale_mode)
@@ -644,10 +662,14 @@ def run_agent():
                     else:
                         print_type_str = "Standard"
 
-                    color_mode_str = "Colour" if str(color_mode).lower() in ("color", "colour") else "B&W"
+                    color_mode_str = "Colour" if is_color else "B&W"
 
-                    if str(duplex).lower() in ("double", "duplex", "duplexlong", "vertical"):
-                        sides_str = "Double Side"
+                    if is_color or duplex == "single":
+                        sides_str = "Single Side"
+                    elif duplex in ("duplex_short", "duplexshort", "short_edge", "short"):
+                        sides_str = "Double Side (Short Edge)"
+                    elif duplex in ("duplex_long", "duplexlong", "long_edge", "double", "duplex", "vertical"):
+                        sides_str = "Double Side (Long Edge)"
                     else:
                         sides_str = "Single Side"
 
@@ -656,7 +678,8 @@ def run_agent():
                     paper_map = {"a4": "A4", "letter": "Letter", "legal": "Legal"}
                     paper_size_str = paper_map.get(str(paper_size).lower(), str(paper_size).upper())
 
-                    page_mode_str = "Actual Size" if str(scale_mode).lower() in ("actual", "actual_size") else "Full Page"
+                    is_img_job = Path(file_name).suffix.lower() in (".jpg", ".jpeg", ".png", ".webp", ".bmp")
+                    page_mode_str = "Full Page" if is_img_job else ("Actual Size" if str(scale_mode).lower() in ("actual", "actual_size") else "Full Page")
 
                     print("")
                     print("==================================================")

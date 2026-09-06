@@ -1121,6 +1121,12 @@ function updatePrintDetailsAndPreview() {
     const scaleModeEl = document.querySelector('input[name="scaleMode"]:checked');
     const scaleMode = scaleModeEl ? scaleModeEl.value : "fit";
 
+    const bindingSection = document.getElementById("bindingSection");
+    const bindingLongRadio = document.getElementById("bindingLong");
+    const bindingShortRadio = document.getElementById("bindingShort");
+    const bindingEl = document.querySelector('input[name="duplexBinding"]:checked');
+    let duplexBinding = bindingEl ? bindingEl.value : "long_edge";
+
     if (colorMode === "color") {
         if (doubleSideLabel) doubleSideLabel.style.opacity = "0.5";
         if (radioDoubleSide) {
@@ -1131,9 +1137,26 @@ function updatePrintDetailsAndPreview() {
                 printSide = "single";
             }
         }
+        if (bindingSection) bindingSection.style.display = "none";
+        duplexBinding = "";
     } else {
         if (doubleSideLabel) doubleSideLabel.style.opacity = "1";
         if (radioDoubleSide) radioDoubleSide.disabled = false;
+        if (printSide === "double") {
+            if (bindingSection) bindingSection.style.display = "block";
+            if (!duplexBinding) {
+                duplexBinding = "long_edge";
+                if (bindingLongRadio) bindingLongRadio.checked = true;
+            }
+        } else {
+            if (bindingSection) bindingSection.style.display = "none";
+            duplexBinding = "";
+        }
+    }
+
+    let canonicalDuplex = "single";
+    if (colorMode !== "color" && printSide === "double") {
+        canonicalDuplex = (duplexBinding === "short_edge") ? "duplex_short" : "duplex_long";
     }
 
     if (microXeroxSection) {
@@ -1165,6 +1188,9 @@ function updatePrintDetailsAndPreview() {
     localStorage.setItem("printMode", printMode);
     localStorage.setItem("colorMode", colorMode);
     localStorage.setItem("printSide", printSide);
+    localStorage.setItem("duplex", canonicalDuplex);
+    localStorage.setItem("duplexBinding", duplexBinding);
+    localStorage.setItem("binding", duplexBinding);
     localStorage.setItem("orientation", orientation);
     localStorage.setItem("paperSize", paperSize);
     localStorage.setItem("pagesPerSheet", String(pagesPerSheet));
@@ -1247,6 +1273,12 @@ if (printDetailsFileName) {
             if (sideRadio) sideRadio.checked = true;
         }
 
+        const savedBinding = localStorage.getItem("duplexBinding") || localStorage.getItem("binding");
+        if (savedBinding) {
+            const bindRadio = document.querySelector(`input[name="duplexBinding"][value="${savedBinding}"]`);
+            if (bindRadio) bindRadio.checked = true;
+        }
+
         const savedPrintMode = localStorage.getItem("printMode");
         if (savedPrintMode) {
             const modeRadio = document.querySelector(`input[name="printMode"][value="${savedPrintMode}"]`);
@@ -1293,6 +1325,8 @@ if (paymentFile && paymentCopies && paymentAmount) {
     const amountVal = localStorage.getItem("amount") || "2";
     const colorModeVal = localStorage.getItem("colorMode") || "black_white";
     const printSideVal = localStorage.getItem("printSide") || "single";
+    const duplexBindingVal = localStorage.getItem("duplexBinding") || localStorage.getItem("binding") || "long_edge";
+    const duplexVal = localStorage.getItem("duplex") || "single";
     const orientationVal = localStorage.getItem("orientation") || "portrait";
 
     paymentFile.textContent = "File: " + fileNameVal;
@@ -1303,7 +1337,15 @@ if (paymentFile && paymentCopies && paymentAmount) {
         paymentColorMode.textContent = "Color Mode: " + (colorModeVal === "color" ? "Color Print 🎨" : "Black & White (B&W)");
     }
     if (paymentSide) {
-        paymentSide.textContent = "Print Side: " + (printSideVal === "double" ? "Double Side" : "Single Side");
+        if (colorModeVal === "color" || printSideVal === "single" || duplexVal === "single") {
+            paymentSide.textContent = "Print Side: Single Side";
+        } else {
+            if (duplexBindingVal === "short_edge" || duplexVal === "duplex_short") {
+                paymentSide.textContent = "Print Side: Double Side (Short Edge - Flip 🗓️)";
+            } else {
+                paymentSide.textContent = "Print Side: Double Side (Long Edge - Booklet 📖)";
+            }
+        }
     }
     if (paymentOrientation) {
         paymentOrientation.textContent = "Orientation: " + (orientationVal === "landscape" ? "Landscape" : "Portrait");
@@ -1396,6 +1438,11 @@ if (payBtn) {
             const pageCountVal = parseInt(localStorage.getItem("pdfPageCount") || "1", 10);
             const colorModeVal = localStorage.getItem("colorMode") || "black_white";
             const printSideVal = localStorage.getItem("printSide") || "single";
+            const duplexBindingVal = (colorModeVal === "color" || printSideVal === "single") ? null : (localStorage.getItem("duplexBinding") || localStorage.getItem("binding") || "long_edge");
+            let canonicalDuplex = "single";
+            if (colorModeVal !== "color" && printSideVal === "double") {
+                canonicalDuplex = (duplexBindingVal === "short_edge") ? "duplex_short" : "duplex_long";
+            }
             const paperSizeVal = localStorage.getItem("paperSize") || "a4";
             const orientationVal = localStorage.getItem("orientation") || "portrait";
             const scaleModeVal = localStorage.getItem("scaleMode") || "fit";
@@ -1413,7 +1460,8 @@ if (payBtn) {
                 pages: pageCountVal,
                 copies: copiesVal,
                 color_mode: colorModeVal,
-                duplex: printSideVal,
+                duplex: canonicalDuplex,
+                binding: duplexBindingVal,
                 paper_size: paperSizeVal,
                 orientation: orientationVal,
                 scale_mode: scaleModeVal,
@@ -1454,8 +1502,13 @@ if (payBtn) {
                 throw new Error(orderData?.detail || "Invalid Razorpay order payload");
             }
 
-            if (orderData.order_id) {
+            const activePfOrderId = orderData.pf_order_id || orderData.print_order_id || "";
+            if (activePfOrderId) {
+                localStorage.setItem("lastOrderId", activePfOrderId);
+            } else if (orderData.order_id) {
                 localStorage.setItem("lastOrderId", orderData.order_id);
+            }
+            if (orderData.order_id) {
                 localStorage.setItem("razorpayOrderId", orderData.order_id);
             }
 
@@ -1478,7 +1531,7 @@ if (payBtn) {
                             razorpay_payment_id: response.razorpay_payment_id,
                             razorpay_order_id: response.razorpay_order_id || orderData.order_id,
                             razorpay_signature: response.razorpay_signature,
-                            print_order_id: orderData.order_id
+                            print_order_id: activePfOrderId || orderData.order_id
                         };
 
                         const verifyRes = await fetch(apiUrl("/api/verify-payment", "/api/verify-payment"), {
@@ -1490,7 +1543,7 @@ if (payBtn) {
                         const verifyData = await verifyRes.json().catch(() => ({}));
                         if (verifyRes.ok && verifyData.status === "success" && verifyData.order_status === "PRINT_QUEUED") {
                             showPaymentSuccessModal("Payment Successful!", "✓ Payment verified. Your document is queued for printing.");
-                            const nextOrderId = verifyData.order_id || orderData.order_id || localStorage.getItem("lastOrderId") || "";
+                            const nextOrderId = verifyData.order_id || activePfOrderId || orderData.order_id || localStorage.getItem("lastOrderId") || "";
                             setTimeout(() => {
                                 window.location.href = "success.html" + (nextOrderId ? `?order_id=${encodeURIComponent(nextOrderId)}` : "");
                             }, 1800);
@@ -1705,12 +1758,21 @@ function renderAdminOrders(orders) {
         if (isPrinting) badgeClass = "badge-pending";
         if (isFailed) badgeClass = "badge-pending";
 
+        let sideText = "Single Side";
+        if (order.color_mode !== "color" && order.color_mode !== "colour") {
+            if (order.duplex === "duplex_short" || order.binding === "short_edge") {
+                sideText = "Double (Short Edge)";
+            } else if (order.duplex === "duplex_long" || order.duplex === "double" || order.binding === "long_edge") {
+                sideText = "Double (Long Edge)";
+            }
+        }
+
         html += `
             <tr>
                 <td><strong>${order.order_id}</strong><br><small style="color: #64748b;">${order.timestamp || ''}</small></td>
                 <td>${order.customer_mobile || 'Guest'}</td>
                 <td><strong class="admin-file-name" title="${order.file_name}">${order.file_name}</strong><br><small style="color: #ea580c;">${order.pages || 1} Pages</small></td>
-                <td>${order.copies || 1} Copies (${order.duplex === 'double' ? 'Double' : 'Single'} Side)</td>
+                <td>${order.copies || 1} Copies (${sideText})</td>
                 <td><strong>₹${order.amount || 2}</strong></td>
                 <td>
                     <span class="${badgeClass}">
@@ -1837,7 +1899,7 @@ function clearUserDocumentSession() {
     const keysToRemove = [
         "fileName", "fileSize", "fileType", "fileLastModified",
         "uploadedFileName", "backendFilePath", "pdfPageCount", "copies",
-        "amount", "printSide", "colorMode", "orientation", "paperSize",
+        "amount", "printSide", "duplex", "duplexBinding", "binding", "colorMode", "orientation", "paperSize",
         "scaleMode", "margins", "printMode", "pagesPerSheet", "pageOrder",
         "pdfDataUrl", "selectedPdfFile"
     ];
@@ -1902,7 +1964,140 @@ function startAutoLogoutCountdown(seconds) {
     }, 1000);
 }
 
+// ======================================================
+// THERMAL RECEIPT PRINTER SYNTHESIZED AUDIO ENGINE (Web Audio API)
+// ======================================================
+
+class ThermalPrinterAudio {
+    constructor() {
+        this.ctx = null;
+        this.activeNodes = null;
+        this.isPlaying = false;
+    }
+
+    init() {
+        if (!this.ctx) {
+            const AudioCtx = window.AudioContext || window.webkitAudioContext;
+            if (AudioCtx) {
+                this.ctx = new AudioCtx();
+            }
+        }
+        if (this.ctx && this.ctx.state === "suspended") {
+            this.ctx.resume().catch(() => {});
+        }
+    }
+
+    start() {
+        try {
+            this.init();
+            if (!this.ctx) return;
+            if (this.isPlaying) this.stop();
+
+            const t = this.ctx.currentTime;
+            this.isPlaying = true;
+
+            // Master Gain node with smooth attack
+            const masterGain = this.ctx.createGain();
+            masterGain.gain.setValueAtTime(0.0001, t);
+            masterGain.gain.exponentialRampToValueAtTime(0.22, t + 0.05);
+            masterGain.connect(this.ctx.destination);
+
+            // 1. Mechanical Stepper Motor Core (Sawtooth oscillator)
+            const osc = this.ctx.createOscillator();
+            osc.type = "sawtooth";
+            osc.frequency.setValueAtTime(145, t);
+
+            // Stepper motor pulse vibrato (LFO) simulating rapid mechanical gear indexing
+            const lfo = this.ctx.createOscillator();
+            lfo.type = "square";
+            lfo.frequency.setValueAtTime(38, t); // 38 steps / pulses per second
+            const lfoGain = this.ctx.createGain();
+            lfoGain.gain.setValueAtTime(35, t);
+            lfo.connect(lfoGain);
+            lfoGain.connect(osc.frequency);
+
+            // Motor tone shaping filter (warm mechanical lowpass)
+            const motorFilter = this.ctx.createBiquadFilter();
+            motorFilter.type = "lowpass";
+            motorFilter.frequency.setValueAtTime(460, t);
+            osc.connect(motorFilter);
+
+            const motorGain = this.ctx.createGain();
+            motorGain.gain.setValueAtTime(0.18, t);
+            motorFilter.connect(motorGain);
+            motorGain.connect(masterGain);
+
+            // 2. Paper Feed Roller Friction (White noise with bandpass filter)
+            const bufferSize = this.ctx.sampleRate * 2;
+            const noiseBuffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+            const output = noiseBuffer.getChannelData(0);
+            for (let i = 0; i < bufferSize; i++) {
+                output[i] = Math.random() * 2 - 1;
+            }
+
+            const whiteNoise = this.ctx.createBufferSource();
+            whiteNoise.buffer = noiseBuffer;
+            whiteNoise.loop = true;
+
+            const noiseFilter = this.ctx.createBiquadFilter();
+            noiseFilter.type = "bandpass";
+            noiseFilter.frequency.setValueAtTime(1900, t);
+            noiseFilter.Q.setValueAtTime(1.8, t);
+
+            const noiseGain = this.ctx.createGain();
+            noiseGain.gain.setValueAtTime(0.09, t);
+
+            whiteNoise.connect(noiseFilter);
+            noiseFilter.connect(noiseGain);
+            noiseGain.connect(masterGain);
+
+            // Start audio sources
+            osc.start(t);
+            lfo.start(t);
+            whiteNoise.start(t);
+
+            this.activeNodes = { masterGain, osc, lfo, whiteNoise };
+        } catch (e) {
+            console.warn("[ThermalPrinterAudio] Audio context unlock note:", e);
+        }
+    }
+
+    stop() {
+        if (!this.isPlaying || !this.ctx || !this.activeNodes) return;
+        try {
+            const t = this.ctx.currentTime;
+            const { masterGain, osc, lfo, whiteNoise } = this.activeNodes;
+            masterGain.gain.setValueAtTime(masterGain.gain.value, t);
+            masterGain.gain.exponentialRampToValueAtTime(0.0001, t + 0.04);
+
+            setTimeout(() => {
+                try {
+                    osc.stop();
+                    lfo.stop();
+                    whiteNoise.stop();
+                    osc.disconnect();
+                    lfo.disconnect();
+                    whiteNoise.disconnect();
+                    masterGain.disconnect();
+                } catch (err) {}
+                this.isPlaying = false;
+                this.activeNodes = null;
+            }, 50);
+        } catch (e) {
+            this.isPlaying = false;
+        }
+    }
+}
+
+const thermalAudio = new ThermalPrinterAudio();
+["click", "touchstart", "keydown"].forEach(evt => {
+    window.addEventListener(evt, () => {
+        thermalAudio.init();
+    }, { once: true });
+});
+
 function initSuccessReceiptPage() {
+    thermalAudio.init();
     const printer = document.getElementById("receiptPrinter") || document.querySelector(".machine-unit");
     const paperViewport = document.getElementById("paperViewport") || document.querySelector(".paper-viewport");
     const rcptPaper = document.getElementById("receiptPaper");
@@ -1936,8 +2131,25 @@ function initSuccessReceiptPage() {
     const copies = localStorage.getItem("copies") || "1";
     const isMicro = localStorage.getItem("printMode") === "micro_xerox" && parseInt(localStorage.getItem("pagesPerSheet") || "1", 10) > 1;
     const printMode = isMicro ? "Micro Xerox" : "Standard";
-    const colorMode = (localStorage.getItem("colorMode") === "color" || localStorage.getItem("colorMode") === "colour") ? "Color Print 🎨" : "Black & White";
-    const sides = (localStorage.getItem("printSide") === "double" || localStorage.getItem("duplex") === "double") ? "Double Side" : "Single Side";
+
+    const rawColor = localStorage.getItem("colorMode") || "";
+    const isColor = rawColor === "color" || rawColor === "colour";
+    const colorMode = isColor ? "Color Print 🎨" : "Black & White";
+
+    let sides = "Single Side";
+    if (!isColor) {
+        const storedSide = (localStorage.getItem("printSide") || "").toLowerCase();
+        const storedDuplex = (localStorage.getItem("duplex") || "").toLowerCase();
+        const storedBinding = (localStorage.getItem("duplexBinding") || localStorage.getItem("binding") || "").toLowerCase();
+        if (storedSide === "double" || storedDuplex.startsWith("duplex")) {
+            if (storedBinding === "short_edge" || storedDuplex === "duplex_short") {
+                sides = "Double Side (Short Edge)";
+            } else {
+                sides = "Double Side (Long Edge)";
+            }
+        }
+    }
+
     const paperSize = (localStorage.getItem("paperSize") || "A4").toUpperCase();
     const orientation = ((localStorage.getItem("orientation") || "portrait").toLowerCase() === "landscape") ? "Landscape" : "Portrait";
     const amount = localStorage.getItem("amount") || "2.00";
@@ -2029,6 +2241,9 @@ function initSuccessReceiptPage() {
 
                         // 2. Small delay before receipt begins emerging from the printer slot (500ms)
                         setTimeout(() => {
+                            // Start synchronized mechanical motor and roller feed sound
+                            thermalAudio.start();
+
                             // 3. Receipt begins emerging FROM THE PRINTER SLOT & slowly feeds downward
                             if (paperViewport) {
                                 paperViewport.classList.add("settled");
@@ -2042,6 +2257,9 @@ function initSuccessReceiptPage() {
 
                             // 4. Receipt reaches final position after feeding downward (2.8s)
                             setTimeout(() => {
+                                // Stop sound immediately when paper reaches final position
+                                thermalAudio.stop();
+
                                 // 5. Short pause (600ms) after receipt reaches final position
                                 setTimeout(() => {
                                     // 6. "Print Completed!" success section appears
@@ -2067,6 +2285,7 @@ function initSuccessReceiptPage() {
                         }, 500);
                     }
                 } else if (orderState === "FAILED") {
+                    thermalAudio.stop();
                     if (ledDot) {
                         ledDot.className = "led-dot failed";
                         ledDot.style.background = "#ef4444";

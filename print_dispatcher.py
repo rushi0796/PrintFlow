@@ -169,9 +169,20 @@ def optimize_pdf_for_full_page(
 def dispatch_print_job(order_data: dict) -> dict:
     order_id = order_data.get("order_id", "UNKNOWN")
     file_rel_path = order_data.get("file_path", "")
-    color_mode = order_data.get("color_mode", "black_white")
+    raw_color_mode = str(order_data.get("color_mode", "black_white")).lower()
+    is_color = raw_color_mode in ("color", "colour")
+    color_mode = "color" if is_color else "black_white"
+
+    if is_color:
+        duplex = "single"
+        binding = ""
+    else:
+        duplex = str(order_data.get("duplex", "single")).lower()
+        binding = str(order_data.get("binding", "")).lower()
+        if duplex in ("double", "duplex"):
+            duplex = "duplex_short" if binding == "short_edge" else "duplex_long"
+
     copies = int(order_data.get("copies", 1))
-    duplex = order_data.get("duplex", "single")
     paper_size = order_data.get("paper_size", "a4")
     orientation = order_data.get("orientation", "portrait")
     scale_mode = order_data.get("scale_mode", "fit")
@@ -183,6 +194,7 @@ def dispatch_print_job(order_data: dict) -> dict:
     abs_file_path = UPLOAD_DIR / clean_filename
     ext = abs_file_path.suffix.lower()
     target_print_file = abs_file_path
+    is_image = ext in (".jpg", ".jpeg", ".png", ".webp", ".bmp")
 
     target_printer = get_target_printer(color_mode)
     print(f"[PRINT DISPATCH] Order {order_id} | File: '{clean_filename}' | Mode: {color_mode} | Printer: '{target_printer}' | Duplex: {duplex} | Paper: {paper_size} | Copies: {copies} | Scale: {scale_mode}")
@@ -198,7 +210,7 @@ def dispatch_print_job(order_data: dict) -> dict:
         }
 
     # Convert images to PDF for SumatraPDF silent execution
-    if ext in (".jpg", ".jpeg", ".png", ".webp", ".bmp"):
+    if is_image:
         try:
             import re
             from PIL import Image
@@ -230,7 +242,7 @@ def dispatch_print_job(order_data: dict) -> dict:
             paper_size=paper_size,
             orientation=orientation
         )
-    elif ext == ".pdf" and pages_per_sheet <= 1 and scale_mode not in ("actual", "actual_size"):
+    elif ext == ".pdf" and pages_per_sheet <= 1 and (is_image or scale_mode not in ("actual", "actual_size")):
         target_print_file = optimize_pdf_for_full_page(
             target_print_file,
             paper_size=paper_size,
@@ -244,15 +256,17 @@ def dispatch_print_job(order_data: dict) -> dict:
             sumatra = find_sumatra_executable()
             if sumatra and ext == ".pdf":
                 settings_parts = []
-                if scale_mode in ("actual", "actual_size"):
+                if scale_mode in ("actual", "actual_size") and not is_image:
                     settings_parts.append("shrink")
                 else:
                     settings_parts.append("noscale")
                 
-                if duplex in ("double", "duplex", "duplexlong", "vertical"):
-                    settings_parts.append("duplexlong")
-                elif duplex in ("duplexshort", "short", "horizontal"):
+                if is_color or duplex == "single":
+                    settings_parts.append("noduplex")
+                elif duplex in ("duplex_short", "duplexshort", "short_edge", "short", "horizontal"):
                     settings_parts.append("duplexshort")
+                elif duplex in ("duplex_long", "duplexlong", "long_edge", "double", "duplex", "vertical"):
+                    settings_parts.append("duplexlong")
                 else:
                     settings_parts.append("noduplex")
 

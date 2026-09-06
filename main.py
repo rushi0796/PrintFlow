@@ -120,7 +120,7 @@ def calculate_order_amount(
     if color_mode and color_mode.lower() in ("color", "colour"):
         return float(pages * copies * CANONICAL_PRICING["color_single"])
     else:
-        if duplex == "double":
+        if duplex in ("double", "duplex", "duplex_long", "duplex_short", "duplexlong", "duplexshort"):
             return float(pages * copies * CANONICAL_PRICING["bw_double"])
         else:
             return float(pages * copies * CANONICAL_PRICING["bw_single"])
@@ -131,6 +131,7 @@ class PrintOrder(BaseModel):
     pages: int = 1
     color_mode: str = "black_white"
     duplex: str = "single"
+    binding: Optional[str] = None
     paper_size: str = "a4"
     orientation: str = "portrait"
     scale_mode: str = "fit"
@@ -148,6 +149,7 @@ class RazorpayOrderRequest(BaseModel):
     copies: Optional[int] = None
     color_mode: Optional[str] = "black_white"
     duplex: Optional[str] = "single"
+    binding: Optional[str] = None
     paper_size: Optional[str] = "a4"
     orientation: Optional[str] = "portrait"
     scale_mode: Optional[str] = "fit"
@@ -197,16 +199,29 @@ def get_all_orders(
 @app.post("/print-order")
 def create_print_order(order: PrintOrder):
     order_id = f"PF-{uuid4().hex[:6].upper()}"
+    color_mode_str = (order.color_mode or "black_white").lower()
+    is_color = color_mode_str in ("color", "colour")
+
+    if is_color:
+        enforced_duplex = "single"
+        enforced_binding = ""
+    else:
+        enforced_binding = (order.binding or "").lower()
+        enforced_duplex = (order.duplex or "single").lower()
+        if enforced_duplex in ("double", "duplex"):
+            enforced_duplex = "duplex_short" if enforced_binding == "short_edge" else "duplex_long"
+
     calculated_amount = calculate_order_amount(
-        order.pages, order.copies, order.color_mode, order.duplex, order.print_mode, order.pages_per_sheet
+        order.pages, order.copies, "color" if is_color else "black_white", enforced_duplex, order.print_mode, order.pages_per_sheet
     )
     new_order = {
         "order_id": order_id,
         "file_name": order.file_name,
         "copies": order.copies,
         "pages": order.pages,
-        "color_mode": order.color_mode,
-        "duplex": order.duplex,
+        "color_mode": "color" if is_color else "black_white",
+        "duplex": enforced_duplex,
+        "binding": enforced_binding,
         "paper_size": order.paper_size,
         "orientation": order.orientation,
         "scale_mode": "actual" if (order.scale_mode or "").lower() in ("actual", "actual_size") else "fit",
@@ -275,25 +290,50 @@ def queue_order_for_printing(payload: dict):
     order_id = payload.get("print_order_id") or payload.get("razorpay_order_id") or payload.get("order_id")
     if not order_id:
         raise HTTPException(status_code=400, detail="Missing PrintFlow order ID for verified payment")
-    orders = load_orders()
-    for order in orders:
-        if order.get("order_id") == order_id or order.get("razorpay_order_id") == order_id:
-            order["status"] = "PRINT_QUEUED"
-            order["document_status"] = "UPLOADED"
-            order["paid"] = True
-            for k, v in payload.items():
-                if v is not None and k not in ("status", "document_status"):
-                    order[k] = v
-            order.setdefault("scale_mode", "fit")
-            order.setdefault("paper_size", "a4")
-            order.setdefault("orientation", "portrait")
-            order.setdefault("margins", "normal")
-            order.setdefault("print_mode", "standard")
-            order.setdefault("pages_per_sheet", 1)
-            order.setdefault("page_order", "horizontal")
-            save_order(order)
-            return order
-    raise HTTPException(status_code=404, detail=f"PrintFlow order {order_id} not found")
+    
+    order = get_order(order_id)
+    if not order:
+        orders = load_orders()
+        for o in orders:
+            if o.get("order_id") == order_id or o.get("razorpay_order_id") == order_id:
+                order = o
+                break
+
+    if not order:
+        raise HTTPException(status_code=404, detail=f"PrintFlow order {order_id} not found")
+
+    order["status"] = "PRINT_QUEUED"
+    order["document_status"] = "UPLOADED"
+    order["paid"] = True
+
+    # Color mode vs duplex defensive rule
+    color_mode = str(payload.get("color_mode") or order.get("color_mode") or "black_white").lower()
+    if color_mode in ("color", "colour"):
+        order["color_mode"] = "color"
+        order["duplex"] = "single"
+        order["binding"] = ""
+    else:
+        order["color_mode"] = "black_white"
+        binding = str(payload.get("binding") or order.get("binding") or "").lower()
+        duplex = str(payload.get("duplex") or order.get("duplex") or "single").lower()
+        if duplex in ("double", "duplex"):
+            duplex = "duplex_short" if binding == "short_edge" else "duplex_long"
+        order["duplex"] = duplex
+        order["binding"] = binding
+
+    for k, v in payload.items():
+        if v is not None and k not in ("status", "document_status", "color_mode", "duplex", "binding"):
+            order[k] = v
+
+    order.setdefault("scale_mode", "fit")
+    order.setdefault("paper_size", "a4")
+    order.setdefault("orientation", "portrait")
+    order.setdefault("margins", "normal")
+    order.setdefault("print_mode", "standard")
+    order.setdefault("pages_per_sheet", 1)
+    order.setdefault("page_order", "horizontal")
+    save_order(order)
+    return order
 
 @app.post("/api/agent/poll")
 def agent_poll_endpoint(req: dict, x_print_agent_token: Optional[str] = Header(None)):
@@ -463,15 +503,29 @@ def create_razorpay_order_endpoint(request: RazorpayOrderRequest):
         razorpay_order = resp.json()
         final_order_id = razorpay_order["id"]
 
+        color_str = (request.color_mode or "black_white").lower()
+        is_color = color_str in ("color", "colour")
+        if is_color:
+            enforced_duplex = "single"
+            enforced_binding = ""
+        else:
+            enforced_binding = (request.binding or "").lower()
+            enforced_duplex = (request.duplex or "single").lower()
+            if enforced_duplex in ("double", "duplex"):
+                enforced_duplex = "duplex_short" if enforced_binding == "short_edge" else "duplex_long"
+
+        pf_order_id = request.order_id if (request.order_id and str(request.order_id).startswith("PF-")) else f"PF-{uuid4().hex[:6].upper()}"
+
         new_order_entry = {
-            "order_id": final_order_id,
+            "order_id": pf_order_id,
             "razorpay_order_id": final_order_id,
             "file_name": request.file_name or "document.pdf",
             "file_path": request.file_path or "",
             "copies": request.copies or 1,
             "pages": request.pages or 1,
-            "color_mode": request.color_mode or "black_white",
-            "duplex": request.duplex or "single",
+            "color_mode": "color" if is_color else "black_white",
+            "duplex": enforced_duplex,
+            "binding": enforced_binding,
             "paper_size": request.paper_size or "a4",
             "orientation": request.orientation or "portrait",
             "scale_mode": "actual" if (request.scale_mode or "").lower() in ("actual", "actual_size") else "fit",
@@ -487,13 +541,15 @@ def create_razorpay_order_endpoint(request: RazorpayOrderRequest):
             "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         }
         save_order(new_order_entry)
-        if not get_order(final_order_id):
+        if not get_order(pf_order_id):
             raise HTTPException(status_code=503, detail="PrintFlow could not persist the order before payment")
 
         return {
             "status": "success",
             "key_id": key_id,
             "order_id": final_order_id,
+            "pf_order_id": pf_order_id,
+            "print_order_id": pf_order_id,
             "amount": amount_in_paise,
             "currency": request.currency or "INR",
             "mode": mode_str
@@ -536,6 +592,7 @@ def verify_razorpay_payment(payload: dict):
         "status": "success",
         "message": "Razorpay Payment verified successfully. Job queued for PrintAgent.",
         "order_status": "PRINT_QUEUED",
+        "order_id": queued_order.get("order_id") or payload.get("print_order_id") or razorpay_order_id,
         "order": queued_order,
         "payload": payload
     }

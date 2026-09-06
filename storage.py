@@ -114,7 +114,8 @@ def init_storage():
                     "print_mode": "TEXT DEFAULT 'standard'",
                     "pages_per_sheet": "INTEGER DEFAULT 1",
                     "page_order": "TEXT DEFAULT 'horizontal'",
-                    "customer_mobile": "TEXT DEFAULT 'Guest'"
+                    "customer_mobile": "TEXT DEFAULT 'Guest'",
+                    "binding": "TEXT DEFAULT ''"
                 }.items():
                     cursor.execute(f"ALTER TABLE printflow_orders ADD COLUMN IF NOT EXISTS {column} {definition}")
             connection.commit()
@@ -156,7 +157,8 @@ def init_storage():
                 "print_mode": "TEXT DEFAULT 'standard'",
                 "pages_per_sheet": "INTEGER DEFAULT 1",
                 "page_order": "TEXT DEFAULT 'horizontal'",
-                "customer_mobile": "TEXT DEFAULT 'Guest'"
+                "customer_mobile": "TEXT DEFAULT 'Guest'",
+                "binding": "TEXT DEFAULT ''"
             }
             for column, definition in migration_columns.items():
                 if column not in existing_columns:
@@ -240,6 +242,7 @@ def save_order(order: dict) -> dict:
     order.setdefault("pages_per_sheet", 1)
     order.setdefault("page_order", "horizontal")
     order.setdefault("customer_mobile", "Guest")
+    order.setdefault("binding", "")
     # Clean claimed_at to ensure it matches DOUBLE PRECISION schema
     raw_claimed = order.get("claimed_at")
     if raw_claimed is not None and not isinstance(raw_claimed, (int, float)):
@@ -250,7 +253,7 @@ def save_order(order: dict) -> dict:
                 order["claimed_at"] = datetime.strptime(str(raw_claimed), "%Y-%m-%d %H:%M:%S").timestamp()
             except Exception:
                 order["claimed_at"] = None
-    columns = ["order_id", "razorpay_order_id", "razorpay_payment_id", "file_name", "file_path", "file_size", "pages", "copies", "paper_size", "page_range", "color_mode", "duplex", "orientation", "print_quality", "dpi", "scaling", "custom_scale", "margins", "amount", "paid", "status", "document_status", "timestamp", "created_at", "completed_at", "print_error", "claimed_at", "printed_by_printer", "backup_printer", "retry_count", "scale_mode", "print_mode", "pages_per_sheet", "page_order", "customer_mobile"]
+    columns = ["order_id", "razorpay_order_id", "razorpay_payment_id", "file_name", "file_path", "file_size", "pages", "copies", "paper_size", "page_range", "color_mode", "duplex", "binding", "orientation", "print_quality", "dpi", "scaling", "custom_scale", "margins", "amount", "paid", "status", "document_status", "timestamp", "created_at", "completed_at", "print_error", "claimed_at", "printed_by_printer", "backup_printer", "retry_count", "scale_mode", "print_mode", "pages_per_sheet", "page_order", "customer_mobile"]
     values = [order.get(column) for column in columns]
     placeholders = ", ".join(["%s"] * len(columns)) if DATABASE_URL else ", ".join(["?"] * len(columns))
     updates = ", ".join(f"{column}=excluded.{column}" for column in columns if column != "order_id")

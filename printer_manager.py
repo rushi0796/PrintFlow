@@ -6,6 +6,7 @@ from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent
 CONFIG_FILE = BASE_DIR / "printer_config.json"
+AGENT_CONFIG_FILE = BASE_DIR / "agent_config.json"
 
 DEFAULT_CONFIG = {
     "bw_printer": "",
@@ -14,12 +15,23 @@ DEFAULT_CONFIG = {
 }
 
 def get_printer_config():
-    if CONFIG_FILE.exists():
+    config = DEFAULT_CONFIG.copy()
+    if AGENT_CONFIG_FILE.exists():
         try:
-            return json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+            agent_data = json.loads(AGENT_CONFIG_FILE.read_text(encoding="utf-8"))
+            if agent_data.get("bw_printer"):
+                config["bw_printer"] = agent_data["bw_printer"]
+            if agent_data.get("color_printer"):
+                config["color_printer"] = agent_data["color_printer"]
         except Exception:
             pass
-    return DEFAULT_CONFIG.copy()
+    if CONFIG_FILE.exists():
+        try:
+            printer_data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+            config.update(printer_data)
+        except Exception:
+            pass
+    return config
 
 def save_printer_config(config: dict):
     CONFIG_FILE.write_text(json.dumps(config, indent=2), encoding="utf-8")
