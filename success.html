@@ -475,6 +475,18 @@
     <div class="headline-card">
         <h3 id="statusHeadline" class="status-headline">Preparing your print...</h3>
         <p id="statusSubtext" class="status-subtext">Your payment has been received. Queueing document for physical printer.</p>
+        
+        <!-- QUEUE INFO CARD (Shown strictly only when jobs_ahead > 0) -->
+        <div id="queueCard" style="display: none; margin-top: 14px; padding: 12px 14px; background: #fffbeb; border: 1.5px solid #fde68a; border-radius: 12px; text-align: left;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                <span style="font-size: 11px; font-weight: 800; color: #b45309; text-transform: uppercase; letter-spacing: 0.5px;">Live Print Queue</span>
+                <span id="queuePosBadge" style="background: #fef3c7; color: #92400e; font-size: 12px; font-weight: 800; padding: 3px 8px; border-radius: 6px; border: 1px solid #fcd34d;">Queue Position: #2</span>
+            </div>
+            <div style="display: flex; justify-content: space-between; align-items: center; font-size: 13px; color: #78350f; font-weight: 700;">
+                <span id="queueAheadText">1 order ahead</span>
+                <span id="queueWaitText">Estimated Wait: ~1 min</span>
+            </div>
+        </div>
     </div>
 
     <!-- PRIVACY BADGE -->

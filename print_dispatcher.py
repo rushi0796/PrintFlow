@@ -104,15 +104,68 @@ def create_n_up_pdf(
         print(f"[MICRO XEROX N-UP WARNING]: {nup_err}")
         return input_pdf_path
 
+def extract_pdf_page_subset(input_pdf_path: Path, page_range_str: str) -> Path:
+    if not page_range_str or str(page_range_str).strip().lower() == "all":
+        return input_pdf_path
+    try:
+        import pypdf
+        reader = pypdf.PdfReader(str(input_pdf_path))
+        total_pages = len(reader.pages)
+        if total_pages <= 0:
+            return input_pdf_path
+
+        selected_pages = []
+        cleaned = str(page_range_str).strip().lower()
+        if cleaned == "even":
+            selected_pages = [p for p in range(2, total_pages + 1, 2)]
+        elif cleaned == "odd":
+            selected_pages = [p for p in range(1, total_pages + 1, 2)]
+        else:
+            for part in cleaned.split(","):
+                part = part.strip()
+                if not part:
+                    continue
+                if "-" in part:
+                    subparts = part.split("-")
+                    if len(subparts) == 2 and subparts[0].strip().isdigit() and subparts[1].strip().isdigit():
+                        start_p = int(subparts[0].strip())
+                        end_p = int(subparts[1].strip())
+                        if start_p <= end_p:
+                            for p in range(start_p, end_p + 1):
+                                if 1 <= p <= total_pages and p not in selected_pages:
+                                    selected_pages.append(p)
+                elif part.isdigit():
+                    p = int(part)
+                    if 1 <= p <= total_pages and p not in selected_pages:
+                        selected_pages.append(p)
+
+        if not selected_pages:
+            print(f"[PRINT DISPATCH SUBSET WARNING] Page range '{page_range_str}' resolved to 0 valid pages for document with {total_pages} page(s). Printing all pages.")
+            return input_pdf_path
+
+        selected_pages.sort()
+        writer = pypdf.PdfWriter()
+        for p_num in selected_pages:
+            writer.add_page(reader.pages[p_num - 1])
+
+        out_path = input_pdf_path.parent / f"subset_{input_pdf_path.name}"
+        with open(out_path, "wb") as f_out:
+            writer.write(f_out)
+        print(f"[PRINT DISPATCH PAGE FILTER] Extracted {len(selected_pages)} page(s) ({selected_pages}) from {total_pages} total page(s).")
+        return out_path
+    except Exception as exc:
+        print(f"[PRINT DISPATCH PAGE SUBSET ERROR]: {exc}")
+        return input_pdf_path
+
 def optimize_pdf_for_full_page(
     input_pdf_path: Path,
     paper_size: str = "a4",
     orientation: str = "portrait"
 ) -> Path:
     """
-    Scales the ENTIRE original page/image canvas proportionally to cover
-    and fill the selected paper dimensions to all four corners without white bands
-    or empty corners, preserving 100% of the artwork and colored background.
+    Scales the ENTIRE original page/image canvas corner-to-corner to cover
+    and fill the selected paper dimensions to all four edges without white bands,
+    letterboxing, pillarboxing, or empty corners, preserving 100% of the artwork.
     """
     try:
         import pypdf
@@ -139,18 +192,15 @@ def optimize_pdf_for_full_page(
         for page in reader.pages:
             orig_w = float(page.mediabox.width)
             orig_h = float(page.mediabox.height)
+            llx = float(page.mediabox.lower_left[0])
+            lly = float(page.mediabox.lower_left[1])
 
-            # Scale proportionally to the MAXIMUM POSSIBLE SIZE that covers the physical paper area:
-            scale = min(sheet_w / orig_w, sheet_h / orig_h)
-            scaled_w = orig_w * scale
-            scaled_h = orig_h * scale
-
-            # Center the complete canvas on the physical paper
-            tx = (sheet_w - scaled_w) / 2.0
-            ty = (sheet_h - scaled_h) / 2.0
+            # True corner-to-corner scale factors
+            scale_x = sheet_w / orig_w if orig_w > 0 else 1.0
+            scale_y = sheet_h / orig_h if orig_h > 0 else 1.0
 
             new_page = writer.add_blank_page(width=sheet_w, height=sheet_h)
-            op = Transformation().scale(scale, scale).translate(tx, ty)
+            op = Transformation().translate(-llx, -lly).scale(scale_x, scale_y)
             new_page.merge_transformed_page(page, op)
 
         out_path = input_pdf_path.parent / f"fp_{input_pdf_path.name}"
@@ -183,6 +233,7 @@ def dispatch_print_job(order_data: dict) -> dict:
     scale_mode = order_data.get("scale_mode", "fit")
     pages_per_sheet = int(order_data.get("pages_per_sheet", 1))
     page_order = order_data.get("page_order", "horizontal")
+    page_range = str(order_data.get("page_range", "all"))
 
     # Resolve absolute file path on server
     clean_filename = Path(file_rel_path).name if file_rel_path else ""
@@ -192,7 +243,7 @@ def dispatch_print_job(order_data: dict) -> dict:
     is_image = ext in (".jpg", ".jpeg", ".png", ".webp", ".bmp")
 
     target_printer = get_target_printer(color_mode)
-    print(f"[PRINT DISPATCH] Order {order_id} | File: '{clean_filename}' | Mode: {color_mode} | Printer: '{target_printer}' | Duplex: {duplex} | Paper: {paper_size} | Copies: {copies} | Scale: {scale_mode}")
+    print(f"[PRINT DISPATCH] Order {order_id} | File: '{clean_filename}' | Pages: {page_range} | Mode: {color_mode} | Printer: '{target_printer}' | Duplex: {duplex} | Paper: {paper_size} | Copies: {copies} | Scale: {scale_mode}")
 
     if not abs_file_path.exists():
         print(f"[PRINT DISPATCH WARNING] File '{abs_file_path}' not found on disk. Simulating spooling queue.")
@@ -227,6 +278,10 @@ def dispatch_print_job(order_data: dict) -> dict:
                 ext = ".pdf"
         except Exception as img_err:
             print(f"[PRINT DISPATCH IMAGE CONVERT WARNING]: {img_err}")
+
+    # Filter PDF to requested page subset (All, Custom e.g. 1,3,5-8,12, Even, Odd)
+    if ext == ".pdf" and page_range and page_range.strip().lower() != "all":
+        target_print_file = extract_pdf_page_subset(target_print_file, page_range)
 
     # Process Micro Xerox layout for PDF files
     if ext == ".pdf" and pages_per_sheet > 1:

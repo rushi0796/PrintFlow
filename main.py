@@ -23,6 +23,7 @@ from storage import (
     get_document,
     get_order,
     get_queued_orders,
+    get_active_queue_orders,
     list_orders as durable_list_orders,
     queue_paid_order,
     save_document,
@@ -129,6 +130,7 @@ class PrintOrder(BaseModel):
     file_name: str
     copies: int = 1
     pages: int = 1
+    page_range: Optional[str] = "all"
     color_mode: str = "black_white"
     duplex: str = "single"
     binding: Optional[str] = None
@@ -146,6 +148,7 @@ class PrintOrder(BaseModel):
 class RazorpayOrderRequest(BaseModel):
     amount: float
     pages: Optional[int] = None
+    page_range: Optional[str] = "all"
     copies: Optional[int] = None
     color_mode: Optional[str] = "black_white"
     duplex: Optional[str] = "single"
@@ -219,6 +222,7 @@ def create_print_order(order: PrintOrder):
         "file_name": order.file_name,
         "copies": order.copies,
         "pages": order.pages,
+        "page_range": order.page_range or "all",
         "color_mode": "color" if is_color else "black_white",
         "duplex": enforced_duplex,
         "binding": enforced_binding,
@@ -302,9 +306,16 @@ def queue_order_for_printing(payload: dict):
     if not order:
         raise HTTPException(status_code=404, detail=f"PrintFlow order {order_id} not found")
 
+    # Idempotency protection: do NOT reset an order that is actively printing or completed
+    if order.get("status") in ("PRINTING", "COMPLETED"):
+        return order
+
     order["status"] = "PRINT_QUEUED"
     order["document_status"] = "UPLOADED"
     order["paid"] = True
+
+    # Page range preservation
+    order["page_range"] = payload.get("page_range") or order.get("page_range") or "all"
 
     # Color mode vs duplex defensive rule
     color_mode = str(payload.get("color_mode") or order.get("color_mode") or "black_white").lower()
@@ -325,6 +336,7 @@ def queue_order_for_printing(payload: dict):
         if v is not None and k not in ("status", "document_status", "color_mode", "duplex", "binding"):
             order[k] = v
 
+    order.setdefault("page_range", "all")
     order.setdefault("scale_mode", "fit")
     order.setdefault("paper_size", "a4")
     order.setdefault("orientation", "portrait")
@@ -424,10 +436,55 @@ def get_order_status_endpoint(
         if not x_customer_mobile or x_customer_mobile.strip() != str(order_mobile).strip():
             raise HTTPException(status_code=403, detail="Access denied: Unauthorized order access")
 
+    order_status = matching_order.get("status", "PRINT_QUEUED")
+    queue_position = 0
+    jobs_ahead = 0
+    estimated_wait = ""
+    estimated_wait_seconds = 0
+
+    if order_status == "PRINT_QUEUED":
+        active_jobs = get_active_queue_orders()
+        order_idx = None
+        for idx, job in enumerate(active_jobs):
+            if job.get("order_id") == order_id or job.get("razorpay_order_id") == order_id:
+                order_idx = idx
+                break
+
+        if order_idx is None:
+            queue_position = 1
+            jobs_ahead = 0
+            estimated_wait = "< 1 min"
+            estimated_wait_seconds = 0
+        else:
+            jobs_ahead = order_idx
+            queue_position = order_idx + 1
+            total_sec = 0
+            for j in active_jobs[:order_idx]:
+                p = int(j.get("pages") or 1)
+                c = int(j.get("copies") or 1)
+                cm = str(j.get("color_mode") or "").lower()
+                rate = 7 if cm in ("color", "colour") else 4
+                total_sec += (p * c * rate) + 5
+            estimated_wait_seconds = total_sec
+            if total_sec < 60:
+                estimated_wait = "< 1 min"
+            else:
+                mins = max(1, round(total_sec / 60))
+                estimated_wait = f"~{mins} min"
+    elif order_status == "PRINTING":
+        queue_position = 1
+        jobs_ahead = 0
+        estimated_wait = "Printing now..."
+        estimated_wait_seconds = 0
+
     return {
         "status": "success",
         "order_id": order_id,
-        "order_status": matching_order.get("status", "PRINT_QUEUED"),
+        "order_status": order_status,
+        "queue_position": queue_position,
+        "jobs_ahead": jobs_ahead,
+        "estimated_wait": estimated_wait,
+        "estimated_wait_seconds": estimated_wait_seconds,
         "document_status": matching_order.get("document_status", "UPLOADED"),
         "deleted": matching_order.get("document_status") == "DELETED",
         "order": matching_order
@@ -523,6 +580,7 @@ def create_razorpay_order_endpoint(request: RazorpayOrderRequest):
             "file_path": request.file_path or "",
             "copies": request.copies or 1,
             "pages": request.pages or 1,
+            "page_range": request.page_range or "all",
             "color_mode": "color" if is_color else "black_white",
             "duplex": enforced_duplex,
             "binding": enforced_binding,

@@ -281,6 +281,11 @@ def get_queued_orders() -> list[dict]:
     return _execute("SELECT * FROM printflow_orders WHERE status='PRINT_QUEUED' ORDER BY created_at ASC", fetch="all") or []
 
 
+def get_active_queue_orders() -> list[dict]:
+    init_storage()
+    return _execute("SELECT * FROM printflow_orders WHERE status IN ('PRINTING', 'PRINT_QUEUED') ORDER BY CASE WHEN status='PRINTING' THEN 0 ELSE 1 END, created_at ASC", fetch="all") or []
+
+
 def queue_paid_order(order_id: str, razorpay_order_id: str, payment_id: str) -> Optional[dict]:
     init_storage()
     if DATABASE_URL:

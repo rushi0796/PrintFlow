@@ -912,7 +912,8 @@ async function prepareRealLivePreviewPages() {
                 livePreviewPages.push({
                     type: "image",
                     title: fileName,
-                    src: imgUrl
+                    src: imgUrl,
+                    docPageNum: fi + 1
                 });
             } else if (isPdf && typeof pdfjsLib !== "undefined") {
                 try {
@@ -932,7 +933,8 @@ async function prepareRealLivePreviewPages() {
                             title: `${fileName} (P.${p})`,
                             src: canvas.toDataURL("image/png"),
                             width: vp.width,
-                            height: vp.height
+                            height: vp.height,
+                            docPageNum: p
                         });
                     }
                 } catch (pdfErr) {
@@ -958,7 +960,8 @@ async function prepareRealLivePreviewPages() {
                 livePreviewPages.push({
                     type: "canvas",
                     title: fileName,
-                    src: canvas.toDataURL("image/png")
+                    src: canvas.toDataURL("image/png"),
+                    docPageNum: fi + 1
                 });
             }
         }
@@ -969,6 +972,114 @@ async function prepareRealLivePreviewPages() {
         if (loadingEl) loadingEl.style.display = "none";
         renderRealLivePreviewUI();
     }
+}
+
+function parseAndValidatePageSelection(selectionType, customStr, totalPages) {
+    totalPages = Math.max(1, parseInt(totalPages, 10) || 1);
+
+    if (selectionType === "all") {
+        const pages = [];
+        for (let i = 1; i <= totalPages; i++) pages.push(i);
+        return { isValid: true, pages, error: "", canonicalString: "all" };
+    }
+
+    if (selectionType === "even") {
+        const pages = [];
+        for (let i = 2; i <= totalPages; i += 2) pages.push(i);
+        if (pages.length === 0) {
+            return { isValid: false, pages: [], error: "No even pages in a 1-page document.", canonicalString: "even" };
+        }
+        return { isValid: true, pages, error: "", canonicalString: "even" };
+    }
+
+    if (selectionType === "odd") {
+        const pages = [];
+        for (let i = 1; i <= totalPages; i += 2) pages.push(i);
+        return { isValid: true, pages, error: "", canonicalString: "odd" };
+    }
+
+    if (selectionType === "custom") {
+        const input = (customStr || "").trim();
+        if (!input) {
+            return { isValid: false, pages: [], error: "Please enter page numbers or ranges (e.g. 1,3,5-8)", canonicalString: "" };
+        }
+
+        if (!/^[0-9,\-\s]+$/.test(input)) {
+            return { isValid: false, pages: [], error: "Invalid characters. Use only numbers, commas, and hyphens (e.g. 1,3,5-8)", canonicalString: input };
+        }
+
+        const tokens = input.split(",").map(t => t.trim()).filter(Boolean);
+        if (!tokens.length) {
+            return { isValid: false, pages: [], error: "Please enter at least one valid page number", canonicalString: input };
+        }
+
+        const pageSet = new Set();
+        for (const token of tokens) {
+            if (token.includes("-")) {
+                const parts = token.split("-").map(p => p.trim()).filter(Boolean);
+                if (parts.length !== 2) {
+                    return { isValid: false, pages: [], error: `Invalid range format: "${token}"`, canonicalString: input };
+                }
+                const start = parseInt(parts[0], 10);
+                const end = parseInt(parts[1], 10);
+                if (isNaN(start) || isNaN(end)) {
+                    return { isValid: false, pages: [], error: `Invalid range numbers in "${token}"`, canonicalString: input };
+                }
+                if (start < 1) {
+                    return { isValid: false, pages: [], error: `Page number must be at least 1 (found ${start})`, canonicalString: input };
+                }
+                if (start > totalPages) {
+                    return { isValid: false, pages: [], error: `Page ${start} exceeds total document pages (${totalPages})`, canonicalString: input };
+                }
+                if (end > totalPages) {
+                    return { isValid: false, pages: [], error: `Page ${end} exceeds total document pages (${totalPages})`, canonicalString: input };
+                }
+                if (start > end) {
+                    return { isValid: false, pages: [], error: `Invalid range: ${start}-${end}. Start page cannot be greater than end page.`, canonicalString: input };
+                }
+                for (let p = start; p <= end; p++) {
+                    pageSet.add(p);
+                }
+            } else {
+                const p = parseInt(token, 10);
+                if (isNaN(p)) {
+                    return { isValid: false, pages: [], error: `Invalid page number: "${token}"`, canonicalString: input };
+                }
+                if (p < 1) {
+                    return { isValid: false, pages: [], error: `Page number must be at least 1 (found ${p})`, canonicalString: input };
+                }
+                if (p > totalPages) {
+                    return { isValid: false, pages: [], error: `Page ${p} exceeds total document pages (${totalPages})`, canonicalString: input };
+                }
+                pageSet.add(p);
+            }
+        }
+
+        const sortedPages = Array.from(pageSet).sort((a, b) => a - b);
+        if (!sortedPages.length) {
+            return { isValid: false, pages: [], error: "No valid pages selected", canonicalString: input };
+        }
+
+        return { isValid: true, pages: sortedPages, error: "", canonicalString: sortedPages.join(",") };
+    }
+
+    return { isValid: true, pages: [1], error: "", canonicalString: "all" };
+}
+
+function getEffectivePreviewPages() {
+    if (!livePreviewPages || !livePreviewPages.length) return [];
+    const pageSelEl = document.querySelector('input[name="pageSelection"]:checked');
+    const pageSelection = pageSelEl ? pageSelEl.value : "all";
+    const customInputEl = document.getElementById("customPagesInput");
+    const customStr = customInputEl ? customInputEl.value.trim() : "";
+    const totalPages = livePreviewPages.length;
+
+    const validation = parseAndValidatePageSelection(pageSelection, customStr, totalPages);
+    if (!validation.isValid || !validation.pages.length) {
+        return livePreviewPages;
+    }
+    const pageSet = new Set(validation.pages);
+    return livePreviewPages.filter(p => pageSet.has(p.docPageNum || 1));
 }
 
 function renderRealLivePreviewUI() {
@@ -988,7 +1099,9 @@ function renderRealLivePreviewUI() {
     const pageOrderEl = document.querySelector('input[name="pageOrder"]:checked');
     const pageOrder = pageOrderEl ? pageOrderEl.value : "horizontal";
 
-    if (!livePreviewPages.length) {
+    const pagesToRender = getEffectivePreviewPages();
+
+    if (!pagesToRender.length) {
         if (loadingEl) {
             loadingEl.textContent = "Document uploaded";
             loadingEl.style.display = "block";
@@ -1029,7 +1142,7 @@ function renderRealLivePreviewUI() {
             }
             nupGrid.className = gridClass;
 
-            const totalSheets = Math.ceil(livePreviewPages.length / pagesPerSheet) || 1;
+            const totalSheets = Math.ceil(pagesToRender.length / pagesPerSheet) || 1;
             const currentSheet = Math.floor(livePreviewIndex / pagesPerSheet);
             const startIdx = currentSheet * pagesPerSheet;
 
@@ -1040,7 +1153,7 @@ function renderRealLivePreviewUI() {
                     const pageIdx = startIdx + slotIdx;
                     // CRITICAL FIX: If pageIdx exceeds document pages, MUST BE COMPLETELY BLANK.
                     // NEVER fallback to livePreviewPages[0] or duplicate Page 1.
-                    const targetPage = (pageIdx < livePreviewPages.length) ? livePreviewPages[pageIdx] : null;
+                    const targetPage = (pageIdx < pagesToRender.length) ? pagesToRender[pageIdx] : null;
 
                     if (targetPage && targetPage.src) {
                         cellsHtml += `<div class="nup-cell"><img src="${targetPage.src}" class="nup-cell-element" alt="${escapeHtml(targetPage.title)}"></div>`;
@@ -1083,13 +1196,13 @@ function renderRealLivePreviewUI() {
             if (paperSheetPreview) paperSheetPreview.style.display = "none";
             notebookSpread.style.display = "flex";
 
-            const totalPages = livePreviewPages.length;
+            const totalPages = pagesToRender.length;
             const currentSpreadIndex = Math.floor(livePreviewIndex / 2) * 2;
             const leftIdx = currentSpreadIndex;
             const rightIdx = currentSpreadIndex + 1;
 
-            const leftPage = (leftIdx < totalPages) ? livePreviewPages[leftIdx] : null;
-            const rightPage = (rightIdx < totalPages) ? livePreviewPages[rightIdx] : null;
+            const leftPage = (leftIdx < totalPages) ? pagesToRender[leftIdx] : null;
+            const rightPage = (rightIdx < totalPages) ? pagesToRender[rightIdx] : null;
 
             // Render Left Page (Front side)
             if (leftPage && notebookLeftImg) {
@@ -1097,7 +1210,8 @@ function renderRealLivePreviewUI() {
                 notebookLeftImg.style.display = "block";
                 notebookLeftImg.alt = leftPage.title;
                 if (notebookLeftBlank) notebookLeftBlank.style.display = "none";
-                if (notebookLeftTagText) notebookLeftTagText.textContent = `Page ${leftIdx + 1} • Front`;
+                const leftLabel = leftPage.docPageNum ? `Page ${leftPage.docPageNum} • Front` : `Page ${leftIdx + 1} • Front`;
+                if (notebookLeftTagText) notebookLeftTagText.textContent = leftLabel;
             } else {
                 if (notebookLeftImg) notebookLeftImg.style.display = "none";
                 if (notebookLeftBlank) notebookLeftBlank.style.display = "flex";
@@ -1110,7 +1224,8 @@ function renderRealLivePreviewUI() {
                 notebookRightImg.style.display = "block";
                 notebookRightImg.alt = rightPage.title;
                 if (notebookRightBlank) notebookRightBlank.style.display = "none";
-                if (notebookRightTagText) notebookRightTagText.textContent = `Page ${rightIdx + 1} • Back`;
+                const rightLabel = rightPage.docPageNum ? `Page ${rightPage.docPageNum} • Back` : `Page ${rightIdx + 1} • Back`;
+                if (notebookRightTagText) notebookRightTagText.textContent = rightLabel;
 
                 if (duplexBinding === "short_edge") {
                     if (notebookFlipBadge) notebookFlipBadge.style.display = "inline-block";
@@ -1131,10 +1246,12 @@ function renderRealLivePreviewUI() {
             const currentSpreadNum = Math.floor(currentSpreadIndex / 2) + 1;
 
             if (pageIndicator) {
+                const leftNum = leftPage ? (leftPage.docPageNum || leftIdx + 1) : (leftIdx + 1);
+                const rightNum = rightPage ? (rightPage.docPageNum || rightIdx + 1) : null;
                 if (rightPage) {
-                    pageIndicator.textContent = `Pages ${leftIdx + 1}–${rightIdx + 1} of ${totalPages} (Spread ${currentSpreadNum} of ${totalSpreads})`;
+                    pageIndicator.textContent = `Pages ${leftNum} & ${rightNum} (Spread ${currentSpreadNum} of ${totalSpreads})`;
                 } else {
-                    pageIndicator.textContent = `Page ${leftIdx + 1} of ${totalPages} (Spread ${currentSpreadNum} of ${totalSpreads})`;
+                    pageIndicator.textContent = `Page ${leftNum} (Spread ${currentSpreadNum} of ${totalSpreads})`;
                 }
             }
             if (navBar) {
@@ -1149,9 +1266,9 @@ function renderRealLivePreviewUI() {
             if (nupGrid) nupGrid.style.display = "none";
             if (standardContent) standardContent.style.display = "flex";
 
-            const totalPages = livePreviewPages.length;
+            const totalPages = pagesToRender.length;
             const pageIdx = Math.max(0, Math.min(livePreviewIndex, totalPages - 1));
-            const activePage = livePreviewPages[pageIdx];
+            const activePage = pagesToRender[pageIdx];
 
             if (activePage && liveImg) {
                 liveImg.src = activePage.src;
@@ -1160,7 +1277,9 @@ function renderRealLivePreviewUI() {
             }
 
             if (pageIndicator) {
-                pageIndicator.textContent = `${activePage?.title || 'Page'} (${pageIdx + 1} of ${totalPages})`;
+                const docNum = activePage?.docPageNum;
+                const docSuffix = docNum ? ` (Doc P.${docNum})` : "";
+                pageIndicator.textContent = `${activePage?.title || 'Page'} [${pageIdx + 1} of ${totalPages}]${docSuffix}`;
             }
             if (navBar) {
                 navBar.style.display = totalPages > 1 ? "flex" : "none";
@@ -1179,11 +1298,49 @@ function updatePrintDetailsAndPreview() {
     const previewLabelBadge = document.getElementById("previewLabelBadge");
     const doubleSideLabel = document.getElementById("doubleSideLabel");
     const radioDoubleSide = document.getElementById("radioDoubleSide");
+    const paymentBtnEl = document.getElementById("paymentBtn");
 
     if (!totalPriceBox && !paperSheetPreview) return;
 
-    const pageCount = Number(localStorage.getItem("pdfPageCount")) || 1;
+    const totalDocPages = Number(localStorage.getItem("pdfPageCount")) || (livePreviewPages.length ? livePreviewPages.length : 1);
     const copies = copiesBox ? (Number(copiesBox.value) || 1) : 1;
+
+    // Pages Selection Handling
+    const pageSelEl = document.querySelector('input[name="pageSelection"]:checked');
+    const pageSelection = pageSelEl ? pageSelEl.value : "all";
+    const customInputEl = document.getElementById("customPagesInput");
+    const customPagesVal = customInputEl ? customInputEl.value.trim() : "";
+    const customContainer = document.getElementById("customPagesContainer");
+    const customErrorEl = document.getElementById("customPagesError");
+
+    if (customContainer) {
+        customContainer.style.display = (pageSelection === "custom") ? "block" : "none";
+    }
+
+    const validation = parseAndValidatePageSelection(pageSelection, customPagesVal, totalDocPages);
+    if (customErrorEl) {
+        if (!validation.isValid && pageSelection === "custom") {
+            customErrorEl.textContent = validation.error;
+            customErrorEl.style.display = "block";
+        } else {
+            customErrorEl.textContent = "";
+            customErrorEl.style.display = "none";
+        }
+    }
+
+    if (paymentBtnEl) {
+        paymentBtnEl.disabled = (!validation.isValid && pageSelection === "custom");
+    }
+
+    const effectivePagesCount = validation.isValid ? validation.pages.length : totalDocPages;
+    const pageCountEl = document.getElementById("pageCount");
+    if (pageCountEl) {
+        if (pageSelection !== "all" && validation.isValid) {
+            pageCountEl.textContent = `Total: ${totalDocPages} Pages | ${effectivePagesCount} Selected`;
+        } else {
+            pageCountEl.textContent = `Total: ${totalDocPages} Page${totalDocPages > 1 ? 's' : ''}`;
+        }
+    }
 
     const printModeEl = document.querySelector('input[name="printMode"]:checked');
     const printMode = printModeEl ? printModeEl.value : "standard";
@@ -1291,7 +1448,7 @@ function updatePrintDetailsAndPreview() {
 
     renderRealLivePreviewUI();
 
-    const totalAmount = calculatePrice(pageCount, copies, colorMode, printSide, printMode, pagesPerSheet);
+    const totalAmount = calculatePrice(effectivePagesCount, copies, colorMode, printSide, printMode, pagesPerSheet);
     if (totalPriceBox) {
         totalPriceBox.textContent = "Total: ₹" + totalAmount;
     }
@@ -1309,6 +1466,10 @@ function updatePrintDetailsAndPreview() {
     localStorage.setItem("pagesPerSheet", String(pagesPerSheet));
     localStorage.setItem("pageOrder", pageOrder);
     localStorage.setItem("scaleMode", scaleMode);
+    localStorage.setItem("pageSelection", pageSelection);
+    localStorage.setItem("customPagesInput", customPagesVal);
+    localStorage.setItem("pageRange", validation.isValid ? validation.canonicalString : "all");
+    localStorage.setItem("selectedPagesCount", String(effectivePagesCount));
 }
 
 const backBtn = document.getElementById("backBtn");
@@ -1357,7 +1518,8 @@ if (printDetailsFileName) {
             } else if (printSide === "double") {
                 step = 2;
             }
-            if (livePreviewIndex + step < livePreviewPages.length) {
+            const pagesToRender = getEffectivePreviewPages();
+            if (livePreviewIndex + step < pagesToRender.length) {
                 livePreviewIndex += step;
             }
             renderRealLivePreviewUI();
@@ -1385,6 +1547,20 @@ if (printDetailsFileName) {
 
     const settingsForm = document.getElementById("printDetailsForm");
     if (settingsForm) {
+        const savedPageSel = localStorage.getItem("pageSelection");
+        if (savedPageSel) {
+            const selRadio = document.querySelector(`input[name="pageSelection"][value="${savedPageSel}"]`);
+            if (selRadio) selRadio.checked = true;
+        }
+        const savedCustomPages = localStorage.getItem("customPagesInput");
+        const customInputEl = document.getElementById("customPagesInput");
+        if (savedCustomPages && customInputEl) {
+            customInputEl.value = savedCustomPages;
+        }
+        if (customInputEl) {
+            customInputEl.addEventListener("input", updatePrintDetailsAndPreview);
+        }
+
         const savedScale = localStorage.getItem("scaleMode");
         if (savedScale) {
             const scaleVal = (savedScale === "actual") ? "actual" : "fit";
@@ -1455,6 +1631,7 @@ if (paymentBtn) {
 // ==========================
 
 const paymentFile = document.getElementById("paymentFile");
+const paymentPages = document.getElementById("paymentPages");
 const paymentCopies = document.getElementById("paymentCopies");
 const paymentColorMode = document.getElementById("paymentColorMode");
 const paymentAmount = document.getElementById("paymentAmount");
@@ -1472,8 +1649,22 @@ if (paymentFile && paymentCopies && paymentAmount) {
     const duplexBindingVal = localStorage.getItem("duplexBinding") || localStorage.getItem("binding") || "long_edge";
     const duplexVal = localStorage.getItem("duplex") || "single";
     const orientationVal = localStorage.getItem("orientation") || "portrait";
+    const pageRangeVal = localStorage.getItem("pageRange") || "all";
+    const pageSelectionVal = localStorage.getItem("pageSelection") || "all";
+    const selectedCountVal = localStorage.getItem("selectedPagesCount") || localStorage.getItem("pdfPageCount") || "1";
 
     paymentFile.textContent = "File: " + fileNameVal;
+    if (paymentPages) {
+        if (pageSelectionVal === "all") {
+            paymentPages.textContent = "Pages: All Pages";
+        } else if (pageSelectionVal === "even") {
+            paymentPages.textContent = `Pages: Even Pages (${selectedCountVal} selected)`;
+        } else if (pageSelectionVal === "odd") {
+            paymentPages.textContent = `Pages: Odd Pages (${selectedCountVal} selected)`;
+        } else {
+            paymentPages.textContent = `Pages: Custom (${pageRangeVal})`;
+        }
+    }
     paymentCopies.textContent = "Copies: " + copiesVal;
     paymentAmount.textContent = "Total Amount: ₹" + amountVal;
 
@@ -1579,7 +1770,8 @@ if (payBtn) {
         try {
             const fileNameVal = localStorage.getItem("fileName") || "document.pdf";
             const copiesVal = parseInt(localStorage.getItem("copies") || "1", 10);
-            const pageCountVal = parseInt(localStorage.getItem("pdfPageCount") || "1", 10);
+            const pageCountVal = parseInt(localStorage.getItem("selectedPagesCount") || localStorage.getItem("pdfPageCount") || "1", 10);
+            const pageRangeVal = localStorage.getItem("pageRange") || "all";
             const colorModeVal = localStorage.getItem("colorMode") || "black_white";
             const printSideVal = localStorage.getItem("printSide") || "single";
             const duplexBindingVal = (colorModeVal === "color" || printSideVal === "single") ? null : (localStorage.getItem("duplexBinding") || localStorage.getItem("binding") || "long_edge");
@@ -1602,6 +1794,7 @@ if (payBtn) {
             const payload = {
                 amount: amountVal,
                 pages: pageCountVal,
+                page_range: pageRangeVal,
                 copies: copiesVal,
                 color_mode: colorModeVal,
                 duplex: canonicalDuplex,
@@ -1685,7 +1878,7 @@ if (payBtn) {
                         });
 
                         const verifyData = await verifyRes.json().catch(() => ({}));
-                        if (verifyRes.ok && verifyData.status === "success" && verifyData.order_status === "PRINT_QUEUED") {
+                        if (verifyRes.ok && verifyData.status === "success" && (verifyData.order_status === "PRINT_QUEUED" || verifyData.order_status === "PRINTING" || verifyData.order_status === "COMPLETED")) {
                             showPaymentSuccessModal("Payment Successful!", "✓ Payment verified. Your document is queued for printing.");
                             const nextOrderId = verifyData.order_id || activePfOrderId || orderData.order_id || localStorage.getItem("lastOrderId") || "";
                             setTimeout(() => {
@@ -2265,13 +2458,19 @@ function initSuccessReceiptPage() {
     const agentStateText = document.getElementById("agentStateText") || document.getElementById("printerStatusText");
     const privacyToast = document.getElementById("privacyToast");
     const finalSuccess = document.getElementById("finalSuccess");
+    const queueCard = document.getElementById("queueCard");
+    const queuePosBadge = document.getElementById("queuePosBadge");
+    const queueAheadText = document.getElementById("queueAheadText");
+    const queueWaitText = document.getElementById("queueWaitText");
 
     if (!printer && !rcptPaper && !rcptOrderId && !receiptOrder) return;
 
     const params = new URLSearchParams(window.location.search);
     const orderId = params.get("order_id") || localStorage.getItem("lastOrderId") || localStorage.getItem("razorpayOrderId") || `PF-${Math.floor(100000 + Math.random() * 900000)}`;
     const fileName = localStorage.getItem("fileName") || "document.pdf";
-    const pages = localStorage.getItem("pdfPageCount") || "1";
+    const pages = localStorage.getItem("selectedPagesCount") || localStorage.getItem("pdfPageCount") || "1";
+    const pageRange = localStorage.getItem("pageRange") || "all";
+    const displayPages = (pageRange && pageRange !== "all") ? `${pages} (${pageRange})` : pages;
     const copies = localStorage.getItem("copies") || "1";
     const isMicro = localStorage.getItem("printMode") === "micro_xerox" && parseInt(localStorage.getItem("pagesPerSheet") || "1", 10) > 1;
     const printMode = isMicro ? "Micro Xerox" : "Standard";
@@ -2301,8 +2500,8 @@ function initSuccessReceiptPage() {
     if (rcptOrderId) rcptOrderId.textContent = orderId;
     if (receiptOrder) receiptOrder.textContent = orderId;
     if (rcptFileName) rcptFileName.textContent = fileName;
-    if (rcptPages) rcptPages.textContent = pages;
-    if (receiptPages) receiptPages.textContent = pages;
+    if (rcptPages) rcptPages.textContent = displayPages;
+    if (receiptPages) receiptPages.textContent = displayPages;
     if (rcptCopies) rcptCopies.textContent = copies;
     if (receiptCopies) receiptCopies.textContent = copies;
     if (rcptPrintMode) rcptPrintMode.textContent = printMode;
@@ -2337,6 +2536,9 @@ function initSuccessReceiptPage() {
             const data = await res.json();
             if (data && data.status === "success") {
                 const orderState = data.order_status || "PRINT_QUEUED";
+                const jobsAhead = typeof data.jobs_ahead === "number" ? data.jobs_ahead : 0;
+                const queuePosition = data.queue_position || 1;
+                const estimatedWait = data.estimated_wait || "";
 
                 if (agentStateText) agentStateText.textContent = orderState;
                 if (rcptStatusBadge) {
@@ -2350,17 +2552,37 @@ function initSuccessReceiptPage() {
                         ledDot.style.background = "#eab308";
                         ledDot.style.boxShadow = "0 0 8px #eab308";
                     }
-                    if (statusHeadline) statusHeadline.textContent = "Preparing your print...";
-                    if (statusSubtext) statusSubtext.textContent = "Your payment has been received. Queueing document for physical printer.";
+
+                    if (jobsAhead > 0) {
+                        // There ARE other jobs ahead -> Show Queue Position, Orders Ahead, and Estimated Wait
+                        if (queueCard) {
+                            queueCard.style.display = "block";
+                            if (queuePosBadge) queuePosBadge.textContent = `Queue Position: #${queuePosition}`;
+                            if (queueAheadText) queueAheadText.textContent = `${jobsAhead} order${jobsAhead > 1 ? "s" : ""} ahead`;
+                            if (queueWaitText) queueWaitText.textContent = `Estimated Wait: ${estimatedWait || "~1 min"}`;
+                        }
+                        if (statusHeadline) statusHeadline.textContent = "Your print is in queue";
+                        if (statusSubtext) statusSubtext.textContent = `There ${jobsAhead === 1 ? "is 1 order" : `are ${jobsAhead} orders`} ahead of yours. Your document will print automatically.`;
+                    } else {
+                        // NO other pending/printing jobs ahead:
+                        // DO NOT SHOW: Queue Position, Orders Ahead, Waiting Time
+                        // Instead show directly: "Your print is starting..."
+                        if (queueCard) queueCard.style.display = "none";
+                        if (statusHeadline) statusHeadline.textContent = "Your print is starting...";
+                        if (statusSubtext) statusSubtext.textContent = "Connecting to physical printer...";
+                    }
                 } else if (orderState === "PRINTING") {
+                    // Automatically remove queue/waiting information and transition to: "Printing..."
+                    if (queueCard) queueCard.style.display = "none";
                     if (ledDot) {
                         ledDot.className = "led-dot";
                         ledDot.style.background = "#ea580c";
                         ledDot.style.boxShadow = "0 0 8px #ea580c";
                     }
-                    if (statusHeadline) statusHeadline.textContent = "Printing your document...";
-                    if (statusSubtext) statusSubtext.textContent = "The physical printer is actively printing your file.";
+                    if (statusHeadline) statusHeadline.textContent = "Printing...";
+                    if (statusSubtext) statusSubtext.textContent = "The physical printer is actively printing your document.";
                 } else if (orderState === "COMPLETED" || orderState === "PRINTED") {
+                    if (queueCard) queueCard.style.display = "none";
                     if (successPollingInterval) {
                         clearInterval(successPollingInterval);
                         successPollingInterval = null;
@@ -2380,7 +2602,7 @@ function initSuccessReceiptPage() {
                             rcptStatusBadge.textContent = "COMPLETED";
                             rcptStatusBadge.className = "receipt-status-badge status-completed";
                         }
-                        if (statusHeadline) statusHeadline.textContent = "Print finished on printer";
+                        if (statusHeadline) statusHeadline.textContent = "✓ Print Completed";
                         if (statusSubtext) statusSubtext.textContent = "Dispensing physical print receipt...";
 
                         // 2. Small delay before receipt begins emerging from the printer slot (500ms)
@@ -2406,8 +2628,8 @@ function initSuccessReceiptPage() {
 
                                 // 5. Short pause (600ms) after receipt reaches final position
                                 setTimeout(() => {
-                                    // 6. "Print Completed!" success section appears
-                                    if (statusHeadline) statusHeadline.textContent = "Print Completed! 🎉";
+                                    // 6. "✓ Print Completed" success section appears
+                                    if (statusHeadline) statusHeadline.textContent = "✓ Print Completed";
                                     if (statusSubtext) statusSubtext.textContent = "Your document has been printed successfully.";
                                     if (privacyToast) privacyToast.style.display = "flex";
 
