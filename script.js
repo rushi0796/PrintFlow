@@ -312,6 +312,36 @@ function updateTotalPagesDisplay(count) {
     }
 }
 
+async function saveAllUploadedFiles(activeItems) {
+    if (!activeItems || !activeItems.length) return;
+    try {
+        const db = await openPdfDB();
+        if (!db) return;
+        const tx = db.transaction(STORE_NAME, "readwrite");
+        const store = tx.objectStore(STORE_NAME);
+        if (activeItems[0].file) {
+            store.put(activeItems[0].file, "currentPdf");
+        }
+        store.put(activeItems.length, "fileCount");
+        activeItems.forEach((item, idx) => {
+            if (item.file) {
+                store.put(item.file, `file_${idx}`);
+                store.put({
+                    id: item.id,
+                    name: item.name,
+                    size: item.size,
+                    pages: item.pages || 1,
+                    typeCategory: item.typeCategory,
+                    sequence: item.sequence,
+                    backendPath: item.backendPath
+                }, `meta_${idx}`);
+            }
+        });
+    } catch (e) {
+        console.warn("saveAllUploadedFiles error:", e);
+    }
+}
+
 function saveUploadStateToLocalStorage() {
     const activeItems = fileQueue.filter(i => i.status !== "CANCELED");
     if (activeItems.length === 0) {
@@ -344,6 +374,8 @@ function saveUploadStateToLocalStorage() {
         localStorage.setItem("backendFilePath", primaryPath);
     }
     localStorage.setItem("fileListDetails", JSON.stringify(detailsList));
+
+    saveAllUploadedFiles(activeItems);
 
     if (activeItems.length > 0 && activeItems[0].file) {
         if (typeof renderPdfFirstPageThumbnail === "function") {
@@ -791,12 +823,243 @@ function calculatePrice(pages, copies, colorMode, printSide, printMode, pagesPer
     }
 }
 
+let livePreviewPages = [];
+let livePreviewIndex = 0;
+let isPreviewPagesLoading = false;
+
+async function loadAllSavedFiles() {
+    if (window.loadedFilesCache && window.loadedFilesCache.length > 0) {
+        return window.loadedFilesCache;
+    }
+    const db = await openPdfDB();
+    const files = [];
+    if (db) {
+        try {
+            const tx = db.transaction(STORE_NAME, "readonly");
+            const store = tx.objectStore(STORE_NAME);
+            const countReq = store.get("fileCount");
+            const fileCount = await new Promise(r => { countReq.onsuccess = () => r(countReq.result || 0); countReq.onerror = () => r(0); });
+            if (fileCount > 0) {
+                for (let i = 0; i < fileCount; i++) {
+                    const fReq = store.get(`file_${i}`);
+                    const mReq = store.get(`meta_${i}`);
+                    const f = await new Promise(r => { fReq.onsuccess = () => r(fReq.result); fReq.onerror = () => r(null); });
+                    const m = await new Promise(r => { mReq.onsuccess = () => r(mReq.result); mReq.onerror = () => r(null); });
+                    if (f) files.push({ file: f, meta: m || { name: f.name } });
+                }
+            } else {
+                const singleReq = store.get("currentPdf");
+                const singleF = await new Promise(r => { singleReq.onsuccess = () => r(singleReq.result); singleReq.onerror = () => r(null); });
+                if (singleF) files.push({ file: singleF, meta: { name: singleF.name } });
+            }
+        } catch (e) {
+            console.warn("loadAllSavedFiles IndexedDB note:", e);
+        }
+    }
+
+    if (!files.length) {
+        const detailsStr = localStorage.getItem("fileListDetails");
+        const singlePath = localStorage.getItem("backendFilePath");
+        let details = [];
+        try { details = detailsStr ? JSON.parse(detailsStr) : []; } catch(e) {}
+        if (!details.length && singlePath) {
+            details.push({ name: localStorage.getItem("fileName") || "document.pdf", path: singlePath });
+        }
+        for (const d of details) {
+            if (d.path) {
+                try {
+                    const fetchUrl = apiUrl(d.path, d.path);
+                    const res = await fetch(fetchUrl);
+                    if (res.ok) {
+                        const blob = await res.blob();
+                        const file = new File([blob], d.name || "file", { type: blob.type });
+                        files.push({ file, meta: d });
+                    }
+                } catch (fetchErr) {
+                    console.warn("loadAllSavedFiles backend fetch note:", fetchErr);
+                }
+            }
+        }
+    }
+
+    window.loadedFilesCache = files;
+    return files;
+}
+
+async function prepareRealLivePreviewPages() {
+    if (isPreviewPagesLoading) return;
+    isPreviewPagesLoading = true;
+    livePreviewPages = [];
+
+    const loadingEl = document.getElementById("livePreviewLoading");
+    if (loadingEl) {
+        loadingEl.textContent = "Rendering real preview...";
+        loadingEl.style.display = "block";
+    }
+
+    try {
+        const fileEntries = await loadAllSavedFiles();
+        for (let fi = 0; fi < fileEntries.length; fi++) {
+            const entry = fileEntries[fi];
+            const file = entry.file;
+            const fileName = entry.meta?.name || file.name || `Document_${fi + 1}`;
+            const ext = (fileName || "").split('.').pop().toLowerCase();
+            const isImage = file.type.startsWith("image/") || ["jpg", "jpeg", "png", "webp", "bmp"].includes(ext);
+            const isPdf = (file.type === "application/pdf") || ext === "pdf";
+
+            if (isImage) {
+                const imgUrl = URL.createObjectURL(file);
+                livePreviewPages.push({
+                    type: "image",
+                    title: fileName,
+                    src: imgUrl
+                });
+            } else if (isPdf && typeof pdfjsLib !== "undefined") {
+                try {
+                    const buffer = await file.arrayBuffer();
+                    const pdf = await pdfjsLib.getDocument({ data: buffer }).promise;
+                    const numPages = pdf.numPages || 1;
+                    for (let p = 1; p <= numPages; p++) {
+                        const page = await pdf.getPage(p);
+                        const vp = page.getViewport({ scale: 1.2 });
+                        const canvas = document.createElement("canvas");
+                        canvas.width = vp.width;
+                        canvas.height = vp.height;
+                        const ctx = canvas.getContext("2d");
+                        await page.render({ canvasContext: ctx, viewport: vp }).promise;
+                        livePreviewPages.push({
+                            type: "canvas",
+                            title: `${fileName} (P.${p})`,
+                            src: canvas.toDataURL("image/png")
+                        });
+                    }
+                } catch (pdfErr) {
+                    console.warn("PDF render warning:", pdfErr);
+                }
+            } else {
+                const canvas = document.createElement("canvas");
+                canvas.width = 400;
+                canvas.height = 560;
+                const ctx = canvas.getContext("2d");
+                ctx.fillStyle = "#ffffff";
+                ctx.fillRect(0, 0, 400, 560);
+                ctx.fillStyle = "#1e293b";
+                ctx.font = "bold 16px sans-serif";
+                ctx.fillText(fileName.substring(0, 24), 20, 40);
+                ctx.fillStyle = "#64748b";
+                ctx.font = "12px sans-serif";
+                ctx.fillText(`Format: ${ext.toUpperCase()}`, 20, 68);
+                ctx.fillStyle = "#cbd5e1";
+                for (let y = 95; y < 500; y += 18) {
+                    ctx.fillRect(20, y, Math.random() * 120 + 220, 6);
+                }
+                livePreviewPages.push({
+                    type: "canvas",
+                    title: fileName,
+                    src: canvas.toDataURL("image/png")
+                });
+            }
+        }
+    } catch (err) {
+        console.warn("prepareRealLivePreviewPages error:", err);
+    } finally {
+        isPreviewPagesLoading = false;
+        if (loadingEl) loadingEl.style.display = "none";
+        renderRealLivePreviewUI();
+    }
+}
+
+function renderRealLivePreviewUI() {
+    const liveImg = document.getElementById("livePreviewImg");
+    const loadingEl = document.getElementById("livePreviewLoading");
+    const nupGrid = document.getElementById("nupPreviewGrid");
+    const standardContent = document.getElementById("standardPreviewContent");
+    const navBar = document.getElementById("previewNavBar");
+    const pageIndicator = document.getElementById("previewPageIndicator");
+    const prevBtn = document.getElementById("prevPageBtn");
+    const nextBtn = document.getElementById("nextPageBtn");
+
+    const printModeEl = document.querySelector('input[name="printMode"]:checked');
+    const printMode = printModeEl ? printModeEl.value : "standard";
+    const pagesPerSheetEl = document.getElementById("pagesPerSheet");
+    const pagesPerSheet = (printMode === "micro_xerox") ? (pagesPerSheetEl ? parseInt(pagesPerSheetEl.value, 10) : 2) : 1;
+    const pageOrderEl = document.querySelector('input[name="pageOrder"]:checked');
+    const pageOrder = pageOrderEl ? pageOrderEl.value : "horizontal";
+
+    if (!livePreviewPages.length) {
+        if (loadingEl) {
+            loadingEl.textContent = "Document uploaded";
+            loadingEl.style.display = "block";
+        }
+        if (liveImg) liveImg.style.display = "none";
+        return;
+    }
+
+    if (loadingEl) loadingEl.style.display = "none";
+
+    if (printMode === "micro_xerox") {
+        if (standardContent) standardContent.style.display = "none";
+        if (nupGrid) {
+            nupGrid.style.display = "grid";
+            let gridClass = `nup-grid nup-${pagesPerSheet}`;
+            if (pagesPerSheet === 2) {
+                gridClass = pageOrder === "vertical" ? "nup-grid nup-2-v" : "nup-grid nup-2-h";
+            }
+            nupGrid.className = gridClass;
+
+            const totalSheets = Math.ceil(livePreviewPages.length / pagesPerSheet) || 1;
+            const currentSheet = Math.floor(livePreviewIndex / pagesPerSheet);
+            const startIdx = currentSheet * pagesPerSheet;
+
+            let cellsHtml = "";
+            for (let i = 0; i < pagesPerSheet; i++) {
+                const targetPage = livePreviewPages[startIdx + i] || livePreviewPages[0];
+                if (targetPage && targetPage.src) {
+                    cellsHtml += `<div class="nup-cell"><img src="${targetPage.src}" class="nup-cell-element" alt="${escapeHtml(targetPage.title)}"></div>`;
+                } else {
+                    cellsHtml += `<div class="nup-cell"></div>`;
+                }
+            }
+            nupGrid.innerHTML = cellsHtml;
+
+            if (pageIndicator) {
+                pageIndicator.textContent = `Sheet ${currentSheet + 1} of ${totalSheets}`;
+            }
+            if (navBar) {
+                navBar.style.display = totalSheets > 1 ? "flex" : "none";
+            }
+            if (prevBtn) prevBtn.disabled = (currentSheet <= 0);
+            if (nextBtn) nextBtn.disabled = (currentSheet >= totalSheets - 1);
+        }
+    } else {
+        if (nupGrid) nupGrid.style.display = "none";
+        if (standardContent) standardContent.style.display = "flex";
+
+        const totalPages = livePreviewPages.length;
+        const pageIdx = Math.max(0, Math.min(livePreviewIndex, totalPages - 1));
+        const activePage = livePreviewPages[pageIdx];
+
+        if (activePage && liveImg) {
+            liveImg.src = activePage.src;
+            liveImg.style.display = "block";
+            liveImg.alt = activePage.title;
+        }
+
+        if (pageIndicator) {
+            pageIndicator.textContent = `${activePage?.title || 'Page'} (${pageIdx + 1} of ${totalPages})`;
+        }
+        if (navBar) {
+            navBar.style.display = totalPages > 1 ? "flex" : "none";
+        }
+        if (prevBtn) prevBtn.disabled = (pageIdx <= 0);
+        if (nextBtn) nextBtn.disabled = (pageIdx >= totalPages - 1);
+    }
+}
+
 function updatePrintDetailsAndPreview() {
     const copiesBox = document.getElementById("copies");
     const totalPriceBox = document.getElementById("totalPrice");
     const paperSheetPreview = document.getElementById("paperSheetPreview");
-    const standardPreviewContent = document.getElementById("standardPreviewContent");
-    const nupPreviewGrid = document.getElementById("nupPreviewGrid");
     const microXeroxSection = document.getElementById("microXeroxSection");
     const previewLabelBadge = document.getElementById("previewLabelBadge");
     const doubleSideLabel = document.getElementById("doubleSideLabel");
@@ -851,32 +1114,19 @@ function updatePrintDetailsAndPreview() {
     }
 
     if (paperSheetPreview) {
-        paperSheetPreview.className = `paper-sheet size-${paperSize} ${orientation} ${scaleMode}`;
+        const colorClass = (colorMode === "color") ? "color-mode" : "bw-mode";
+        paperSheetPreview.className = `paper-sheet size-${paperSize} ${orientation} ${scaleMode} ${colorClass}`;
     }
 
-    if (printMode === "micro_xerox") {
-        if (previewLabelBadge) previewLabelBadge.textContent = `Micro Xerox ${pagesPerSheet}-Up`;
-        if (standardPreviewContent) standardPreviewContent.style.display = "none";
-        if (nupPreviewGrid) {
-            nupPreviewGrid.style.display = "grid";
-            let gridClass = `nup-grid nup-${pagesPerSheet}`;
-            if (pagesPerSheet === 2) {
-                gridClass = pageOrder === "vertical" ? "nup-grid nup-2-v" : "nup-grid nup-2-h";
-            }
-            nupPreviewGrid.className = gridClass;
-            let cellsHtml = "";
-            for (let i = 1; i <= pagesPerSheet; i++) {
-                cellsHtml += `<div class="nup-cell">P${i}</div>`;
-            }
-            nupPreviewGrid.innerHTML = cellsHtml;
-        }
-    } else {
-        if (previewLabelBadge) {
+    if (previewLabelBadge) {
+        if (printMode === "micro_xerox") {
+            previewLabelBadge.textContent = `Micro Xerox ${pagesPerSheet}-Up`;
+        } else {
             previewLabelBadge.textContent = (scaleMode === "actual") ? "Standard (Actual Size)" : "Standard (Full Page)";
         }
-        if (nupPreviewGrid) nupPreviewGrid.style.display = "none";
-        if (standardPreviewContent) standardPreviewContent.style.display = "flex";
     }
+
+    renderRealLivePreviewUI();
 
     const totalAmount = calculatePrice(pageCount, copies, colorMode, printSide, printMode, pagesPerSheet);
     if (totalPriceBox) {
@@ -907,11 +1157,34 @@ if (printDetailsFileName) {
         printDetailsFileName.textContent = savedName;
     }
 
-    getSavedPdfFile().then(selectedFile => {
-        if (selectedFile) {
-            window.selectedPdfFile = selectedFile;
-        }
-    });
+    const prevPageBtn = document.getElementById("prevPageBtn");
+    const nextPageBtn = document.getElementById("nextPageBtn");
+
+    if (prevPageBtn) {
+        prevPageBtn.addEventListener("click", function() {
+            const printModeEl = document.querySelector('input[name="printMode"]:checked');
+            const printMode = printModeEl ? printModeEl.value : "standard";
+            const pagesPerSheetEl = document.getElementById("pagesPerSheet");
+            const step = (printMode === "micro_xerox" && pagesPerSheetEl) ? parseInt(pagesPerSheetEl.value, 10) : 1;
+            livePreviewIndex = Math.max(0, livePreviewIndex - step);
+            renderRealLivePreviewUI();
+        });
+    }
+
+    if (nextPageBtn) {
+        nextPageBtn.addEventListener("click", function() {
+            const printModeEl = document.querySelector('input[name="printMode"]:checked');
+            const printMode = printModeEl ? printModeEl.value : "standard";
+            const pagesPerSheetEl = document.getElementById("pagesPerSheet");
+            const step = (printMode === "micro_xerox" && pagesPerSheetEl) ? parseInt(pagesPerSheetEl.value, 10) : 1;
+            if (livePreviewIndex + step < livePreviewPages.length) {
+                livePreviewIndex += step;
+            }
+            renderRealLivePreviewUI();
+        });
+    }
+
+    prepareRealLivePreviewPages();
 
     const settingsForm = document.getElementById("printDetailsForm");
     if (settingsForm) {

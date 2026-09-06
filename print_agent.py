@@ -368,11 +368,15 @@ def print_document_silently(
     if ext == ".pdf" and sumatra:
         settings_parts = []
 
-        # Full Page vs Actual Size
+        # Full Page vs Actual Size:
+        # When Full Page is selected, optimize_pdf_for_full_page has already proportionally
+        # scaled the complete original canvas to the maximum printable area of the target paper.
+        # Using 'noscale' prevents SumatraPDF from applying a redundant second shrink.
+        # For Actual Size, the document retains its natural un-maximized scale.
         if scale_mode in ("actual", "actual_size"):
-            settings_parts.append("noscale")
+            settings_parts.append("shrink")
         else:
-            settings_parts.append("fit")
+            settings_parts.append("noscale")
 
         # Duplex (Kyocera hardware duplex support)
         if duplex in ("double", "duplex", "duplexlong", "vertical"):

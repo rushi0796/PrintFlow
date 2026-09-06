@@ -78,12 +78,12 @@
         }
 
         /* Paper Dimensions based on A4 / Letter / Legal */
-        .paper-sheet.size-a4.portrait { width: 140px; height: 198px; }
-        .paper-sheet.size-a4.landscape { width: 198px; height: 140px; }
-        .paper-sheet.size-letter.portrait { width: 144px; height: 186px; }
-        .paper-sheet.size-letter.landscape { width: 186px; height: 144px; }
-        .paper-sheet.size-legal.portrait { width: 136px; height: 216px; }
-        .paper-sheet.size-legal.landscape { width: 216px; height: 136px; }
+        .paper-sheet.size-a4.portrait { width: 160px; height: 226px; }
+        .paper-sheet.size-a4.landscape { width: 226px; height: 160px; }
+        .paper-sheet.size-letter.portrait { width: 165px; height: 213px; }
+        .paper-sheet.size-letter.landscape { width: 213px; height: 165px; }
+        .paper-sheet.size-legal.portrait { width: 155px; height: 254px; }
+        .paper-sheet.size-legal.landscape { width: 254px; height: 155px; }
 
         /* Micro Xerox N-Up Grid Preview */
         .nup-grid {
@@ -91,6 +91,7 @@
             gap: 4px;
             width: 100%;
             height: 100%;
+            box-sizing: border-box;
         }
 
         .nup-grid.nup-2-h { grid-template-rows: repeat(2, 1fr); grid-template-columns: 1fr; }
@@ -101,53 +102,68 @@
         .nup-grid.nup-16 { grid-template-columns: repeat(4, 1fr); grid-template-rows: repeat(4, 1fr); }
 
         .nup-cell {
-            background: #f1f5f9;
-            border: 1px dashed #94a3b8;
+            background: #ffffff;
+            border: 1px solid #cbd5e1;
             border-radius: 3px;
+            overflow: hidden;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 10px;
-            font-weight: 800;
-            color: #475569;
+            box-sizing: border-box;
+            padding: 2px;
         }
 
-        .standard-preview-content {
+        .nup-cell-element {
+            max-width: 100%;
+            max-height: 100%;
+            object-fit: contain;
+            display: block;
+            margin: auto;
+        }
+
+        /* REAL LIVE PREVIEW CONTENT */
+        .live-preview-container {
             width: 100%;
             height: 100%;
-            background: #f8fafc;
-            border: 1px dashed #cbd5e1;
-            border-radius: 4px;
             display: flex;
-            flex-direction: column;
-            justify-content: space-between;
-            padding: 8px;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+            overflow: hidden;
             box-sizing: border-box;
+            background: #ffffff;
             transition: all 0.25s cubic-bezier(0.2, 0.8, 0.2, 1);
         }
 
-        .paper-sheet.fit .standard-preview-content {
-            width: 100%;
-            height: 100%;
-            border-color: #ea580c;
-            background: #fff7ed;
-            padding: 6px;
+        /* FULL PAGE: Maximizes complete original canvas inside printable margins */
+        .paper-sheet.fit .live-preview-container {
+            padding: 4px;
         }
 
-        .paper-sheet.actual .standard-preview-content {
-            width: 80%;
-            height: 80%;
+        /* ACTUAL SIZE: Natural un-maximized scale centered with standard document margins */
+        .paper-sheet.actual .live-preview-container {
+            padding: 22px;
+        }
+
+        .real-preview-element {
+            max-width: 100%;
+            max-height: 100%;
+            object-fit: contain;
+            display: block;
             margin: auto;
-            border-color: #94a3b8;
-            background: #f8fafc;
-            padding: 8px;
+            box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12);
+            transition: filter 0.2s ease, transform 0.2s ease;
         }
 
-        .preview-text-line {
-            height: 6px;
-            background: #cbd5e1;
-            border-radius: 3px;
-            margin-bottom: 5px;
+        /* Grayscale filter for Black & White Mode */
+        .paper-sheet.bw-mode .real-preview-element,
+        .paper-sheet.bw-mode .nup-cell-element {
+            filter: grayscale(100%) contrast(1.12);
+        }
+
+        .paper-sheet.color-mode .real-preview-element,
+        .paper-sheet.color-mode .nup-cell-element {
+            filter: none;
         }
 
         .footer-legal {
@@ -188,18 +204,20 @@
             <span id="previewLabelBadge" style="font-size: 11px; background: #ea580c; color: #fff; padding: 2px 8px; border-radius: 10px; font-weight: 700;">Standard</span>
         </div>
         <div class="paper-preview-frame">
-            <div id="paperSheetPreview" class="paper-sheet size-a4 portrait">
-                <div id="standardPreviewContent" class="standard-preview-content">
-                    <div>
-                        <div class="preview-text-line" style="width: 80%;"></div>
-                        <div class="preview-text-line" style="width: 100%;"></div>
-                        <div class="preview-text-line" style="width: 90%;"></div>
-                        <div class="preview-text-line" style="width: 60%;"></div>
-                    </div>
-                    <div style="text-align: right; font-size: 9px; color: #94a3b8; font-weight: 700;">Page 1</div>
+            <div id="paperSheetPreview" class="paper-sheet size-a4 portrait fit color-mode">
+                <div id="standardPreviewContent" class="live-preview-container">
+                    <canvas id="livePreviewCanvas" class="real-preview-element" style="display: none;"></canvas>
+                    <img id="livePreviewImg" class="real-preview-element" style="display: none;" alt="Preview">
+                    <div id="livePreviewLoading" style="font-size: 11px; color: #64748b; font-weight: 700;">Loading real preview...</div>
                 </div>
                 <div id="nupPreviewGrid" class="nup-grid nup-2-h" style="display: none;"></div>
             </div>
+        </div>
+        <!-- PREVIEW NAVIGATOR FOR MULTI-PAGE & MULTI-FILE -->
+        <div id="previewNavBar" style="display: flex; align-items: center; justify-content: space-between; margin-top: 10px; font-size: 12px; color: #cbd5e1; padding: 0 4px;">
+            <button type="button" id="prevPageBtn" style="background: rgba(255,255,255,0.12); border: 1px solid #475569; color: #fff; padding: 4px 10px; border-radius: 6px; cursor: pointer; font-size: 11px; font-weight: 700;">◀ Prev</button>
+            <span id="previewPageIndicator" style="font-weight: 800; color: #fed7aa; font-size: 12px;">Page 1 of 1</span>
+            <button type="button" id="nextPageBtn" style="background: rgba(255,255,255,0.12); border: 1px solid #475569; color: #fff; padding: 4px 10px; border-radius: 6px; cursor: pointer; font-size: 11px; font-weight: 700;">Next ▶</button>
         </div>
     </div>
 

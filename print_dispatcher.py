@@ -181,6 +181,8 @@ def dispatch_print_job(order_data: dict) -> dict:
     # Resolve absolute file path on server
     clean_filename = Path(file_rel_path).name if file_rel_path else ""
     abs_file_path = UPLOAD_DIR / clean_filename
+    ext = abs_file_path.suffix.lower()
+    target_print_file = abs_file_path
 
     target_printer = get_target_printer(color_mode)
     print(f"[PRINT DISPATCH] Order {order_id} | File: '{clean_filename}' | Mode: {color_mode} | Printer: '{target_printer}' | Duplex: {duplex} | Paper: {paper_size} | Copies: {copies} | Scale: {scale_mode}")
@@ -243,9 +245,9 @@ def dispatch_print_job(order_data: dict) -> dict:
             if sumatra and ext == ".pdf":
                 settings_parts = []
                 if scale_mode in ("actual", "actual_size"):
-                    settings_parts.append("noscale")
+                    settings_parts.append("shrink")
                 else:
-                    settings_parts.append("fit")
+                    settings_parts.append("noscale")
                 
                 if duplex in ("double", "duplex", "duplexlong", "vertical"):
                     settings_parts.append("duplexlong")

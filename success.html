@@ -25,10 +25,10 @@
         /* METALLIC PRINTER HOOD */
         .machine-unit {
             position: relative;
-            z-index: 20;
+            z-index: 25;
             background: linear-gradient(180deg, #1e293b 0%, #0f172a 100%);
             border-radius: 20px;
-            padding: 20px;
+            padding: 18px 20px 14px;
             box-shadow: 0 16px 36px rgba(15, 23, 42, 0.35), inset 0 2px 1px rgba(255, 255, 255, 0.2);
             border: 1.5px solid #334155;
         }
@@ -81,42 +81,66 @@
             box-shadow: 0 0 8px #ef4444;
         }
 
-        .machine-slot-slit {
-            height: 12px;
-            background: #020617;
-            border-radius: 6px;
+        .machine-slot-outer {
+            position: relative;
             margin-top: 14px;
-            box-shadow: inset 0 4px 8px rgba(0, 0, 0, 0.9);
-            border: 1px solid #1e293b;
+            display: flex;
+            justify-content: center;
         }
 
-        /* RECEIPT PAPER VIEWPORT */
+        .machine-slot-slit {
+            position: relative;
+            z-index: 30;
+            width: 310px;
+            max-width: 90%;
+            height: 14px;
+            background: #020617;
+            border-radius: 7px;
+            box-shadow: inset 0 4px 10px rgba(0, 0, 0, 0.98), 0 1px 2px rgba(255, 255, 255, 0.1);
+            border: 1.5px solid #0f172a;
+        }
+
+        .machine-slot-slit::before {
+            content: "";
+            position: absolute;
+            top: 0;
+            left: 8px;
+            right: 8px;
+            height: 3px;
+            background: linear-gradient(180deg, rgba(0, 0, 0, 0.9) 0%, transparent 100%);
+            border-radius: 3px 3px 0 0;
+            z-index: 35;
+            pointer-events: none;
+        }
+
+        /* RECEIPT PAPER VIEWPORT - Anchored at the black slot slit */
         .paper-viewport {
             position: relative;
-            z-index: 10;
+            z-index: 15;
             overflow: hidden;
-            margin-top: -6px;
-            padding: 0 10px 0;
+            margin: -7px auto 0;
+            max-width: 270px;
+            width: 270px;
             max-height: 0;
             opacity: 0;
-            transition: max-height 2.8s cubic-bezier(0.12, 0.8, 0.32, 1), opacity 0.4s ease, padding 0.4s ease;
+            transition: max-height 2.8s cubic-bezier(0.12, 0.8, 0.32, 1), opacity 0.3s ease;
         }
 
         .paper-viewport.settled {
-            max-height: 1200px;
+            max-height: 900px;
             opacity: 1;
-            padding: 0 10px 20px;
+            padding-bottom: 16px;
         }
 
         .receipt-paper-wrapper {
             background: #ffffff;
-            border-radius: 0 0 4px 4px;
-            box-shadow: 0 16px 32px rgba(0, 0, 0, 0.14), 0 3px 8px rgba(0, 0, 0, 0.08);
-            transform: translateY(-80px);
+            box-shadow: 0 14px 30px rgba(0, 0, 0, 0.14), 0 2px 6px rgba(0, 0, 0, 0.08);
+            transform: translateY(-100%);
             opacity: 0;
-            transition: transform 2.8s cubic-bezier(0.12, 0.8, 0.32, 1), opacity 0.4s ease;
+            transition: transform 2.8s cubic-bezier(0.12, 0.8, 0.32, 1), opacity 0.3s ease;
             position: relative;
-            max-width: 380px;
+            width: 270px;
+            max-width: 270px;
             margin: 0 auto;
             border-left: 1px dashed #cbd5e1;
             border-right: 1px dashed #cbd5e1;
@@ -132,40 +156,41 @@
         }
 
         .receipt-content {
-            padding: 24px 20px 18px;
+            padding: 18px 14px 12px;
             font-family: 'Courier New', Courier, monospace;
             color: #0f172a;
             text-align: left;
+            font-size: 11px;
         }
 
         .receipt-header {
             text-align: center;
-            border-bottom: 2px dashed #0f172a;
-            padding-bottom: 12px;
-            margin-bottom: 14px;
+            border-bottom: 1.5px dashed #0f172a;
+            padding-bottom: 8px;
+            margin-bottom: 10px;
         }
 
         .receipt-header h2 {
             margin: 0;
-            font-size: 22px;
+            font-size: 18px;
             font-weight: 900;
-            letter-spacing: 3px;
+            letter-spacing: 2px;
             color: #0f172a;
         }
 
         .receipt-header p {
-            margin: 4px 0 0;
-            font-size: 11px;
+            margin: 2px 0 0;
+            font-size: 9.5px;
             font-weight: 700;
             color: #475569;
-            letter-spacing: 1px;
+            letter-spacing: 0.5px;
         }
 
         .receipt-row {
             display: flex;
             justify-content: space-between;
-            margin-bottom: 8px;
-            font-size: 13px;
+            margin-bottom: 5px;
+            font-size: 11px;
         }
 
         .receipt-label {
@@ -177,41 +202,41 @@
             font-weight: 800;
             color: #0f172a;
             text-align: right;
-            max-width: 200px;
+            max-width: 145px;
             overflow-wrap: anywhere;
         }
 
         .receipt-divider {
             border-top: 1px dashed #94a3b8;
-            margin: 12px 0;
+            margin: 8px 0;
         }
 
         .receipt-amount-section {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            padding: 10px 0;
-            border-top: 2px dashed #0f172a;
-            border-bottom: 2px dashed #0f172a;
-            margin: 14px 0;
+            padding: 8px 0;
+            border-top: 1.5px dashed #0f172a;
+            border-bottom: 1.5px dashed #0f172a;
+            margin: 10px 0;
         }
 
         .receipt-amount-title {
-            font-size: 14px;
+            font-size: 12px;
             font-weight: 900;
         }
 
         .receipt-amount-value {
-            font-size: 20px;
+            font-size: 17px;
             font-weight: 900;
             color: #ea580c;
         }
 
         .receipt-status-badge {
             display: inline-block;
-            padding: 4px 10px;
+            padding: 3px 8px;
             border-radius: 4px;
-            font-size: 11px;
+            font-size: 10px;
             font-weight: 800;
             text-transform: uppercase;
             letter-spacing: 1px;
@@ -222,12 +247,25 @@
         .status-completed { background: #dcfce7; color: #16a34a; }
         .status-failed { background: #fee2e2; color: #dc2626; }
 
-        .serrated-edge {
+        /* REALISTIC TORN PAPER THERMAL CUT BOTTOM */
+        .torn-paper-edge {
             height: 14px;
-            background-image: linear-gradient(135deg, #ffffff 50%, transparent 50%), linear-gradient(45deg, #ffffff 50%, transparent 50%);
-            background-position: top left;
-            background-repeat: repeat-x;
-            background-size: 14px 14px;
+            background: #ffffff;
+            clip-path: polygon(
+                0% 0%, 100% 0%,
+                100% 0%,
+                98% 100%, 96% 15%, 94% 100%, 92% 25%, 90% 100%,
+                88% 20%, 86% 100%, 84% 15%, 82% 100%, 80% 25%,
+                78% 20%, 76% 100%, 74% 15%, 72% 100%, 70% 25%,
+                68% 20%, 66% 100%, 64% 15%, 62% 100%, 60% 25%,
+                58% 20%, 56% 100%, 54% 15%, 52% 100%, 50% 25%,
+                48% 20%, 46% 100%, 44% 15%, 42% 100%, 40% 25%,
+                38% 20%, 36% 100%, 34% 15%, 32% 100%, 30% 25%,
+                28% 20%, 26% 100%, 24% 15%, 22% 100%, 20% 25%,
+                18% 20%, 16% 100%, 14% 15%, 12% 100%, 10% 25%,
+                8% 20%, 6% 100%, 4% 15%, 2% 100%, 0% 20%
+            );
+            filter: drop-shadow(0 3px 2px rgba(0, 0, 0, 0.07));
             margin-top: -1px;
         }
 
@@ -356,7 +394,7 @@
     </div>
 
     <!-- METALLIC PRINTER UNIT -->
-    <div class="machine-unit">
+    <div class="machine-unit" id="printerMachineUnit">
         <div class="machine-brand-header">
             <div class="brand-title"><img src="logo.png" style="height: 22px; width: auto; vertical-align: middle; margin-right: 6px;" alt="PF"> PRINTFLOW</div>
             <div class="status-led-pill">
@@ -364,10 +402,12 @@
                 <span id="agentStateText">ONLINE</span>
             </div>
         </div>
-        <div class="machine-slot-slit"></div>
+        <div class="machine-slot-outer">
+            <div class="machine-slot-slit" id="machineSlotSlit"></div>
+        </div>
     </div>
 
-    <!-- RECEIPT PAPER VIEWPORT -->
+    <!-- RECEIPT PAPER VIEWPORT - Originates directly from the black slot slit -->
     <div class="paper-viewport" id="paperViewport">
         <div id="receiptPaper" class="receipt-paper-wrapper">
             <div class="receipt-content">
@@ -433,11 +473,11 @@
                     <span id="rcptAmount" class="receipt-amount-value">₹2.00</span>
                 </div>
 
-                <div style="text-align: center; margin-top: 10px;">
+                <div style="text-align: center; margin-top: 8px;">
                     <span id="rcptStatusBadge" class="receipt-status-badge status-preparing">PRINT_QUEUED</span>
                 </div>
             </div>
-            <div class="serrated-edge"></div>
+            <div class="torn-paper-edge"></div>
         </div>
     </div>
 
