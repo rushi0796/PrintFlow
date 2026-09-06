@@ -306,35 +306,26 @@ def queue_order_for_printing(payload: dict):
     if not order:
         raise HTTPException(status_code=404, detail=f"PrintFlow order {order_id} not found")
 
-    # Idempotency protection: do NOT reset an order that is actively printing or completed
-    if order.get("status") in ("PRINTING", "COMPLETED"):
+    print(f"[PRINT ORDER FOUND] {order.get('order_id')}, {order.get('file_name')}, {order.get('file_path')}")
+
+    # Idempotency protection: do NOT reset an order that is actively printing or completed, or already paid and queued
+    if order.get("paid") and order.get("status") in ("PRINT_QUEUED", "PRINTING", "COMPLETED"):
         return order
 
     order["status"] = "PRINT_QUEUED"
     order["document_status"] = "UPLOADED"
     order["paid"] = True
 
+    if payload.get("razorpay_payment_id"):
+        order["razorpay_payment_id"] = payload.get("razorpay_payment_id")
+    if payload.get("razorpay_order_id"):
+        order["razorpay_order_id"] = payload.get("razorpay_order_id")
+    if payload.get("razorpay_signature"):
+        order["razorpay_signature"] = payload.get("razorpay_signature")
+
     # Page range preservation
-    order["page_range"] = payload.get("page_range") or order.get("page_range") or "all"
-
-    # Color mode vs duplex defensive rule
-    color_mode = str(payload.get("color_mode") or order.get("color_mode") or "black_white").lower()
-    if color_mode in ("color", "colour"):
-        order["color_mode"] = "color"
-        order["duplex"] = "single"
-        order["binding"] = ""
-    else:
-        order["color_mode"] = "black_white"
-        binding = str(payload.get("binding") or order.get("binding") or "").lower()
-        duplex = str(payload.get("duplex") or order.get("duplex") or "single").lower()
-        if duplex in ("double", "duplex"):
-            duplex = "duplex_short" if binding == "short_edge" else "duplex_long"
-        order["duplex"] = duplex
-        order["binding"] = binding
-
-    for k, v in payload.items():
-        if v is not None and k not in ("status", "document_status", "color_mode", "duplex", "binding"):
-            order[k] = v
+    if not order.get("page_range") and payload.get("page_range"):
+        order["page_range"] = payload.get("page_range")
 
     order.setdefault("page_range", "all")
     order.setdefault("scale_mode", "fit")
@@ -344,7 +335,17 @@ def queue_order_for_printing(payload: dict):
     order.setdefault("print_mode", "standard")
     order.setdefault("pages_per_sheet", 1)
     order.setdefault("page_order", "horizontal")
+
     save_order(order)
+
+    active_jobs = get_active_queue_orders()
+    pos = 1
+    for idx, j in enumerate(active_jobs):
+        if j.get("order_id") == order.get("order_id"):
+            pos = idx + 1
+            break
+    print(f"[PRINT JOB QUEUED] {order.get('order_id')}, {pos}")
+
     return order
 
 @app.post("/api/agent/poll")
@@ -602,6 +603,8 @@ def create_razorpay_order_endpoint(request: RazorpayOrderRequest):
         if not get_order(pf_order_id):
             raise HTTPException(status_code=503, detail="PrintFlow could not persist the order before payment")
 
+        print(f"[ORDER CREATED] {pf_order_id}, {final_order_id}, {new_order_entry['amount']}")
+
         return {
             "status": "success",
             "key_id": key_id,
@@ -631,6 +634,8 @@ def verify_razorpay_payment(payload: dict):
     razorpay_payment_id = payload.get("razorpay_payment_id", "")
     razorpay_signature = payload.get("razorpay_signature", "")
 
+    print(f"[PAYMENT CALLBACK RECEIVED] {razorpay_payment_id}, {razorpay_order_id}")
+
     if not (razorpay_order_id and razorpay_payment_id and razorpay_signature):
         raise HTTPException(status_code=400, detail="Missing required payment verification fields")
 
@@ -645,12 +650,15 @@ def verify_razorpay_payment(payload: dict):
         raise HTTPException(status_code=400, detail="Invalid Razorpay payment signature - payment verification failed")
 
     queued_order = queue_order_for_printing(payload)
+    canonical_id = queued_order.get("order_id") or payload.get("print_order_id") or razorpay_order_id
+    print(f"[PAYMENT VERIFIED] {canonical_id}, {razorpay_payment_id}")
 
     return {
         "status": "success",
         "message": "Razorpay Payment verified successfully. Job queued for PrintAgent.",
-        "order_status": "PRINT_QUEUED",
-        "order_id": queued_order.get("order_id") or payload.get("print_order_id") or razorpay_order_id,
+        "order_status": queued_order.get("status", "PRINT_QUEUED"),
+        "order_id": canonical_id,
+        "print_order_id": canonical_id,
         "order": queued_order,
         "payload": payload
     }

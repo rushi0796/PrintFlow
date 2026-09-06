@@ -653,8 +653,10 @@ def run_agent():
                 pages_per_sheet = int(job.get("pages_per_sheet", 1))
                 page_order = job.get("page_order", "horizontal")
                 print_mode = job.get("print_mode", "standard")
+                page_range = job.get("page_range", "all") or "all"
                 amount = float(job.get("amount", 2.0) or 2.0)
                 file_name = job.get("file_name", "") or (Path(file_rel_path).name if file_rel_path else "document.pdf")
+                is_color = str(color_mode).lower() in ("color", "colour")
 
                 if not order_id or not file_rel_path:
                     continue
@@ -698,7 +700,7 @@ def run_agent():
                             if str(print_mode).lower() != "micro_xerox":
                                 pages_per_sheet = 1
                             page_order = claimed_order.get("page_order", page_order)
-                            page_range = claimed_order.get("page_range", page_range)
+                            page_range = claimed_order.get("page_range", page_range) or "all"
                             amount = float(claimed_order.get("amount", amount) or amount)
                             file_name = claimed_order.get("file_name", file_name)
                 except urllib.error.HTTPError as http_err:
@@ -712,6 +714,7 @@ def run_agent():
                     continue
 
                 target_printer = select_target_printer(color_mode, config, installed_printers)
+                print(f"[AGENT CLAIMED] {order_id}, {target_printer}")
                 try:
                     # Format Print Job Details Banner
                     if str(print_mode).lower() == "micro_xerox" and pages_per_sheet > 1:
@@ -762,6 +765,7 @@ def run_agent():
                     print("[AGENT] Document downloaded")
                     print("[AGENT] Printer selected")
 
+                    print(f"[PRINTING] {order_id}, {file_name}")
                     print_document_silently(
                         local_file,
                         target_printer,
@@ -794,6 +798,7 @@ def run_agent():
                         method="POST"
                     )
                     with urllib.request.urlopen(comp_req, timeout=10) as comp_resp:
+                        print(f"[PRINT COMPLETED] {order_id}")
                         print("[AGENT] Print completed")
 
                     time.sleep(2.5)

@@ -1698,6 +1698,27 @@ if (paymentFile && paymentCopies && paymentAmount) {
         paymentOrientation.textContent = "Orientation: " + (orientationVal === "landscape" ? "Landscape" : "Portrait");
     }
 
+    // Auto-redirect if customer refreshes payment.html after already paying
+    const existingOrderId = localStorage.getItem("lastOrderId");
+    if (existingOrderId && existingOrderId.startsWith("PF-")) {
+        fetch(apiUrl(`/api/orders/${existingOrderId}/status`, `/api/orders/${existingOrderId}/status`))
+            .then(res => res.ok ? res.json() : null)
+            .then(data => {
+                if (data && data.status === "success" && ["PRINT_QUEUED", "PRINTING", "COMPLETED"].includes(data.order_status)) {
+                    console.log("[PAYMENT] Order already paid. Auto-redirecting to success.html");
+                    if (payBtn) {
+                        payBtn.disabled = true;
+                        payBtn.textContent = "✓ Paid - Redirecting...";
+                    }
+                    showPaymentSuccessModal("Payment Confirmed", "Your print order is active in the queue. Redirecting to status...");
+                    setTimeout(() => {
+                        window.location.replace(`success.html?order_id=${encodeURIComponent(existingOrderId)}`);
+                    }, 400);
+                }
+            })
+            .catch(() => {});
+    }
+
     getSavedPdfFile().then(selectedFile => {
         if (selectedFile) {
             window.selectedPdfFile = selectedFile;
@@ -1760,12 +1781,15 @@ function showPaymentSuccessModal(title, description) {
 }
 
 let isPaymentInFlight = false;
+let paymentVerifiedSuccess = false;
 
 if (payBtn) {
     payBtn.addEventListener("click", async function (e) {
         if (e && e.preventDefault) e.preventDefault();
 
         if (isPaymentInFlight) return;
+
+        paymentVerifiedSuccess = false;
 
         if (typeof Razorpay === "undefined") {
             showPaymentFailedModal("SDK Error", "Razorpay SDK is loading. Please check your internet connection and try again.");
@@ -1873,40 +1897,69 @@ if (payBtn) {
                     "email": "customer@printflow.in"
                 },
                 "handler": async function (response) {
-                    try {
-                        const fullVerificationPayload = {
-                            ...payload,
-                            ...response,
-                            razorpay_payment_id: response.razorpay_payment_id,
-                            razorpay_order_id: response.razorpay_order_id || orderData.order_id,
-                            razorpay_signature: response.razorpay_signature,
-                            print_order_id: activePfOrderId || orderData.order_id
-                        };
+                    paymentVerifiedSuccess = true;
+                    isPaymentInFlight = true;
+                    if (payBtn) {
+                        payBtn.disabled = true;
+                        payBtn.textContent = "Payment Received. Verifying...";
+                    }
+                    showPaymentSuccessModal("Verifying Payment...", "Money received. Confirming your print order with the printer queue...");
 
-                        const verifyRes = await fetch(apiUrl("/api/verify-payment", "/api/verify-payment"), {
-                            method: "POST",
-                            headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify(fullVerificationPayload)
-                        });
+                    const canonicalOrderId = activePfOrderId || orderData.order_id;
+                    const fullVerificationPayload = {
+                        print_order_id: canonicalOrderId,
+                        razorpay_payment_id: response.razorpay_payment_id,
+                        razorpay_order_id: response.razorpay_order_id || orderData.order_id,
+                        razorpay_signature: response.razorpay_signature
+                    };
 
-                        const verifyData = await verifyRes.json().catch(() => ({}));
-                        if (verifyRes.ok && verifyData.status === "success" && (verifyData.order_status === "PRINT_QUEUED" || verifyData.order_status === "PRINTING" || verifyData.order_status === "COMPLETED")) {
-                            showPaymentSuccessModal("Payment Successful!", "✓ Payment verified. Your document is queued for printing.");
-                            const nextOrderId = verifyData.order_id || activePfOrderId || orderData.order_id || localStorage.getItem("lastOrderId") || "";
-                            setTimeout(() => {
-                                window.location.href = "success.html" + (nextOrderId ? `?order_id=${encodeURIComponent(nextOrderId)}` : "");
-                            }, 1800);
-                        } else {
-                            showPaymentFailedModal("Verification Error", verifyData.detail || "Payment verification failed.");
-                            isPaymentInFlight = false;
+                    let verified = false;
+                    let nextOrderId = canonicalOrderId;
+
+                    for (let attempt = 1; attempt <= 3; attempt++) {
+                        try {
+                            const verifyRes = await fetch(apiUrl("/api/verify-payment", "/api/verify-payment"), {
+                                method: "POST",
+                                headers: { "Content-Type": "application/json" },
+                                body: JSON.stringify(fullVerificationPayload)
+                            });
+                            const verifyData = await verifyRes.json().catch(() => ({}));
+                            if (verifyRes.ok && verifyData.status === "success" && (verifyData.order_status === "PRINT_QUEUED" || verifyData.order_status === "PRINTING" || verifyData.order_status === "COMPLETED")) {
+                                verified = true;
+                                nextOrderId = verifyData.order_id || verifyData.print_order_id || canonicalOrderId;
+                                break;
+                            }
+                        } catch (netErr) {
+                            console.warn(`[VERIFICATION RETRY] Attempt ${attempt} failed:`, netErr);
+                            if (attempt < 3) await new Promise(r => setTimeout(r, 1000));
+                        }
+                    }
+
+                    if (!verified) {
+                        try {
+                            const checkRes = await fetch(apiUrl(`/api/orders/${canonicalOrderId}/status`, `/api/orders/${canonicalOrderId}/status`));
+                            const checkData = await checkRes.json().catch(() => ({}));
+                            if (checkRes.ok && checkData.status === "success" && ["PRINT_QUEUED", "PRINTING", "COMPLETED"].includes(checkData.order_status)) {
+                                verified = true;
+                                nextOrderId = checkData.order_id || canonicalOrderId;
+                            }
+                        } catch (e) {}
+                    }
+
+                    if (verified) {
+                        localStorage.setItem("lastOrderId", nextOrderId);
+                        showPaymentSuccessModal("Payment Successful!", "✓ Payment verified. Your document is queued for printing.");
+                        setTimeout(() => {
+                            window.location.replace("success.html" + (nextOrderId ? `?order_id=${encodeURIComponent(nextOrderId)}` : ""));
+                        }, 500);
+                    } else {
+                        paymentVerifiedSuccess = false;
+                        isPaymentInFlight = false;
+                        if (payBtn) {
                             payBtn.disabled = false;
                             payBtn.textContent = originalText;
                         }
-                    } catch (vErr) {
-                        showPaymentFailedModal("Verification Error", vErr.message || "Payment verification error occurred.");
-                        isPaymentInFlight = false;
-                        payBtn.disabled = false;
-                        payBtn.textContent = originalText;
+                        showPaymentFailedModal("Verification Error", "Payment verification could not be confirmed. If your account was debited, please contact support.");
                     }
                 },
                 "theme": {
@@ -1916,15 +1969,18 @@ if (payBtn) {
                     "escape": true,
                     "backdropclose": false,
                     "ondismiss": function() {
-                        isPaymentInFlight = false;
-                        payBtn.disabled = false;
-                        payBtn.textContent = originalText;
+                        if (!paymentVerifiedSuccess) {
+                            isPaymentInFlight = false;
+                            payBtn.disabled = false;
+                            payBtn.textContent = originalText;
+                        }
                     }
                 }
             };
 
             const rzp = new Razorpay(options);
             rzp.on("payment.failed", function (response) {
+                if (paymentVerifiedSuccess) return;
                 const errorDesc = response?.error?.description || "Payment failed or cancelled.";
                 showPaymentFailedModal("Payment Failed", errorDesc);
                 isPaymentInFlight = false;
@@ -1936,7 +1992,6 @@ if (payBtn) {
             console.log(`[PAYMENT PERF] Razorpay checkout.open() invoked at ${(tOpen - tClick).toFixed(1)}ms total`);
 
             rzp.open();
-            isPaymentInFlight = false;
 
         } catch (err) {
             console.error("[PAYMENT ERROR]:", err);
