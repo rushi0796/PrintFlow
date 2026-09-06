@@ -920,12 +920,24 @@ async function prepareRealLivePreviewPages() {
                     const buffer = await file.arrayBuffer();
                     const pdf = await pdfjsLib.getDocument({ data: buffer }).promise;
                     const numPages = pdf.numPages || 1;
+
+                    // Dynamically calculate scale against the actual available print preview container
+                    const previewEl = document.getElementById("paperSheetPreview") || document.querySelector(".paper-sheet");
+                    const previewRect = previewEl ? previewEl.getBoundingClientRect() : null;
+                    const availableWidth = (previewRect && previewRect.width > 0) ? previewRect.width : (previewEl ? previewEl.clientWidth : 0) || 160;
+                    const availableHeight = (previewRect && previewRect.height > 0) ? previewRect.height : (previewEl ? previewEl.clientHeight : 0) || 226;
+                    const dpr = Math.max(window.devicePixelRatio || 1, 2);
+
                     for (let p = 1; p <= numPages; p++) {
                         const page = await pdf.getPage(p);
-                        const vp = page.getViewport({ scale: 2.0 });
+                        const unscaledVp = page.getViewport({ scale: 1.0 });
+                        const scaleX = (availableWidth * dpr) / (unscaledVp.width || 1);
+                        const scaleY = (availableHeight * dpr) / (unscaledVp.height || 1);
+                        const scale = Math.max(scaleX, scaleY, 1.5);
+                        const vp = page.getViewport({ scale: scale });
                         const canvas = document.createElement("canvas");
-                        canvas.width = vp.width;
-                        canvas.height = vp.height;
+                        canvas.width = Math.round(vp.width);
+                        canvas.height = Math.round(vp.height);
                         const ctx = canvas.getContext("2d");
                         await page.render({ canvasContext: ctx, viewport: vp }).promise;
                         livePreviewPages.push({
@@ -1264,7 +1276,7 @@ function renderRealLivePreviewUI() {
             if (notebookSpread) notebookSpread.style.display = "none";
             if (paperSheetPreview) paperSheetPreview.style.display = "flex";
             if (nupGrid) nupGrid.style.display = "none";
-            if (standardContent) standardContent.style.display = "flex";
+            if (standardContent) standardContent.style.display = "block";
 
             const totalPages = pagesToRender.length;
             const pageIdx = Math.max(0, Math.min(livePreviewIndex, totalPages - 1));

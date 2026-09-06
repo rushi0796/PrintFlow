@@ -214,12 +214,14 @@
             overflow: hidden !important;
         }
 
+        .paper-sheet.fit #livePreviewImg,
         .paper-sheet.fit .real-preview-element,
-        .paper-sheet.fit canvas.real-preview-element,
         .paper-sheet.fit img.real-preview-element {
             position: absolute !important;
             top: 0 !important;
             left: 0 !important;
+            right: 0 !important;
+            bottom: 0 !important;
             width: 100% !important;
             height: 100% !important;
             min-width: 100% !important;
@@ -609,7 +611,6 @@
         <div class="paper-preview-frame">
             <div id="paperSheetPreview" class="paper-sheet size-a4 portrait fit color-mode">
                 <div id="standardPreviewContent" class="live-preview-container">
-                    <canvas id="livePreviewCanvas" class="real-preview-element" style="display: none;"></canvas>
                     <img id="livePreviewImg" class="real-preview-element" style="display: none;" alt="Preview">
                     <div id="livePreviewLoading" style="font-size: 11px; color: #64748b; font-weight: 700;">Loading real preview...</div>
                 </div>
