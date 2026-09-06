@@ -65,25 +65,25 @@
 
         .paper-sheet {
             background: #ffffff;
-            border-radius: 6px;
+            border-radius: 4px;
             box-shadow: 0 8px 20px rgba(0, 0, 0, 0.4);
             transition: all 0.3s ease;
             position: relative;
             overflow: hidden;
             display: flex;
             flex-direction: column;
-            padding: 10px;
+            padding: 0;
             box-sizing: border-box;
             border: 1px solid #cbd5e1;
         }
 
-        /* Paper Dimensions based on A4 / Letter / Legal */
+        /* Paper Dimensions based on physical aspect ratios (A4 / Letter / Legal) */
         .paper-sheet.size-a4.portrait { width: 160px; height: 226px; }
         .paper-sheet.size-a4.landscape { width: 226px; height: 160px; }
-        .paper-sheet.size-letter.portrait { width: 165px; height: 213px; }
-        .paper-sheet.size-letter.landscape { width: 213px; height: 165px; }
-        .paper-sheet.size-legal.portrait { width: 155px; height: 254px; }
-        .paper-sheet.size-legal.landscape { width: 254px; height: 155px; }
+        .paper-sheet.size-letter.portrait { width: 165px; height: 214px; }
+        .paper-sheet.size-letter.landscape { width: 214px; height: 165px; }
+        .paper-sheet.size-legal.portrait { width: 150px; height: 247px; }
+        .paper-sheet.size-legal.landscape { width: 247px; height: 150px; }
 
         /* Micro Xerox N-Up Grid Preview */
         .nup-grid {
@@ -92,6 +92,7 @@
             width: 100%;
             height: 100%;
             box-sizing: border-box;
+            padding: 6px;
         }
 
         .nup-grid.nup-2-h { grid-template-rows: repeat(2, 1fr); grid-template-columns: 1fr; }
@@ -127,7 +128,7 @@
             margin: auto;
         }
 
-        /* REAL LIVE PREVIEW CONTENT */
+        /* REAL LIVE PREVIEW CONTENT CONTAINER */
         .live-preview-container {
             width: 100%;
             height: 100%;
@@ -138,47 +139,60 @@
             overflow: hidden;
             box-sizing: border-box;
             background: #ffffff;
+            margin: 0;
+            padding: 0;
             transition: all 0.25s cubic-bezier(0.2, 0.8, 0.2, 1);
         }
 
-        /* FULL PAGE: Maximizes complete original canvas proportionally inside printable area */
+        /* FULL PAGE: TRUE ZERO-MARGIN EDGE-TO-EDGE CORNER-TO-CORNER RENDERING */
+        .paper-sheet.fit {
+            padding: 0 !important;
+        }
+
         .paper-sheet.fit .live-preview-container {
-            padding: 4px;
-            width: 100%;
-            height: 100%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            box-sizing: border-box;
+            padding: 0 !important;
+            margin: 0 !important;
+            width: 100% !important;
+            height: 100% !important;
         }
 
         .paper-sheet.fit .real-preview-element {
-            max-width: 100%;
-            max-height: 100%;
-            object-fit: contain;
-            display: block;
-            margin: auto;
-            box-sizing: border-box;
+            width: 100% !important;
+            height: 100% !important;
+            max-width: 100% !important;
+            max-height: 100% !important;
+            object-fit: fill !important;
+            display: block !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            border: none !important;
+            box-shadow: none !important;
         }
 
         /* ACTUAL SIZE: Natural un-maximized scale centered with standard document margins */
+        .paper-sheet.actual {
+            padding: 14px !important;
+        }
+
         .paper-sheet.actual .live-preview-container {
-            padding: 24px;
-            width: 100%;
-            height: 100%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            box-sizing: border-box;
+            padding: 10px !important;
+            width: 100% !important;
+            height: 100% !important;
+            display: flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+            box-sizing: border-box !important;
         }
 
         .paper-sheet.actual .real-preview-element {
-            max-width: 100%;
-            max-height: 100%;
-            object-fit: contain;
-            display: block;
-            margin: auto;
-            box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12);
+            max-width: 100% !important;
+            max-height: 100% !important;
+            width: auto !important;
+            height: auto !important;
+            object-fit: contain !important;
+            display: block !important;
+            margin: auto !important;
+            box-shadow: 0 1px 5px rgba(0, 0, 0, 0.2) !important;
             transition: filter 0.2s ease, transform 0.2s ease;
         }
 
@@ -365,29 +379,52 @@
         }
 
         /* Scale modes for notebook pages */
+        .notebook-spread-container.fit .notebook-page {
+            padding: 0 !important;
+        }
+
         .notebook-spread-container.fit .notebook-page-inner {
-            padding: 3px;
+            padding: 0 !important;
+            margin: 0 !important;
+            width: 100% !important;
+            height: 100% !important;
         }
 
         .notebook-spread-container.fit .notebook-page-img {
-            max-width: 100%;
-            max-height: 100%;
-            object-fit: contain;
-            display: block;
-            margin: auto;
+            width: 100% !important;
+            height: 100% !important;
+            max-width: 100% !important;
+            max-height: 100% !important;
+            object-fit: fill !important;
+            display: block !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            border: none !important;
+            box-shadow: none !important;
+        }
+
+        .notebook-spread-container.actual .notebook-page {
+            padding: 8px !important;
         }
 
         .notebook-spread-container.actual .notebook-page-inner {
-            padding: 14px;
+            padding: 6px !important;
+            width: 100% !important;
+            height: 100% !important;
+            display: flex !important;
+            align-items: center !important;
+            justify-content: center !important;
         }
 
         .notebook-spread-container.actual .notebook-page-img {
-            max-width: 100%;
-            max-height: 100%;
-            object-fit: contain;
-            display: block;
-            margin: auto;
-            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+            max-width: 100% !important;
+            max-height: 100% !important;
+            width: auto !important;
+            height: auto !important;
+            object-fit: contain !important;
+            display: block !important;
+            margin: auto !important;
+            box-shadow: 0 1px 4px rgba(0, 0, 0, 0.18) !important;
         }
 
         /* Color / B&W Modes */

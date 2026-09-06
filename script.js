@@ -921,7 +921,7 @@ async function prepareRealLivePreviewPages() {
                     const numPages = pdf.numPages || 1;
                     for (let p = 1; p <= numPages; p++) {
                         const page = await pdf.getPage(p);
-                        const vp = page.getViewport({ scale: 1.2 });
+                        const vp = page.getViewport({ scale: 2.0 });
                         const canvas = document.createElement("canvas");
                         canvas.width = vp.width;
                         canvas.height = vp.height;
@@ -930,7 +930,9 @@ async function prepareRealLivePreviewPages() {
                         livePreviewPages.push({
                             type: "canvas",
                             title: `${fileName} (P.${p})`,
-                            src: canvas.toDataURL("image/png")
+                            src: canvas.toDataURL("image/png"),
+                            width: vp.width,
+                            height: vp.height
                         });
                     }
                 } catch (pdfErr) {

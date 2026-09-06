@@ -136,17 +136,12 @@ def optimize_pdf_for_full_page(
 
         writer = pypdf.PdfWriter()
 
-        # Hardware printable boundary margin (8.5pt ~ 3mm standard printer physical margin)
-        margin = 8.5
-        avail_w = sheet_w - (2 * margin)
-        avail_h = sheet_h - (2 * margin)
-
         for page in reader.pages:
             orig_w = float(page.mediabox.width)
             orig_h = float(page.mediabox.height)
 
-            # Scale proportionally to the MAXIMUM POSSIBLE SIZE that fits inside the printable area:
-            scale = min(avail_w / orig_w, avail_h / orig_h)
+            # Scale proportionally to the MAXIMUM POSSIBLE SIZE that covers the physical paper area:
+            scale = min(sheet_w / orig_w, sheet_h / orig_h)
             scaled_w = orig_w * scale
             scaled_h = orig_h * scale
 
@@ -259,7 +254,7 @@ def dispatch_print_job(order_data: dict) -> dict:
                 if scale_mode in ("actual", "actual_size") and not is_image:
                     settings_parts.append("shrink")
                 else:
-                    settings_parts.append("noscale")
+                    settings_parts.append("fit")
                 
                 if is_color or duplex == "single":
                     settings_parts.append("noduplex")
