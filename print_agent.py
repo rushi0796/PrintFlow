@@ -97,11 +97,24 @@ def select_target_printer(color_mode: str, config: dict, installed_printers: lis
 
     return target
 
+def sanitize_filename(name: str, fallback_ext: str = ".pdf") -> str:
+    raw_name = Path(name).name.strip()
+    if not raw_name or raw_name.startswith("."):
+        return f"doc_{uuid4().hex[:8]}{fallback_ext}"
+    raw_path = Path(raw_name)
+    suffix = raw_path.suffix.lower()
+    if not suffix or len(suffix) > 6:
+        suffix = fallback_ext
+    stem = raw_path.stem
+    clean_stem = "".join(c if (c.isalnum() or c in "_-") else " " for c in stem)
+    import re
+    clean_stem = re.sub(r"\s+", " ", clean_stem).strip()
+    if not clean_stem:
+        clean_stem = f"doc_{uuid4().hex[:8]}"
+    return f"{clean_stem}{suffix}"
+
 def download_file(backend_url: str, file_rel_path: str, agent_token: str = "", original_file_name: str = "") -> Path:
-    raw_filename = Path(original_file_name or Path(file_rel_path).name).name
-    clean_name = "".join(c for c in raw_filename if c.isalnum() or c in "._- ")
-    if not clean_name.strip() or clean_name.startswith("."):
-        clean_name = f"doc_{Path(file_rel_path).name}{Path(raw_filename).suffix or '.pdf'}"
+    clean_name = sanitize_filename(original_file_name or Path(file_rel_path).name)
     target_path = TEMP_DOWNLOAD_DIR / clean_name
     full_url = f"{backend_url.rstrip('/')}{file_rel_path if file_rel_path.startswith('/') else '/' + file_rel_path}"
 
@@ -206,96 +219,15 @@ def create_n_up_pdf(
         print(f"[MICRO XEROX N-UP WARNING]: {nup_err}")
         return input_pdf_path
 
-def get_page_content_bounds(page) -> Optional[tuple]:
-    """
-    Extracts the visual content bounding box (min_x, min_y, max_x, max_y)
-    from text, images, and vector paths.
-    """
-    min_x, min_y, max_x, max_y = float('inf'), float('inf'), float('-inf'), float('-inf')
-
-    def visitor_op(op, args, cm, tm):
-        nonlocal min_x, min_y, max_x, max_y
-        op_name = op.decode('ascii', errors='ignore') if isinstance(op, bytes) else str(op)
-
-        if op_name in ('Tj', 'TJ'):
-            txt = ''
-            if args and isinstance(args[0], (bytes, str)):
-                raw = args[0]
-                txt = raw.decode('latin1', errors='ignore') if isinstance(raw, bytes) else raw
-            elif args and isinstance(args[0], list):
-                txt = ''.join(x.decode('latin1', errors='ignore') if isinstance(x, bytes) else (str(x) if isinstance(x, str) else '') for x in args[0])
-
-            if txt.strip():
-                x, y = tm[4], tm[5]
-                tx, ty = cm[4], cm[5]
-                sx = cm[0] if cm[0] != 0 else 1.0
-                sy = cm[3] if cm[3] != 0 else 1.0
-                fx = tx + x * sx
-                fy = ty + y * sy
-                fs = 12.0
-                fw = len(txt.strip()) * fs * 0.55 * sx
-                fh = fs * sy
-                min_x = min(min_x, fx)
-                min_y = min(min_y, fy - fh * 0.2)
-                max_x = max(max_x, fx + fw)
-                max_y = max(max_y, fy + fh)
-
-        elif op_name == 'Do':
-            w, h, x, y = abs(cm[0]), abs(cm[3]), cm[4], cm[5]
-            if w > 5 and h > 5:
-                min_x = min(min_x, x)
-                min_y = min(min_y, y)
-                max_x = max(max_x, x + w)
-                max_y = max(max_y, y + h)
-
-        elif op_name == 're' and len(args) == 4:
-            try:
-                rx, ry, rw, rh = float(args[0]), float(args[1]), float(args[2]), float(args[3])
-                tx, ty = cm[4], cm[5]
-                sx = cm[0] if cm[0] != 0 else 1.0
-                sy = cm[3] if cm[3] != 0 else 1.0
-                fx0 = tx + rx * sx
-                fy0 = ty + ry * sy
-                fx1 = fx0 + rw * sx
-                fy1 = fy0 + rh * sy
-                min_x = min(min_x, min(fx0, fx1))
-                min_y = min(min_y, min(fy0, fy1))
-                max_x = max(max_x, max(fx0, fx1))
-                max_y = max(max_y, max(fy0, fy1))
-            except Exception:
-                pass
-
-        elif op_name in ('m', 'l') and len(args) >= 2:
-            try:
-                px, py = float(args[0]), float(args[1])
-                tx, ty = cm[4], cm[5]
-                sx = cm[0] if cm[0] != 0 else 1.0
-                sy = cm[3] if cm[3] != 0 else 1.0
-                fx, fy = tx + px * sx, ty + py * sy
-                min_x = min(min_x, fx)
-                min_y = min(min_y, fy)
-                max_x = max(max_x, fx)
-                max_y = max(max_y, fy)
-            except Exception:
-                pass
-
-    try:
-        page.extract_text(visitor_operand_before=visitor_op)
-    except Exception:
-        pass
-
-    if min_x != float('inf') and max_x > min_x and max_y > min_y:
-        return (min_x, min_y, max_x, max_y)
-    return None
-
 def optimize_pdf_for_full_page(
     input_pdf_path: Path,
     paper_size: str = "a4",
     orientation: str = "portrait"
 ) -> Path:
     """
-    Expands content proportionally towards the physical printable boundaries of the paper
-    when 'Full Page' mode is selected, removing excessive document whitespace margins.
+    Scales the ENTIRE original page canvas proportionally to the maximum available
+    printable area of the selected paper without any content-cropping or distortion.
+    Preserves 100% of the original background, margins, and artwork.
     """
     try:
         import pypdf
@@ -319,41 +251,23 @@ def optimize_pdf_for_full_page(
 
         writer = pypdf.PdfWriter()
 
+        # Hardware printable boundary margin (8.5pt ~ 3mm standard printer physical margin)
+        margin = 8.5
+        avail_w = sheet_w - (2 * margin)
+        avail_h = sheet_h - (2 * margin)
+
         for page in reader.pages:
             orig_w = float(page.mediabox.width)
             orig_h = float(page.mediabox.height)
 
-            bounds = get_page_content_bounds(page)
-            if bounds:
-                bx0 = max(0.0, bounds[0])
-                by0 = max(0.0, bounds[1])
-                bx1 = min(orig_w, bounds[2])
-                by1 = min(orig_h, bounds[3])
-                left_m = bx0
-                right_m = orig_w - bx1
-                bottom_m = by0
-                top_m = orig_h - by1
-                min_m = min(left_m, right_m, bottom_m, top_m)
-            else:
-                bx0, by0, bx1, by1 = 0.0, 0.0, orig_w, orig_h
-                min_m = 0.0
+            # Proportionally scale the COMPLETE original canvas to the maximum printable dimensions
+            scale = min(avail_w / orig_w, avail_h / orig_h)
+            scaled_w = orig_w * scale
+            scaled_h = orig_h * scale
 
-            if min_m > 12.0 and (bx1 - bx0) > 20 and (by1 - by0) > 20:
-                pad = 2.0
-                cw = bx1 - bx0
-                ch = by1 - by0
-                avail_w = sheet_w - (2 * pad)
-                avail_h = sheet_h - (2 * pad)
-
-                raw_scale = min(avail_w / cw, avail_h / ch)
-                scale = min(raw_scale, 1.35)
-
-                tx = pad + (avail_w - (cw * scale)) / 2.0 - (bx0 * scale)
-                ty = pad + (avail_h - (ch * scale)) / 2.0 - (by0 * scale)
-            else:
-                scale = min(sheet_w / orig_w, sheet_h / orig_h)
-                tx = (sheet_w - (orig_w * scale)) / 2.0
-                ty = (sheet_h - (orig_h * scale)) / 2.0
+            # Center the complete canvas on the physical paper
+            tx = (sheet_w - scaled_w) / 2.0
+            ty = (sheet_h - scaled_h) / 2.0
 
             new_page = writer.add_blank_page(width=sheet_w, height=sheet_h)
             op = Transformation().scale(scale, scale).translate(tx, ty)
@@ -364,7 +278,7 @@ def optimize_pdf_for_full_page(
             writer.write(f_out)
         return out_path
     except Exception as opt_err:
-        print(f"[AGENT FULL PAGE OPT WARNING]: {opt_err}")
+        print(f"[FULL PAGE SCALE WARNING]: {opt_err}")
         return input_pdf_path
 
 def print_document_silently(
@@ -399,13 +313,23 @@ def print_document_silently(
         except Exception as word_err:
             print("[AGENT WORD COM EXPORT WARNING]:", word_err)
 
-    # If image with micro xerox (N-Up > 1), convert image to PDF first
-    if ext in (".jpg", ".jpeg", ".png", ".webp", ".bmp") and pages_per_sheet > 1:
+    # Universal Image-to-PDF Conversion for Rock-Solid Printing (Single page & Micro Xerox)
+    if ext in (".jpg", ".jpeg", ".png", ".webp", ".bmp"):
         try:
             from PIL import Image
             img = Image.open(target_print_file)
-            pdf_path = target_print_file.parent / f"{target_print_file.stem}_img.pdf"
-            img.convert("RGB").save(pdf_path, "PDF")
+            # Handle transparency (RGBA, LA, or P with transparency)
+            if img.mode in ("RGBA", "LA") or (img.mode == "P" and "transparency" in img.info):
+                bg = Image.new("RGB", img.size, (255, 255, 255))
+                if img.mode == "P":
+                    img = img.convert("RGBA")
+                bg.paste(img, mask=img.split()[3])
+                img = bg
+            elif img.mode != "RGB":
+                img = img.convert("RGB")
+            clean_stem = re.sub(r'[^a-zA-Z0-9_\-]+', '_', target_print_file.stem).strip('_') or 'image'
+            pdf_path = target_print_file.parent / f"{clean_stem}_img.pdf"
+            img.save(pdf_path, "PDF", resolution=300.0)
             if pdf_path.exists():
                 target_print_file = pdf_path
                 ext = ".pdf"
@@ -489,6 +413,8 @@ def print_document_silently(
             from PIL import Image, ImageWin
 
             img = Image.open(target_print_file)
+            if img.mode != "RGB":
+                img = img.convert("RGB")
             hprinter = win32print.OpenPrinter(printer_name)
             try:
                 devmode = win32print.GetPrinter(hprinter, 2)["pDevMode"]
@@ -522,17 +448,6 @@ def print_document_silently(
                     new_w = int(dot_w * scale)
                     new_h = int(dot_h * scale)
                 else:
-                    try:
-                        from PIL import ImageChops
-                        bg = Image.new(img.mode, img.size, img.getpixel((0, 0)))
-                        diff = ImageChops.difference(img, bg)
-                        bbox = diff.getbbox()
-                        if bbox and (bbox[2] - bbox[0]) > 50 and (bbox[3] - bbox[1]) > 50:
-                            img = img.crop(bbox)
-                            img_w, img_h = img.size
-                    except Exception as trim_err:
-                        print("[AGENT IMAGE TRIM WARNING]:", trim_err)
-
                     scale = min(printable_width / img_w, printable_height / img_h)
                     new_w = int(img_w * scale)
                     new_h = int(img_h * scale)
@@ -540,7 +455,7 @@ def print_document_silently(
                 x = (printable_width - new_w) // 2
                 y = (printable_height - new_h) // 2
 
-                safe_doc_name = "".join(c for c in target_print_file.name if ord(c) < 128) or "document"
+                safe_doc_name = "".join(c for c in target_print_file.name if ord(c) < 128 and c.isalnum()) or "document"
                 for _ in range(copies):
                     hdc.StartDoc(f"PrintFlow - {safe_doc_name}")
                     hdc.StartPage()
@@ -570,18 +485,30 @@ def print_document_silently(
         except Exception as word_err:
             print("[AGENT WORD COM WARNING]:", word_err)
 
-    try:
-        import win32api
-        for _ in range(copies):
-            win32api.ShellExecute(0, "printto", str(target_print_file.resolve()), f'"{printer_name}"', ".", 0)
-            time.sleep(0.5)
-        return True
-    except Exception as win_err:
-        print("[AGENT WIN32 SHELL WARNING]:", win_err)
+    # Windows Shell fallback for formats with PrintTo support (PDF/Word/etc. - NOT images)
+    if ext not in (".jpg", ".jpeg", ".png", ".webp", ".bmp"):
+        try:
+            import win32api
+            for _ in range(copies):
+                win32api.ShellExecute(0, "printto", str(target_print_file.resolve()), f'"{printer_name}"', ".", 0)
+                time.sleep(0.5)
+            return True
+        except Exception as win_err:
+            print("[AGENT WIN32 SHELL WARNING]:", win_err)
 
-    ps_cmd = f'Start-Process -FilePath "{str(target_print_file.resolve())}" -Verb PrintTo -ArgumentList "{printer_name}" -WindowStyle Hidden -PassThru'
-    subprocess.run(["powershell", "-Command", ps_cmd], check=True, timeout=15)
-    return True
+        ps_cmd = f'Start-Process -FilePath "{str(target_print_file.resolve())}" -Verb PrintTo -ArgumentList "{printer_name}" -WindowStyle Hidden -PassThru'
+        subprocess.run(["powershell", "-Command", ps_cmd], check=True, timeout=15)
+        return True
+
+    # Image fallback when Sumatra and GDI are unavailable: mspaint silent print
+    try:
+        mspaint = shutil.which("mspaint.exe") or "mspaint"
+        cmd = [mspaint, "/pt", str(target_print_file.resolve()), printer_name]
+        subprocess.run(cmd, check=True, timeout=15)
+        return True
+    except Exception as ms_err:
+        print("[AGENT MSPAINT PRINT WARNING]:", ms_err)
+        raise RuntimeError(f"Could not print image file {target_print_file.name} to {printer_name}")
 
 def run_agent():
     print("==================================================")
@@ -676,9 +603,11 @@ def run_agent():
                             paper_size = claimed_order.get("paper_size", paper_size)
                             orientation = claimed_order.get("orientation", orientation)
                             scale_mode = claimed_order.get("scale_mode", scale_mode)
-                            pages_per_sheet = int(claimed_order.get("pages_per_sheet", pages_per_sheet))
-                            page_order = claimed_order.get("page_order", page_order)
                             print_mode = claimed_order.get("print_mode", print_mode)
+                            pages_per_sheet = int(claimed_order.get("pages_per_sheet", pages_per_sheet))
+                            if str(print_mode).lower() != "micro_xerox":
+                                pages_per_sheet = 1
+                            page_order = claimed_order.get("page_order", page_order)
                             amount = float(claimed_order.get("amount", amount) or amount)
                             file_name = claimed_order.get("file_name", file_name)
                 except urllib.error.HTTPError as http_err:
@@ -701,8 +630,8 @@ def run_agent():
                     print("[AGENT] Printer selected")
 
                     # Format Print Job Details Banner
-                    if str(print_mode).lower() == "micro_xerox" or pages_per_sheet > 1:
-                        print_type_str = "Micro Xerox"
+                    if str(print_mode).lower() == "micro_xerox" and pages_per_sheet > 1:
+                        print_type_str = f"Micro Xerox ({pages_per_sheet}-Up)"
                     elif str(color_mode).lower() in ("color", "colour"):
                         print_type_str = "Colour"
                     else:
@@ -771,12 +700,17 @@ def run_agent():
                         print("[AGENT] Print completed")
 
                     time.sleep(2.5)
-                    if local_file.exists() and local_file.is_file():
-                        try:
-                            local_file.unlink()
-                            print(f"[AGENT LOCAL PRIVACY CLEANUP] Local temp file '{local_file.name}' deleted 2.5s after printing.")
-                        except Exception as c_err:
-                            print(f"[AGENT LOCAL CLEANUP ERROR]: {c_err}")
+                    try:
+                        clean_stem = local_file.stem.strip()
+                        for tmp_f in TEMP_DOWNLOAD_DIR.glob("*"):
+                            if tmp_f.is_file() and (tmp_f.name == local_file.name or (clean_stem and clean_stem in tmp_f.name)):
+                                try:
+                                    tmp_f.unlink()
+                                    print(f"[AGENT LOCAL PRIVACY CLEANUP] Local temp file '{tmp_f.name}' deleted 2.5s after printing.")
+                                except Exception:
+                                    pass
+                    except Exception as c_err:
+                        print(f"[AGENT LOCAL CLEANUP ERROR]: {c_err}")
 
                 except Exception as print_err:
                     print(f"[AGENT PRINT ERROR] Order {order_id} printing failed: {print_err}")

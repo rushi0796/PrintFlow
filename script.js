@@ -823,7 +823,7 @@ function updatePrintDetailsAndPreview() {
     const paperSize = paperSizeEl ? paperSizeEl.value : "a4";
 
     const pagesPerSheetEl = document.getElementById("pagesPerSheet");
-    const pagesPerSheet = pagesPerSheetEl ? parseInt(pagesPerSheetEl.value, 10) : 2;
+    const pagesPerSheet = (printMode === "micro_xerox") ? (pagesPerSheetEl ? parseInt(pagesPerSheetEl.value, 10) : 2) : 1;
 
     const pageOrderEl = document.querySelector('input[name="pageOrder"]:checked');
     const pageOrder = pageOrderEl ? pageOrderEl.value : "horizontal";
@@ -851,7 +851,7 @@ function updatePrintDetailsAndPreview() {
     }
 
     if (paperSheetPreview) {
-        paperSheetPreview.className = `paper-sheet size-${paperSize} ${orientation}`;
+        paperSheetPreview.className = `paper-sheet size-${paperSize} ${orientation} ${scaleMode}`;
     }
 
     if (printMode === "micro_xerox") {
@@ -871,7 +871,9 @@ function updatePrintDetailsAndPreview() {
             nupPreviewGrid.innerHTML = cellsHtml;
         }
     } else {
-        if (previewLabelBadge) previewLabelBadge.textContent = "Standard Print";
+        if (previewLabelBadge) {
+            previewLabelBadge.textContent = (scaleMode === "actual") ? "Standard (Actual Size)" : "Standard (Full Page)";
+        }
         if (nupPreviewGrid) nupPreviewGrid.style.display = "none";
         if (standardPreviewContent) standardPreviewContent.style.display = "flex";
     }
@@ -1099,7 +1101,7 @@ if (payBtn) {
             const scaleModeVal = localStorage.getItem("scaleMode") || "fit";
             const marginsVal = localStorage.getItem("margins") || "normal";
             const printModeVal = localStorage.getItem("printMode") || "standard";
-            const pagesPerSheetVal = parseInt(localStorage.getItem("pagesPerSheet") || "1", 10);
+            const pagesPerSheetVal = (printModeVal === "micro_xerox") ? parseInt(localStorage.getItem("pagesPerSheet") || "1", 10) : 1;
             const pageOrderVal = localStorage.getItem("pageOrder") || "horizontal";
             const amountVal = parseFloat(localStorage.getItem("amount") || "2");
             const uploadedPath = localStorage.getItem("backendFilePath") || "";
@@ -1631,7 +1633,8 @@ function initSuccessReceiptPage() {
     const fileName = localStorage.getItem("fileName") || "document.pdf";
     const pages = localStorage.getItem("pdfPageCount") || "1";
     const copies = localStorage.getItem("copies") || "1";
-    const printMode = (localStorage.getItem("printMode") === "micro_xerox" || parseInt(localStorage.getItem("pagesPerSheet") || "1") > 1) ? "Micro Xerox" : "Standard";
+    const isMicro = localStorage.getItem("printMode") === "micro_xerox" && parseInt(localStorage.getItem("pagesPerSheet") || "1", 10) > 1;
+    const printMode = isMicro ? "Micro Xerox" : "Standard";
     const colorMode = (localStorage.getItem("colorMode") === "color" || localStorage.getItem("colorMode") === "colour") ? "Color Print 🎨" : "Black & White";
     const sides = (localStorage.getItem("printSide") === "double" || localStorage.getItem("duplex") === "double") ? "Double Side" : "Single Side";
     const paperSize = (localStorage.getItem("paperSize") || "A4").toUpperCase();
