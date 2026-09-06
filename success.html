@@ -133,8 +133,8 @@
         }
 
         .receipt-paper-wrapper {
-            background: #ffffff;
-            box-shadow: 0 14px 30px rgba(0, 0, 0, 0.14), 0 2px 6px rgba(0, 0, 0, 0.08);
+            background: transparent;
+            filter: drop-shadow(0 14px 28px rgba(0, 0, 0, 0.13)) drop-shadow(0 2px 5px rgba(0, 0, 0, 0.08));
             transform: translateY(-100%);
             opacity: 0;
             transition: transform 2.8s cubic-bezier(0.12, 0.8, 0.32, 1), opacity 0.3s ease;
@@ -142,8 +142,6 @@
             width: 270px;
             max-width: 270px;
             margin: 0 auto;
-            border-left: 1px dashed #cbd5e1;
-            border-right: 1px dashed #cbd5e1;
         }
 
         .receipt-paper-wrapper.emerging {
@@ -156,6 +154,9 @@
         }
 
         .receipt-content {
+            background: #ffffff;
+            border-left: 1px dashed #cbd5e1;
+            border-right: 1px dashed #cbd5e1;
             padding: 18px 14px 12px;
             font-family: 'Courier New', Courier, monospace;
             color: #0f172a;
@@ -247,26 +248,12 @@
         .status-completed { background: #dcfce7; color: #16a34a; }
         .status-failed { background: #fee2e2; color: #dc2626; }
 
-        /* REALISTIC TORN PAPER THERMAL CUT BOTTOM */
+        /* REALISTIC THERMAL PAPER RECEIPT CUT / PERFORATED BOTTOM EDGE */
         .torn-paper-edge {
-            height: 14px;
-            background: #ffffff;
-            clip-path: polygon(
-                0% 0%, 100% 0%,
-                100% 0%,
-                98% 100%, 96% 15%, 94% 100%, 92% 25%, 90% 100%,
-                88% 20%, 86% 100%, 84% 15%, 82% 100%, 80% 25%,
-                78% 20%, 76% 100%, 74% 15%, 72% 100%, 70% 25%,
-                68% 20%, 66% 100%, 64% 15%, 62% 100%, 60% 25%,
-                58% 20%, 56% 100%, 54% 15%, 52% 100%, 50% 25%,
-                48% 20%, 46% 100%, 44% 15%, 42% 100%, 40% 25%,
-                38% 20%, 36% 100%, 34% 15%, 32% 100%, 30% 25%,
-                28% 20%, 26% 100%, 24% 15%, 22% 100%, 20% 25%,
-                18% 20%, 16% 100%, 14% 15%, 12% 100%, 10% 25%,
-                8% 20%, 6% 100%, 4% 15%, 2% 100%, 0% 20%
-            );
-            filter: drop-shadow(0 3px 2px rgba(0, 0, 0, 0.07));
-            margin-top: -1px;
+            display: block;
+            width: 270px;
+            height: 5px;
+            margin-top: -1px; /* Seamless physical attachment directly to receipt bottom edge */
         }
 
         .headline-card {
@@ -477,7 +464,10 @@
                     <span id="rcptStatusBadge" class="receipt-status-badge status-preparing">PRINT_QUEUED</span>
                 </div>
             </div>
-            <div class="torn-paper-edge"></div>
+            <svg class="torn-paper-edge" viewBox="0 0 270 5" preserveAspectRatio="none" width="270" height="5" aria-hidden="true">
+                <path d="M 0,0 L 3.0,4.5 L 6.0,0 L 9.0,4.5 L 12.0,0 L 15.0,4.5 L 18.0,0 L 21.0,4.5 L 24.0,0 L 27.0,4.5 L 30.0,0 L 33.0,4.5 L 36.0,0 L 39.0,4.5 L 42.0,0 L 45.0,4.5 L 48.0,0 L 51.0,4.5 L 54.0,0 L 57.0,4.5 L 60.0,0 L 63.0,4.5 L 66.0,0 L 69.0,4.5 L 72.0,0 L 75.0,4.5 L 78.0,0 L 81.0,4.5 L 84.0,0 L 87.0,4.5 L 90.0,0 L 93.0,4.5 L 96.0,0 L 99.0,4.5 L 102.0,0 L 105.0,4.5 L 108.0,0 L 111.0,4.5 L 114.0,0 L 117.0,4.5 L 120.0,0 L 123.0,4.5 L 126.0,0 L 129.0,4.5 L 132.0,0 L 135.0,4.5 L 138.0,0 L 141.0,4.5 L 144.0,0 L 147.0,4.5 L 150.0,0 L 153.0,4.5 L 156.0,0 L 159.0,4.5 L 162.0,0 L 165.0,4.5 L 168.0,0 L 171.0,4.5 L 174.0,0 L 177.0,4.5 L 180.0,0 L 183.0,4.5 L 186.0,0 L 189.0,4.5 L 192.0,0 L 195.0,4.5 L 198.0,0 L 201.0,4.5 L 204.0,0 L 207.0,4.5 L 210.0,0 L 213.0,4.5 L 216.0,0 L 219.0,4.5 L 222.0,0 L 225.0,4.5 L 228.0,0 L 231.0,4.5 L 234.0,0 L 237.0,4.5 L 240.0,0 L 243.0,4.5 L 246.0,0 L 249.0,4.5 L 252.0,0 L 255.0,4.5 L 258.0,0 L 261.0,4.5 L 264.0,0 L 267.0,4.5 L 270.0,0 L 270,0 Z" fill="#ffffff" stroke="none" />
+                <path d="M 6.0,0 L 6.0,1.2 M 12.0,0 L 12.0,1.2 M 18.0,0 L 18.0,1.2 M 24.0,0 L 24.0,1.2 M 30.0,0 L 30.0,1.2 M 36.0,0 L 36.0,1.2 M 42.0,0 L 42.0,1.2 M 48.0,0 L 48.0,1.2 M 54.0,0 L 54.0,1.2 M 60.0,0 L 60.0,1.2 M 66.0,0 L 66.0,1.2 M 72.0,0 L 72.0,1.2 M 78.0,0 L 78.0,1.2 M 84.0,0 L 84.0,1.2 M 90.0,0 L 90.0,1.2 M 96.0,0 L 96.0,1.2 M 102.0,0 L 102.0,1.2 M 108.0,0 L 108.0,1.2 M 114.0,0 L 114.0,1.2 M 120.0,0 L 120.0,1.2 M 126.0,0 L 126.0,1.2 M 132.0,0 L 132.0,1.2 M 138.0,0 L 138.0,1.2 M 144.0,0 L 144.0,1.2 M 150.0,0 L 150.0,1.2 M 156.0,0 L 156.0,1.2 M 162.0,0 L 162.0,1.2 M 168.0,0 L 168.0,1.2 M 174.0,0 L 174.0,1.2 M 180.0,0 L 180.0,1.2 M 186.0,0 L 186.0,1.2 M 192.0,0 L 192.0,1.2 M 198.0,0 L 198.0,1.2 M 204.0,0 L 204.0,1.2 M 210.0,0 L 210.0,1.2 M 216.0,0 L 216.0,1.2 M 222.0,0 L 222.0,1.2 M 228.0,0 L 228.0,1.2 M 234.0,0 L 234.0,1.2 M 240.0,0 L 240.0,1.2 M 246.0,0 L 246.0,1.2 M 252.0,0 L 252.0,1.2 M 258.0,0 L 258.0,1.2 M 264.0,0 L 264.0,1.2" stroke="#cbd5e1" stroke-width="0.75" stroke-linecap="round" />
+            </svg>
         </div>
     </div>
 
