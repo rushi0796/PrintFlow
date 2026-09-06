@@ -151,6 +151,23 @@
             justify-content: center;
             box-sizing: border-box;
             padding: 2px;
+            position: relative;
+        }
+
+        .nup-page-badge {
+            position: absolute;
+            top: 2px;
+            left: 2px;
+            background: rgba(15, 23, 42, 0.78);
+            color: #ffffff;
+            font-size: 8px;
+            font-weight: 700;
+            padding: 1px 3px;
+            border-radius: 2px;
+            line-height: 1;
+            pointer-events: none;
+            z-index: 2;
+            letter-spacing: 0.2px;
         }
 
         .nup-cell.nup-blank-slot {
@@ -228,7 +245,7 @@
             min-height: 100% !important;
             max-width: 100% !important;
             max-height: 100% !important;
-            object-fit: fill !important;
+            object-fit: contain !important;
             object-position: center !important;
             display: block !important;
             margin: 0 !important;
@@ -484,7 +501,7 @@
             min-height: 100% !important;
             max-width: 100% !important;
             max-height: 100% !important;
-            object-fit: fill !important;
+            object-fit: contain !important;
             object-position: center !important;
             display: block !important;
             margin: 0 !important;

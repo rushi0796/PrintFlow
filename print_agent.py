@@ -83,21 +83,23 @@ def get_installed_windows_printers():
 
 def select_target_printer(color_mode: str, config: dict, installed_printers: list) -> str:
     printer_names = [p["name"] for p in installed_printers]
+    if not printer_names:
+        raise RuntimeError("No printers installed on this system.")
     default_printer = next((p["name"] for p in installed_printers if p.get("is_default")), printer_names[0])
 
-    if color_mode.lower() in ("color", "colour"):
-        target = config.get("color_printer", "").strip()
-        if not target:
-            target = next((n for n in printer_names if "color" in n.lower()), "")
+    is_color = color_mode.lower() in ("color", "colour")
+    if is_color:
+        configured_color = config.get("color_printer", "").strip()
+        target = configured_color if configured_color in printer_names else next((n for n in printer_names if any(k in n.lower() for k in ("color", "epson", "l3210", "inkjet"))), "")
+        if not target or target not in printer_names:
+            raise RuntimeError(f"Configured Color printer '{configured_color or 'Color'}' is unavailable or offline. Job will remain queued.")
+        return target
     else:
-        target = config.get("bw_printer", "").strip()
-        if not target:
-            target = next((n for n in printer_names if any(k in n.lower() for k in ("b&w", "mono", "black", "laser"))), "")
-
-    if not target or target not in printer_names:
-        target = default_printer
-
-    return target
+        configured_bw = config.get("bw_printer", "").strip()
+        target = configured_bw if configured_bw in printer_names else next((n for n in printer_names if any(k in n.lower() for k in ("kyocera", "m2040", "3212", "b&w", "mono", "black", "laser"))), "")
+        if not target or target not in printer_names:
+            target = default_printer
+        return target
 
 def sanitize_filename(name: str, fallback_ext: str = ".pdf") -> str:
     raw_name = Path(name).name.strip()
@@ -209,15 +211,17 @@ def create_n_up_pdf(
                         src_page = reader.pages[idx]
                         orig_w = float(src_page.mediabox.width)
                         orig_h = float(src_page.mediabox.height)
+                        llx = float(src_page.mediabox.lower_left[0])
+                        lly = float(src_page.mediabox.lower_left[1])
 
-                        scale = min(cell_w / orig_w, cell_h / orig_h) * 0.95
+                        scale = min(cell_w / orig_w, cell_h / orig_h) * 0.96 if (orig_w > 0 and orig_h > 0) else 1.0
                         scaled_w = orig_w * scale
                         scaled_h = orig_h * scale
 
                         tx = c * cell_w + (cell_w - scaled_w) / 2.0
                         ty = sheet_h - ((r + 1) * cell_h) + (cell_h - scaled_h) / 2.0
 
-                        op = Transformation().scale(scale, scale).translate(tx, ty)
+                        op = Transformation().translate(-llx, -lly).scale(scale, scale).translate(tx, ty)
                         blank_page.merge_transformed_page(src_page, op)
             i += pages_per_sheet
 
@@ -288,9 +292,8 @@ def optimize_pdf_for_full_page(
     orientation: str = "portrait"
 ) -> Path:
     """
-    Scales the ENTIRE original page/image canvas corner-to-corner to cover
-    and fill the selected paper dimensions to all four edges without white bands,
-    letterboxing, pillarboxing, or empty corners, preserving 100% of the artwork.
+    Scales the ENTIRE original page/image canvas proportionally corner-to-corner to cover
+    and fill the selected paper dimensions to maximum usable printable area without distortion.
     """
     try:
         import pypdf
@@ -320,12 +323,19 @@ def optimize_pdf_for_full_page(
             llx = float(page.mediabox.lower_left[0])
             lly = float(page.mediabox.lower_left[1])
 
-            # True corner-to-corner scale factors
-            scale_x = sheet_w / orig_w if orig_w > 0 else 1.0
-            scale_y = sheet_h / orig_h if orig_h > 0 else 1.0
+            # Proportional scale factor to maximum usable printable area without distortion
+            if orig_w <= 0 or orig_h <= 0:
+                scale = 1.0
+            else:
+                scale = min(sheet_w / orig_w, sheet_h / orig_h)
+
+            scaled_w = orig_w * scale
+            scaled_h = orig_h * scale
+            offset_x = (sheet_w - scaled_w) / 2.0
+            offset_y = (sheet_h - scaled_h) / 2.0
 
             new_page = writer.add_blank_page(width=sheet_w, height=sheet_h)
-            op = Transformation().translate(-llx, -lly).scale(scale_x, scale_y)
+            op = Transformation().translate(-llx, -lly).scale(scale, scale).translate(offset_x, offset_y)
             new_page.merge_transformed_page(page, op)
 
         out_path = input_pdf_path.parent / f"fp_{input_pdf_path.name}"

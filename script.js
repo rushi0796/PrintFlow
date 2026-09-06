@@ -1159,6 +1159,8 @@ function renderRealLivePreviewUI() {
             const startIdx = currentSheet * pagesPerSheet;
 
             let cellsHtml = "";
+            let minPageInSheet = 999999;
+            let maxPageInSheet = 0;
             for (let r = 0; r < rows; r++) {
                 for (let c = 0; c < cols; c++) {
                     const slotIdx = (pageOrder === "vertical") ? (c * rows + r) : (r * cols + c);
@@ -1168,7 +1170,10 @@ function renderRealLivePreviewUI() {
                     const targetPage = (pageIdx < pagesToRender.length) ? pagesToRender[pageIdx] : null;
 
                     if (targetPage && targetPage.src) {
-                        cellsHtml += `<div class="nup-cell"><img src="${targetPage.src}" class="nup-cell-element" alt="${escapeHtml(targetPage.title)}"></div>`;
+                        const docP = targetPage.docPageNum || (pageIdx + 1);
+                        if (docP < minPageInSheet) minPageInSheet = docP;
+                        if (docP > maxPageInSheet) maxPageInSheet = docP;
+                        cellsHtml += `<div class="nup-cell"><span class="nup-page-badge">P.${docP}</span><img src="${targetPage.src}" class="nup-cell-element" alt="${escapeHtml(targetPage.title)}"></div>`;
                     } else {
                         cellsHtml += `<div class="nup-cell nup-blank-slot"></div>`;
                     }
@@ -1177,7 +1182,14 @@ function renderRealLivePreviewUI() {
             nupGrid.innerHTML = cellsHtml;
 
             if (pageIndicator) {
-                pageIndicator.textContent = `Sheet ${currentSheet + 1} of ${totalSheets}`;
+                const rangeStr = (maxPageInSheet >= minPageInSheet) ? ` (Pages ${minPageInSheet}–${maxPageInSheet})` : "";
+                const printSideEl = document.querySelector('input[name="printSide"]:checked');
+                const printSide = printSideEl ? printSideEl.value : "single";
+                let sideStr = "";
+                if (printSide === "double") {
+                    sideStr = (currentSheet % 2 === 0) ? " • Front" : " • Back";
+                }
+                pageIndicator.textContent = `Sheet ${currentSheet + 1} of ${totalSheets}${rangeStr}${sideStr}`;
             }
             if (navBar) {
                 navBar.style.display = totalSheets > 1 ? "flex" : "none";
@@ -1385,7 +1397,10 @@ function updatePrintDetailsAndPreview() {
     let duplexBinding = bindingEl ? bindingEl.value : "long_edge";
 
     if (colorMode === "color") {
-        if (doubleSideLabel) doubleSideLabel.style.opacity = "0.5";
+        if (doubleSideLabel) {
+            doubleSideLabel.style.display = "none";
+            doubleSideLabel.style.opacity = "0.5";
+        }
         if (radioDoubleSide) {
             radioDoubleSide.disabled = true;
             if (radioDoubleSide.checked) {
@@ -1397,7 +1412,10 @@ function updatePrintDetailsAndPreview() {
         if (bindingSection) bindingSection.style.display = "none";
         duplexBinding = "";
     } else {
-        if (doubleSideLabel) doubleSideLabel.style.opacity = "1";
+        if (doubleSideLabel) {
+            doubleSideLabel.style.display = "flex";
+            doubleSideLabel.style.opacity = "1";
+        }
         if (radioDoubleSide) radioDoubleSide.disabled = false;
         if (printSide === "double") {
             if (bindingSection) bindingSection.style.display = "block";
