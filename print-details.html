@@ -193,6 +193,255 @@
             filter: none;
         }
 
+        /* ======================================================
+           DOUBLE-SIDE NOTEBOOK SPREAD PREVIEW
+           ====================================================== */
+        .notebook-spread-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            width: 100%;
+            transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+
+        .notebook-edge-badge {
+            margin-bottom: 8px;
+            font-size: 11px;
+            font-weight: 700;
+            padding: 3px 10px;
+            border-radius: 12px;
+            background: rgba(234, 88, 12, 0.25);
+            border: 1px solid rgba(251, 146, 60, 0.5);
+            color: #fed7aa;
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            letter-spacing: 0.2px;
+        }
+
+        .notebook-book {
+            display: flex;
+            flex-direction: row;
+            align-items: stretch;
+            justify-content: center;
+            position: relative;
+            background: #0f172a;
+            padding: 5px;
+            border-radius: 8px;
+            box-shadow: 0 12px 28px -4px rgba(0, 0, 0, 0.55), 0 4px 10px -2px rgba(0, 0, 0, 0.3);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            perspective: 1200px;
+            box-sizing: border-box;
+            max-width: 100%;
+        }
+
+        .notebook-page {
+            background: #ffffff;
+            position: relative;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            box-sizing: border-box;
+            border: 1px solid #cbd5e1;
+            transition: width 0.25s ease, height 0.25s ease;
+        }
+
+        .notebook-page.left-page {
+            border-radius: 6px 2px 2px 6px;
+            box-shadow: inset -2px 0 6px rgba(0, 0, 0, 0.08), -3px 4px 10px rgba(0, 0, 0, 0.15);
+            border-right: none;
+        }
+
+        .notebook-page.right-page {
+            border-radius: 2px 6px 6px 2px;
+            box-shadow: inset 2px 0 6px rgba(0, 0, 0, 0.08), 3px 4px 10px rgba(0, 0, 0, 0.15);
+            border-left: none;
+            cursor: pointer;
+        }
+
+        /* Dimension sizing per paper size & orientation */
+        .notebook-spread-container.size-a4.portrait .notebook-page { width: 136px; height: 192px; }
+        .notebook-spread-container.size-a4.landscape .notebook-page { width: 152px; height: 108px; }
+
+        .notebook-spread-container.size-letter.portrait .notebook-page { width: 138px; height: 178px; }
+        .notebook-spread-container.size-letter.landscape .notebook-page { width: 152px; height: 118px; }
+
+        .notebook-spread-container.size-legal.portrait .notebook-page { width: 126px; height: 210px; }
+        .notebook-spread-container.size-legal.landscape .notebook-page { width: 158px; height: 96px; }
+
+        /* Center Realistic Notebook Spine */
+        .notebook-spine {
+            width: 8px;
+            position: relative;
+            background: linear-gradient(90deg, #1e293b 0%, #0f172a 30%, #334155 50%, #0f172a 70%, #1e293b 100%);
+            box-shadow: inset 0 0 4px rgba(0, 0, 0, 0.7);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 2;
+            flex-shrink: 0;
+        }
+
+        .notebook-spine-stitch {
+            width: 1px;
+            height: 90%;
+            border-left: 1px dashed rgba(254, 215, 170, 0.45);
+        }
+
+        /* Realistic Gutter Shadows on page edges touching the spine */
+        .notebook-page-shadow-right {
+            position: absolute;
+            top: 0;
+            right: 0;
+            bottom: 0;
+            width: 16px;
+            background: linear-gradient(to left, rgba(0, 0, 0, 0.22) 0%, rgba(0, 0, 0, 0.08) 8px, transparent 16px);
+            pointer-events: none;
+            z-index: 3;
+        }
+
+        .notebook-page-shadow-left {
+            position: absolute;
+            top: 0;
+            left: 0;
+            bottom: 0;
+            width: 16px;
+            background: linear-gradient(to right, rgba(0, 0, 0, 0.22) 0%, rgba(0, 0, 0, 0.08) 8px, transparent 16px);
+            pointer-events: none;
+            z-index: 3;
+        }
+
+        /* Page Tags */
+        .notebook-page-tag {
+            position: absolute;
+            top: 5px;
+            z-index: 5;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            background: rgba(15, 23, 42, 0.88);
+            backdrop-filter: blur(4px);
+            -webkit-backdrop-filter: blur(4px);
+            padding: 2px 7px;
+            border-radius: 6px;
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            color: #fed7aa;
+            font-size: 9.5px;
+            font-weight: 800;
+            pointer-events: none;
+            white-space: nowrap;
+        }
+
+        .notebook-page.left-page .notebook-page-tag {
+            left: 5px;
+        }
+
+        .notebook-page.right-page .notebook-page-tag {
+            right: 5px;
+        }
+
+        .flip-mini-tag {
+            background: #ea580c;
+            color: #ffffff;
+            font-size: 8.5px;
+            padding: 1px 5px;
+            border-radius: 4px;
+            font-weight: 700;
+        }
+
+        /* Page Inner Content */
+        .notebook-page-inner {
+            width: 100%;
+            height: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+            overflow: hidden;
+            box-sizing: border-box;
+            background: #ffffff;
+            transition: transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
+        }
+
+        /* Scale modes for notebook pages */
+        .notebook-spread-container.fit .notebook-page-inner {
+            padding: 3px;
+        }
+
+        .notebook-spread-container.fit .notebook-page-img {
+            max-width: 100%;
+            max-height: 100%;
+            object-fit: contain;
+            display: block;
+            margin: auto;
+        }
+
+        .notebook-spread-container.actual .notebook-page-inner {
+            padding: 14px;
+        }
+
+        .notebook-spread-container.actual .notebook-page-img {
+            max-width: 100%;
+            max-height: 100%;
+            object-fit: contain;
+            display: block;
+            margin: auto;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+        }
+
+        /* Color / B&W Modes */
+        .notebook-spread-container.bw-mode .notebook-page-img {
+            filter: grayscale(100%) contrast(1.12);
+        }
+
+        .notebook-spread-container.color-mode .notebook-page-img {
+            filter: none;
+        }
+
+        /* Blank Page on back side */
+        .notebook-blank-content {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            width: 100%;
+            height: 100%;
+            color: #94a3b8;
+            font-size: 10px;
+            font-weight: 700;
+            border: 1.5px dashed #cbd5e1;
+            box-sizing: border-box;
+            margin: 4px;
+            border-radius: 4px;
+            background: #f8fafc;
+            text-align: center;
+            padding: 8px;
+        }
+
+        /* Short Edge Flip applied to back page */
+        .notebook-spread-container.short-edge .notebook-page.right-page .notebook-page-inner {
+            transform: rotate(180deg);
+        }
+
+        .notebook-spread-container.short-edge .notebook-page.right-page.unflipped .notebook-page-inner {
+            transform: rotate(0deg);
+        }
+
+        /* Short Edge top binding dashed visual */
+        .notebook-spread-container.short-edge .notebook-book::before {
+            content: '';
+            position: absolute;
+            top: -4px;
+            left: 12%;
+            right: 12%;
+            height: 3px;
+            background: repeating-linear-gradient(90deg, #ea580c, #ea580c 6px, transparent 6px, transparent 12px);
+            border-radius: 2px;
+            opacity: 0.9;
+            z-index: 10;
+        }
+
         .footer-legal {
             margin-top: 30px;
             padding-top: 14px;
@@ -238,6 +487,48 @@
                     <div id="livePreviewLoading" style="font-size: 11px; color: #64748b; font-weight: 700;">Loading real preview...</div>
                 </div>
                 <div id="nupPreviewGrid" class="nup-grid nup-2-h" style="display: none;"></div>
+            </div>
+
+            <!-- DOUBLE-SIDE NOTEBOOK SPREAD PREVIEW -->
+            <div id="notebookSpreadPreview" class="notebook-spread-container size-a4 portrait fit color-mode long-edge" style="display: none;">
+                <div id="notebookShortEdgeIndicator" class="notebook-edge-badge" style="display: none;">
+                    <span>🔄 Short Edge: Back side printed 180° rotated for top flip</span>
+                </div>
+                <div class="notebook-book">
+                    <!-- LEFT PAGE: Front Side -->
+                    <div class="notebook-page left-page" id="notebookLeftPage">
+                        <div class="notebook-page-tag">
+                            <span id="notebookLeftTagText">Page 1 • Front</span>
+                        </div>
+                        <div class="notebook-page-inner" id="notebookLeftInner">
+                            <img id="notebookLeftImg" class="notebook-page-img real-preview-element" alt="Front Page">
+                            <div id="notebookLeftBlank" class="notebook-blank-content" style="display: none;">
+                                <span>Empty Page</span>
+                            </div>
+                        </div>
+                        <div class="notebook-page-shadow-right"></div>
+                    </div>
+
+                    <!-- REALISTIC NOTEBOOK SPINE -->
+                    <div class="notebook-spine" id="notebookSpine">
+                        <div class="notebook-spine-stitch"></div>
+                    </div>
+
+                    <!-- RIGHT PAGE: Back Side -->
+                    <div class="notebook-page right-page" id="notebookRightPage" title="Click to inspect upright or flip">
+                        <div class="notebook-page-tag">
+                            <span id="notebookRightTagText">Page 2 • Back</span>
+                            <span id="notebookFlipBadge" class="flip-mini-tag" style="display: none;">🔄 180° Flip</span>
+                        </div>
+                        <div class="notebook-page-inner" id="notebookRightInner">
+                            <img id="notebookRightImg" class="notebook-page-img real-preview-element" alt="Back Page">
+                            <div id="notebookRightBlank" class="notebook-blank-content" style="display: none;">
+                                <span>Blank Back Side</span>
+                            </div>
+                        </div>
+                        <div class="notebook-page-shadow-left"></div>
+                    </div>
+                </div>
             </div>
         </div>
         <!-- PREVIEW NAVIGATOR FOR MULTI-PAGE & MULTI-FILE -->

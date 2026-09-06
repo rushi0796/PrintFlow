@@ -1059,27 +1059,113 @@ function renderRealLivePreviewUI() {
             if (nextBtn) nextBtn.disabled = (currentSheet >= totalSheets - 1);
         }
     } else {
-        if (nupGrid) nupGrid.style.display = "none";
-        if (standardContent) standardContent.style.display = "flex";
+        const printSideEl = document.querySelector('input[name="printSide"]:checked');
+        const printSide = printSideEl ? printSideEl.value : "single";
+        const bindingEl = document.querySelector('input[name="duplexBinding"]:checked');
+        const duplexBinding = bindingEl ? bindingEl.value : "long_edge";
 
-        const totalPages = livePreviewPages.length;
-        const pageIdx = Math.max(0, Math.min(livePreviewIndex, totalPages - 1));
-        const activePage = livePreviewPages[pageIdx];
+        const notebookSpread = document.getElementById("notebookSpreadPreview");
+        const notebookLeftImg = document.getElementById("notebookLeftImg");
+        const notebookLeftBlank = document.getElementById("notebookLeftBlank");
+        const notebookLeftTagText = document.getElementById("notebookLeftTagText");
+        const notebookRightImg = document.getElementById("notebookRightImg");
+        const notebookRightBlank = document.getElementById("notebookRightBlank");
+        const notebookRightTagText = document.getElementById("notebookRightTagText");
+        const notebookFlipBadge = document.getElementById("notebookFlipBadge");
+        const notebookShortEdgeIndicator = document.getElementById("notebookShortEdgeIndicator");
+        const paperSheetPreview = document.getElementById("paperSheetPreview");
 
-        if (activePage && liveImg) {
-            liveImg.src = activePage.src;
-            liveImg.style.display = "block";
-            liveImg.alt = activePage.title;
-        }
+        if (printSide === "double" && notebookSpread) {
+            if (nupGrid) nupGrid.style.display = "none";
+            if (standardContent) standardContent.style.display = "none";
+            if (paperSheetPreview) paperSheetPreview.style.display = "none";
+            notebookSpread.style.display = "flex";
 
-        if (pageIndicator) {
-            pageIndicator.textContent = `${activePage?.title || 'Page'} (${pageIdx + 1} of ${totalPages})`;
+            const totalPages = livePreviewPages.length;
+            const currentSpreadIndex = Math.floor(livePreviewIndex / 2) * 2;
+            const leftIdx = currentSpreadIndex;
+            const rightIdx = currentSpreadIndex + 1;
+
+            const leftPage = (leftIdx < totalPages) ? livePreviewPages[leftIdx] : null;
+            const rightPage = (rightIdx < totalPages) ? livePreviewPages[rightIdx] : null;
+
+            // Render Left Page (Front side)
+            if (leftPage && notebookLeftImg) {
+                notebookLeftImg.src = leftPage.src;
+                notebookLeftImg.style.display = "block";
+                notebookLeftImg.alt = leftPage.title;
+                if (notebookLeftBlank) notebookLeftBlank.style.display = "none";
+                if (notebookLeftTagText) notebookLeftTagText.textContent = `Page ${leftIdx + 1} • Front`;
+            } else {
+                if (notebookLeftImg) notebookLeftImg.style.display = "none";
+                if (notebookLeftBlank) notebookLeftBlank.style.display = "flex";
+                if (notebookLeftTagText) notebookLeftTagText.textContent = "Empty";
+            }
+
+            // Render Right Page (Back side)
+            if (rightPage && notebookRightImg) {
+                notebookRightImg.src = rightPage.src;
+                notebookRightImg.style.display = "block";
+                notebookRightImg.alt = rightPage.title;
+                if (notebookRightBlank) notebookRightBlank.style.display = "none";
+                if (notebookRightTagText) notebookRightTagText.textContent = `Page ${rightIdx + 1} • Back`;
+
+                if (duplexBinding === "short_edge") {
+                    if (notebookFlipBadge) notebookFlipBadge.style.display = "inline-block";
+                    if (notebookShortEdgeIndicator) notebookShortEdgeIndicator.style.display = "inline-flex";
+                } else {
+                    if (notebookFlipBadge) notebookFlipBadge.style.display = "none";
+                    if (notebookShortEdgeIndicator) notebookShortEdgeIndicator.style.display = "none";
+                }
+            } else {
+                if (notebookRightImg) notebookRightImg.style.display = "none";
+                if (notebookRightBlank) notebookRightBlank.style.display = "flex";
+                if (notebookRightTagText) notebookRightTagText.textContent = "Blank Back Side";
+                if (notebookFlipBadge) notebookFlipBadge.style.display = "none";
+                if (notebookShortEdgeIndicator) notebookShortEdgeIndicator.style.display = "none";
+            }
+
+            const totalSpreads = Math.ceil(totalPages / 2) || 1;
+            const currentSpreadNum = Math.floor(currentSpreadIndex / 2) + 1;
+
+            if (pageIndicator) {
+                if (rightPage) {
+                    pageIndicator.textContent = `Pages ${leftIdx + 1}–${rightIdx + 1} of ${totalPages} (Spread ${currentSpreadNum} of ${totalSpreads})`;
+                } else {
+                    pageIndicator.textContent = `Page ${leftIdx + 1} of ${totalPages} (Spread ${currentSpreadNum} of ${totalSpreads})`;
+                }
+            }
+            if (navBar) {
+                navBar.style.display = totalSpreads > 1 ? "flex" : "none";
+            }
+            if (prevBtn) prevBtn.disabled = (currentSpreadIndex <= 0);
+            if (nextBtn) nextBtn.disabled = (rightIdx >= totalPages - 1);
+
+        } else {
+            if (notebookSpread) notebookSpread.style.display = "none";
+            if (paperSheetPreview) paperSheetPreview.style.display = "flex";
+            if (nupGrid) nupGrid.style.display = "none";
+            if (standardContent) standardContent.style.display = "flex";
+
+            const totalPages = livePreviewPages.length;
+            const pageIdx = Math.max(0, Math.min(livePreviewIndex, totalPages - 1));
+            const activePage = livePreviewPages[pageIdx];
+
+            if (activePage && liveImg) {
+                liveImg.src = activePage.src;
+                liveImg.style.display = "block";
+                liveImg.alt = activePage.title;
+            }
+
+            if (pageIndicator) {
+                pageIndicator.textContent = `${activePage?.title || 'Page'} (${pageIdx + 1} of ${totalPages})`;
+            }
+            if (navBar) {
+                navBar.style.display = totalPages > 1 ? "flex" : "none";
+            }
+            if (prevBtn) prevBtn.disabled = (pageIdx <= 0);
+            if (nextBtn) nextBtn.disabled = (pageIdx >= totalPages - 1);
         }
-        if (navBar) {
-            navBar.style.display = totalPages > 1 ? "flex" : "none";
-        }
-        if (prevBtn) prevBtn.disabled = (pageIdx <= 0);
-        if (nextBtn) nextBtn.disabled = (pageIdx >= totalPages - 1);
     }
 }
 
@@ -1163,7 +1249,28 @@ function updatePrintDetailsAndPreview() {
         microXeroxSection.style.display = printMode === "micro_xerox" ? "block" : "none";
     }
 
-    if (paperSheetPreview) {
+    const notebookSpreadPreview = document.getElementById("notebookSpreadPreview");
+    const rightPageEl = document.getElementById("notebookRightPage");
+    if (rightPageEl) rightPageEl.classList.remove("unflipped");
+
+    if (paperSheetPreview && notebookSpreadPreview) {
+        const colorClass = (colorMode === "color") ? "color-mode" : "bw-mode";
+        const edgeClass = (duplexBinding === "short_edge") ? "short-edge" : "long-edge";
+
+        if (printMode === "micro_xerox") {
+            notebookSpreadPreview.style.display = "none";
+            paperSheetPreview.style.display = "flex";
+            paperSheetPreview.className = `paper-sheet size-${paperSize} ${orientation} ${scaleMode} ${colorClass}`;
+        } else if (printSide === "double") {
+            paperSheetPreview.style.display = "none";
+            notebookSpreadPreview.style.display = "flex";
+            notebookSpreadPreview.className = `notebook-spread-container size-${paperSize} ${orientation} ${scaleMode} ${colorClass} ${edgeClass}`;
+        } else {
+            notebookSpreadPreview.style.display = "none";
+            paperSheetPreview.style.display = "flex";
+            paperSheetPreview.className = `paper-sheet size-${paperSize} ${orientation} ${scaleMode} ${colorClass}`;
+        }
+    } else if (paperSheetPreview) {
         const colorClass = (colorMode === "color") ? "color-mode" : "bw-mode";
         paperSheetPreview.className = `paper-sheet size-${paperSize} ${orientation} ${scaleMode} ${colorClass}`;
     }
@@ -1171,6 +1278,10 @@ function updatePrintDetailsAndPreview() {
     if (previewLabelBadge) {
         if (printMode === "micro_xerox") {
             previewLabelBadge.textContent = `Micro Xerox ${pagesPerSheet}-Up`;
+        } else if (printSide === "double") {
+            previewLabelBadge.textContent = (duplexBinding === "short_edge")
+                ? "Double Side • Short Edge (Flip 🗓️)"
+                : "Double Side • Long Edge (Booklet 📖)";
         } else {
             previewLabelBadge.textContent = (scaleMode === "actual") ? "Standard (Actual Size)" : "Standard (Full Page)";
         }
@@ -1217,8 +1328,15 @@ if (printDetailsFileName) {
         prevPageBtn.addEventListener("click", function() {
             const printModeEl = document.querySelector('input[name="printMode"]:checked');
             const printMode = printModeEl ? printModeEl.value : "standard";
+            const printSideEl = document.querySelector('input[name="printSide"]:checked');
+            const printSide = printSideEl ? printSideEl.value : "single";
             const pagesPerSheetEl = document.getElementById("pagesPerSheet");
-            const step = (printMode === "micro_xerox" && pagesPerSheetEl) ? parseInt(pagesPerSheetEl.value, 10) : 1;
+            let step = 1;
+            if (printMode === "micro_xerox" && pagesPerSheetEl) {
+                step = parseInt(pagesPerSheetEl.value, 10);
+            } else if (printSide === "double") {
+                step = 2;
+            }
             livePreviewIndex = Math.max(0, livePreviewIndex - step);
             renderRealLivePreviewUI();
         });
@@ -1228,12 +1346,36 @@ if (printDetailsFileName) {
         nextPageBtn.addEventListener("click", function() {
             const printModeEl = document.querySelector('input[name="printMode"]:checked');
             const printMode = printModeEl ? printModeEl.value : "standard";
+            const printSideEl = document.querySelector('input[name="printSide"]:checked');
+            const printSide = printSideEl ? printSideEl.value : "single";
             const pagesPerSheetEl = document.getElementById("pagesPerSheet");
-            const step = (printMode === "micro_xerox" && pagesPerSheetEl) ? parseInt(pagesPerSheetEl.value, 10) : 1;
+            let step = 1;
+            if (printMode === "micro_xerox" && pagesPerSheetEl) {
+                step = parseInt(pagesPerSheetEl.value, 10);
+            } else if (printSide === "double") {
+                step = 2;
+            }
             if (livePreviewIndex + step < livePreviewPages.length) {
                 livePreviewIndex += step;
             }
             renderRealLivePreviewUI();
+        });
+    }
+
+    const notebookRightPage = document.getElementById("notebookRightPage");
+    if (notebookRightPage) {
+        notebookRightPage.addEventListener("click", function() {
+            const bindingEl = document.querySelector('input[name="duplexBinding"]:checked');
+            const duplexBinding = bindingEl ? bindingEl.value : "long_edge";
+            if (duplexBinding === "short_edge") {
+                notebookRightPage.classList.toggle("unflipped");
+                const flipBadge = document.getElementById("notebookFlipBadge");
+                if (flipBadge) {
+                    flipBadge.textContent = notebookRightPage.classList.contains("unflipped")
+                        ? "👀 Upright"
+                        : "🔄 180° Flip";
+                }
+            }
         });
     }
 
