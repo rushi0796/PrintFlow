@@ -204,15 +204,60 @@ function handleVerifyOtp() {
                 if (resendContainer) resendContainer.style.display = "none";
                 if (resendSuccessMsg) resendSuccessMsg.style.display = "none";
                 if (verifyOtpBtn) verifyOtpBtn.style.display = "none";
-                if (mobileNumberInput) {
-                    localStorage.setItem("mobileNumber", mobileNumberInput.value.trim());
-                }
-                if (window.clearUserDocumentSession) {
-                    window.clearUserDocumentSession();
-                } else {
-                    ["fileName", "uploadedFileName", "backendFilePath", "pdfPageCount", "copies", "amount", "pdfDataUrl"].forEach(k => localStorage.removeItem(k));
-                }
-                window.location.href = "home.html";
+                const otpSentText = document.querySelector(".otp-sent-text");
+                if (otpSentText) otpSentText.style.display = "none";
+
+                // Step 1: Morph OTP boxes into vibrant green circular dots (0 to 350ms)
+                otpBoxes.forEach((box) => {
+                    box.classList.remove("error");
+                    box.classList.add("circle-morph");
+                    box.readOnly = true;
+                });
+
+                // Step 2: Orbit rotation & convergence toward center (350ms to 750ms)
+                setTimeout(() => {
+                    otpBoxes.forEach((box, i) => {
+                        box.classList.add(`circle-orbit-${i + 1}`);
+                    });
+                }, 350);
+
+                // Step 3: Merge into glowing green success badge with SVG checkmark & text (at 750ms)
+                setTimeout(() => {
+                    if (otpBoxContainer) {
+                        otpBoxContainer.style.display = "none";
+                    }
+
+                    let badgeContainer = document.getElementById("successBadgeContainer");
+                    if (!badgeContainer) {
+                        badgeContainer = document.createElement("div");
+                        badgeContainer.id = "successBadgeContainer";
+                        if (otpSection) otpSection.appendChild(badgeContainer);
+                    }
+                    badgeContainer.innerHTML = `
+                        <div class="merged-success-badge">
+                            <svg class="checkmark-svg" viewBox="0 0 24 24">
+                                <polyline points="20 6 9 17 4 12"></polyline>
+                            </svg>
+                        </div>
+                        <div class="success-text-anim">
+                            ✓ OTP Verified
+                        </div>
+                    `;
+                }, 750);
+
+                // Step 4: Wait until animation completes (1800ms total visible duration), then navigate to home.html
+                setTimeout(() => {
+                    const mobileVal = (mobileNumberInput ? mobileNumberInput.value.trim() : "") || localStorage.getItem("mobileNumber") || "";
+                    if (mobileVal) {
+                        localStorage.setItem("mobileNumber", mobileVal);
+                    }
+                    if (window.clearUserDocumentSession) {
+                        window.clearUserDocumentSession();
+                    } else {
+                        ["fileName", "uploadedFileName", "backendFilePath", "pdfPageCount", "copies", "amount", "pdfDataUrl"].forEach(k => localStorage.removeItem(k));
+                    }
+                    window.location.href = "home.html";
+                }, 1800);
             },
             function (error) {
                 console.error("MSG91 OTP verification failed", error);

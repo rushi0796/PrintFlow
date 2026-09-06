@@ -1603,7 +1603,8 @@ function startAutoLogoutCountdown(seconds) {
 }
 
 function initSuccessReceiptPage() {
-    const printer = document.getElementById("receiptPrinter");
+    const printer = document.getElementById("receiptPrinter") || document.querySelector(".machine-unit");
+    const paperViewport = document.getElementById("paperViewport") || document.querySelector(".paper-viewport");
     const rcptPaper = document.getElementById("receiptPaper");
     const rcptOrderId = document.getElementById("rcptOrderId");
     const receiptOrder = document.getElementById("receiptOrder");
@@ -1655,15 +1656,6 @@ function initSuccessReceiptPage() {
     if (rcptOrientation) rcptOrientation.textContent = orientation;
     if (rcptAmount) rcptAmount.textContent = `₹${parseFloat(amount).toFixed(2)}`;
 
-    // Animate emerging receipt paper downward out of the printer slit
-    if (rcptPaper) {
-        rcptPaper.classList.add("emerging");
-        setTimeout(() => {
-            rcptPaper.classList.remove("emerging");
-            rcptPaper.classList.add("settled");
-        }, 200);
-    }
-
     let hasTriggeredCompletedSequence = false;
 
     async function pollStatus() {
@@ -1712,35 +1704,67 @@ function initSuccessReceiptPage() {
                     }
                     if (statusHeadline) statusHeadline.textContent = "Printing your document...";
                     if (statusSubtext) statusSubtext.textContent = "The physical printer is actively printing your file.";
-                    if (rcptPaper) rcptPaper.classList.add("settled");
                 } else if (orderState === "COMPLETED" || orderState === "PRINTED") {
-                    if (ledDot) {
-                        ledDot.className = "led-dot online";
-                        ledDot.style.background = "#22c55e";
-                        ledDot.style.boxShadow = "0 0 8px #22c55e";
+                    if (successPollingInterval) {
+                        clearInterval(successPollingInterval);
+                        successPollingInterval = null;
                     }
-                    if (statusHeadline) statusHeadline.textContent = "Print Completed! 🎉";
-                    if (statusSubtext) statusSubtext.textContent = "Your document has been printed successfully.";
-                    if (privacyToast) privacyToast.style.display = "flex";
-                    if (rcptPaper) rcptPaper.classList.add("settled");
-
-                    if (successPollingInterval) clearInterval(successPollingInterval);
 
                     if (!hasTriggeredCompletedSequence) {
                         hasTriggeredCompletedSequence = true;
-                        if (printer) {
-                            printer.classList.remove("receipt-animation-started");
-                            void printer.offsetWidth;
-                            printer.classList.add("receipt-animation-started");
-                        }
-                        if (finalSuccess) {
-                            finalSuccess.classList.remove("receipt-animation-started");
-                            void finalSuccess.offsetWidth;
-                            finalSuccess.classList.add("receipt-animation-started");
-                        }
 
-                        // Start 60-second automatic security logout countdown after print completion
-                        startAutoLogoutCountdown(60);
+                        // 1. Printer success state appears
+                        if (ledDot) {
+                            ledDot.className = "led-dot online";
+                            ledDot.style.background = "#22c55e";
+                            ledDot.style.boxShadow = "0 0 8px #22c55e";
+                        }
+                        if (agentStateText) agentStateText.textContent = "COMPLETED";
+                        if (rcptStatusBadge) {
+                            rcptStatusBadge.textContent = "COMPLETED";
+                            rcptStatusBadge.className = "receipt-status-badge status-completed";
+                        }
+                        if (statusHeadline) statusHeadline.textContent = "Print finished on printer";
+                        if (statusSubtext) statusSubtext.textContent = "Dispensing physical print receipt...";
+
+                        // 2. Small delay before receipt begins emerging from the printer slot (500ms)
+                        setTimeout(() => {
+                            // 3. Receipt begins emerging FROM THE PRINTER SLOT & slowly feeds downward
+                            if (paperViewport) {
+                                paperViewport.classList.add("settled");
+                            }
+                            if (rcptPaper) {
+                                rcptPaper.classList.add("emerging");
+                                requestAnimationFrame(() => {
+                                    rcptPaper.classList.add("settled");
+                                });
+                            }
+
+                            // 4. Receipt reaches final position after feeding downward (2.8s)
+                            setTimeout(() => {
+                                // 5. Short pause (600ms) after receipt reaches final position
+                                setTimeout(() => {
+                                    // 6. "Print Completed!" success section appears
+                                    if (statusHeadline) statusHeadline.textContent = "Print Completed! 🎉";
+                                    if (statusSubtext) statusSubtext.textContent = "Your document has been printed successfully.";
+                                    if (privacyToast) privacyToast.style.display = "flex";
+
+                                    if (printer) {
+                                        printer.classList.remove("receipt-animation-started");
+                                        void printer.offsetWidth;
+                                        printer.classList.add("receipt-animation-started");
+                                    }
+                                    if (finalSuccess) {
+                                        finalSuccess.classList.remove("receipt-animation-started");
+                                        void finalSuccess.offsetWidth;
+                                        finalSuccess.classList.add("receipt-animation-started");
+                                    }
+
+                                    // Start 60-second automatic security logout countdown after print completion
+                                    startAutoLogoutCountdown(60);
+                                }, 600);
+                            }, 2800);
+                        }, 500);
                     }
                 } else if (orderState === "FAILED") {
                     if (ledDot) {
