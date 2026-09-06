@@ -253,18 +253,21 @@ def optimize_pdf_for_full_page(
 
         writer = pypdf.PdfWriter()
 
+        # Hardware printable boundary margin (8.5pt ~ 3mm standard printer physical margin)
+        margin = 8.5
+        avail_w = sheet_w - (2 * margin)
+        avail_h = sheet_h - (2 * margin)
+
         for page in reader.pages:
             orig_w = float(page.mediabox.width)
             orig_h = float(page.mediabox.height)
 
-            # Full Page Cover/Bleed scaling:
-            # Scale proportionally so that the canvas completely covers the sheet
-            # and all four corners are filled without empty margins.
-            scale = max(sheet_w / orig_w, sheet_h / orig_h)
+            # Scale proportionally to the MAXIMUM POSSIBLE SIZE that fits inside the printable area:
+            scale = min(avail_w / orig_w, avail_h / orig_h)
             scaled_w = orig_w * scale
             scaled_h = orig_h * scale
 
-            # Center the scaled canvas so any minor bleed is symmetrically balanced
+            # Center the complete canvas on the physical paper
             tx = (sheet_w - scaled_w) / 2.0
             ty = (sheet_h - scaled_h) / 2.0
 
@@ -453,7 +456,7 @@ def print_document_silently(
                     new_w = int(dot_w * scale)
                     new_h = int(dot_h * scale)
                 else:
-                    scale = max(printable_width / img_w, printable_height / img_h)
+                    scale = min(printable_width / img_w, printable_height / img_h)
                     new_w = int(img_w * scale)
                     new_h = int(img_h * scale)
 
@@ -633,22 +636,15 @@ def run_agent():
                     print(f"[AGENT CLAIM ERROR] Skipping order {order_id}:", claim_err)
                     continue
 
-                print("[AGENT] Job claimed")
-
                 target_printer = select_target_printer(color_mode, config, installed_printers)
                 try:
-                    local_file = download_file(backend_url, file_rel_path, agent_token, file_name)
-                    print("[AGENT] Document downloaded")
-
-                    print("[AGENT] Printer selected")
-
                     # Format Print Job Details Banner
                     if str(print_mode).lower() == "micro_xerox" and pages_per_sheet > 1:
                         print_type_str = f"Micro Xerox ({pages_per_sheet}-Up)"
-                    elif str(color_mode).lower() in ("color", "colour"):
-                        print_type_str = "Colour"
                     else:
-                        print_type_str = "B&W"
+                        print_type_str = "Standard"
+
+                    color_mode_str = "Colour" if str(color_mode).lower() in ("color", "colour") else "B&W"
 
                     if str(duplex).lower() in ("double", "duplex", "duplexlong", "vertical"):
                         sides_str = "Double Side"
@@ -671,13 +667,19 @@ def run_agent():
                     print(f"Printer        : {target_printer}")
                     print(f"File           : {file_name}")
                     print(f"Print Type     : {print_type_str}")
+                    print(f"Color Mode     : {color_mode_str}")
                     print(f"Sides          : {sides_str}")
-                    print(f"Orientation    : {orientation_str}")
                     print(f"Paper Size     : {paper_size_str}")
+                    print(f"Orientation    : {orientation_str}")
                     print(f"Page Mode      : {page_mode_str}")
                     print(f"Copies         : {copies}")
                     print("==================================================")
                     print("")
+
+                    print("[AGENT] Job claimed")
+                    local_file = download_file(backend_url, file_rel_path, agent_token, file_name)
+                    print("[AGENT] Document downloaded")
+                    print("[AGENT] Printer selected")
 
                     print_document_silently(
                         local_file,

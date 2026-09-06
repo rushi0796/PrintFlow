@@ -1001,9 +1001,29 @@ function renderRealLivePreviewUI() {
         if (standardContent) standardContent.style.display = "none";
         if (nupGrid) {
             nupGrid.style.display = "grid";
+            const orientationEl = document.querySelector('input[name="orientation"]:checked');
+            const orientation = orientationEl ? orientationEl.value : "portrait";
+
+            let cols = 1, rows = 1;
+            if (pagesPerSheet === 2) {
+                if (orientation === "landscape") { cols = 2; rows = 1; }
+                else { cols = 1; rows = 2; }
+            } else if (pagesPerSheet === 4) {
+                cols = 2; rows = 2;
+            } else if (pagesPerSheet === 6) {
+                if (orientation === "landscape") { cols = 3; rows = 2; }
+                else { cols = 2; rows = 3; }
+            } else if (pagesPerSheet === 9) {
+                cols = 3; rows = 3;
+            } else if (pagesPerSheet === 16) {
+                cols = 4; rows = 4;
+            }
+
             let gridClass = `nup-grid nup-${pagesPerSheet}`;
             if (pagesPerSheet === 2) {
-                gridClass = pageOrder === "vertical" ? "nup-grid nup-2-v" : "nup-grid nup-2-h";
+                gridClass = (orientation === "landscape") ? "nup-grid nup-2-v" : "nup-grid nup-2-h";
+            } else if (pagesPerSheet === 6) {
+                gridClass = (orientation === "landscape") ? "nup-grid nup-6-land" : "nup-grid nup-6";
             }
             nupGrid.className = gridClass;
 
@@ -1012,12 +1032,19 @@ function renderRealLivePreviewUI() {
             const startIdx = currentSheet * pagesPerSheet;
 
             let cellsHtml = "";
-            for (let i = 0; i < pagesPerSheet; i++) {
-                const targetPage = livePreviewPages[startIdx + i] || livePreviewPages[0];
-                if (targetPage && targetPage.src) {
-                    cellsHtml += `<div class="nup-cell"><img src="${targetPage.src}" class="nup-cell-element" alt="${escapeHtml(targetPage.title)}"></div>`;
-                } else {
-                    cellsHtml += `<div class="nup-cell"></div>`;
+            for (let r = 0; r < rows; r++) {
+                for (let c = 0; c < cols; c++) {
+                    const slotIdx = (pageOrder === "vertical") ? (c * rows + r) : (r * cols + c);
+                    const pageIdx = startIdx + slotIdx;
+                    // CRITICAL FIX: If pageIdx exceeds document pages, MUST BE COMPLETELY BLANK.
+                    // NEVER fallback to livePreviewPages[0] or duplicate Page 1.
+                    const targetPage = (pageIdx < livePreviewPages.length) ? livePreviewPages[pageIdx] : null;
+
+                    if (targetPage && targetPage.src) {
+                        cellsHtml += `<div class="nup-cell"><img src="${targetPage.src}" class="nup-cell-element" alt="${escapeHtml(targetPage.title)}"></div>`;
+                    } else {
+                        cellsHtml += `<div class="nup-cell nup-blank-slot"></div>`;
+                    }
                 }
             }
             nupGrid.innerHTML = cellsHtml;
