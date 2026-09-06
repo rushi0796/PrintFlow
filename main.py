@@ -326,6 +326,8 @@ def queue_order_for_printing(payload: dict):
     # Page range preservation
     if not order.get("page_range") and payload.get("page_range"):
         order["page_range"] = payload.get("page_range")
+    if payload.get("orientation"):
+        order["orientation"] = str(payload.get("orientation")).strip().lower()
 
     order.setdefault("page_range", "all")
     order.setdefault("scale_mode", "fit")
@@ -344,6 +346,7 @@ def queue_order_for_printing(payload: dict):
         if j.get("order_id") == order.get("order_id"):
             pos = idx + 1
             break
+    print(f"[PRINT CONFIG] orientation={order.get('orientation')}")
     print(f"[PRINT JOB QUEUED] {order.get('order_id')}, {pos}")
 
     return order

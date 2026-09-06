@@ -289,11 +289,16 @@ def extract_pdf_page_subset(input_pdf_path: Path, page_range_str: str) -> Path:
 def optimize_pdf_for_full_page(
     input_pdf_path: Path,
     paper_size: str = "a4",
-    orientation: str = "portrait"
+    orientation: str = "portrait",
+    scale_mode: str = "fit"
 ) -> Path:
     """
-    Scales the ENTIRE original page/image canvas proportionally corner-to-corner to cover
-    and fill the selected paper dimensions to maximum usable printable area without distortion.
+    Ensures every page matches the target paper dimensions (MediaBox) and orientation.
+    If orientation == 'landscape' and page is portrait, rotates 90 degrees and transfers rotation to content.
+    If orientation == 'portrait' and page is landscape, rotates 90 degrees and transfers rotation to content.
+    Scales proportionally without distortion:
+      - For 'fit': scales up/down to maximum usable printable area.
+      - For 'actual': 1.0 scale (only shrinking if larger than sheet), centered on sheet.
     """
     try:
         import pypdf
@@ -310,7 +315,8 @@ def optimize_pdf_for_full_page(
             "legal": (612.0, 1008.0)
         }
         pw, ph = paper_dims.get(paper_size.lower(), (595.28, 841.89))
-        if orientation.lower() == "landscape":
+        is_landscape = (orientation.lower() == "landscape")
+        if is_landscape:
             sheet_w, sheet_h = max(pw, ph), min(pw, ph)
         else:
             sheet_w, sheet_h = min(pw, ph), max(pw, ph)
@@ -320,12 +326,27 @@ def optimize_pdf_for_full_page(
         for page in reader.pages:
             orig_w = float(page.mediabox.width)
             orig_h = float(page.mediabox.height)
+
+            # ROTATE CONTENT TO MATCH TARGET ORIENTATION
+            if is_landscape and orig_w < orig_h:
+                # Portrait page -> rotate 90 degrees into landscape
+                page.rotate(90)
+                page.transfer_rotation_to_content()
+            elif not is_landscape and orig_w > orig_h:
+                # Landscape page -> rotate 90 degrees into portrait
+                page.rotate(90)
+                page.transfer_rotation_to_content()
+
+            orig_w = float(page.mediabox.width)
+            orig_h = float(page.mediabox.height)
             llx = float(page.mediabox.lower_left[0])
             lly = float(page.mediabox.lower_left[1])
 
             # Proportional scale factor to maximum usable printable area without distortion
             if orig_w <= 0 or orig_h <= 0:
                 scale = 1.0
+            elif scale_mode in ("actual", "actual_size"):
+                scale = min(1.0, sheet_w / orig_w, sheet_h / orig_h)
             else:
                 scale = min(sheet_w / orig_w, sheet_h / orig_h)
 
@@ -402,6 +423,13 @@ def print_document_silently(
                 img = bg
             elif img.mode != "RGB":
                 img = img.convert("RGB")
+
+            # Rotate image to match requested orientation
+            if orientation.lower() == "landscape" and img.height > img.width:
+                img = img.rotate(270, expand=True)
+            elif orientation.lower() != "landscape" and img.width > img.height:
+                img = img.rotate(270, expand=True)
+
             clean_stem = re.sub(r'[^a-zA-Z0-9_\-]+', '_', target_print_file.stem).strip('_') or 'image'
             pdf_path = target_print_file.parent / f"{clean_stem}_img.pdf"
             img.save(pdf_path, "PDF", resolution=300.0)
@@ -424,12 +452,37 @@ def print_document_silently(
             paper_size=paper_size,
             orientation=orientation
         )
-    elif ext == ".pdf" and pages_per_sheet <= 1 and (is_image or scale_mode not in ("actual", "actual_size")):
+    elif ext == ".pdf":
         target_print_file = optimize_pdf_for_full_page(
             target_print_file,
             paper_size=paper_size,
-            orientation=orientation
+            orientation=orientation,
+            scale_mode=scale_mode
         )
+
+    # Diagnostic Logs before physical printing
+    paper_str = "A4" if paper_size.lower() == "a4" else paper_size.upper()
+    color_str = "bw" if not is_color else "color"
+    duplex_str = "single" if (is_color or duplex == "single") else "double"
+    scale_str = "fit" if scale_mode not in ("actual", "actual_size") else "actual_size"
+    page_size_str = "297x210mm" if orientation.lower() == "landscape" else "210x297mm"
+
+    print("")
+    print("[PRINT CONFIG]")
+    print(f"orientation={orientation.lower()}")
+    print(f"paper={paper_str}")
+    print(f"color_mode={color_str}")
+    print(f"duplex={duplex_str}")
+    print(f"scale_mode={scale_str}")
+    print("")
+    print("[PRINT DOCUMENT]")
+    print(f"page_size={page_size_str}")
+    print(f"orientation={orientation.lower()}")
+    print("")
+    print("[PHYSICAL PRINT]")
+    print(f"printer={printer_name}")
+    print(f"orientation={orientation.lower()}")
+    print("")
 
     # Linux / CUPS fallback
     if sys.platform != "win32":
@@ -443,16 +496,50 @@ def print_document_silently(
     # Windows PDF silent execution with SumatraPDF
     sumatra = find_sumatra_executable()
     if ext == ".pdf" and sumatra:
-        settings_parts = []
+        orig_devmode_orient = None
+        orig_devmode_duplex = None
+        orig_devmode_paper = None
+        hprinter = None
 
-        # Full Page vs Actual Size:
-        # For Full Page, SumatraPDF 'fit' utilizes the maximum physical printable area supported by the printer.
+        if sys.platform == "win32":
+            try:
+                import win32print, win32con
+                hprinter = win32print.OpenPrinter(printer_name, {"DesiredAccess": win32print.PRINTER_ALL_ACCESS})
+                pinfo = win32print.GetPrinter(hprinter, 2)
+                pdm = pinfo["pDevMode"]
+                orig_devmode_orient = pdm.Orientation
+                orig_devmode_duplex = pdm.Duplex
+                orig_devmode_paper = pdm.PaperSize
+
+                # Set physical DEVMODE orientation (2 = Landscape, 1 = Portrait)
+                pdm.Orientation = 2 if orientation.lower() == "landscape" else 1
+                pdm.Fields |= win32con.DM_ORIENTATION
+
+                # Paper size (A4 = 9, Letter = 1, Legal = 5)
+                paper_map = {"a4": 9, "letter": 1, "legal": 5}
+                pdm.PaperSize = paper_map.get(paper_size.lower(), 9)
+                pdm.Fields |= win32con.DM_PAPERSIZE
+
+                # Duplex setting
+                if is_color or duplex == "single":
+                    pdm.Duplex = win32con.DMDUP_SIMPLEX
+                elif duplex in ("duplex_short", "duplexshort", "short_edge", "short", "horizontal"):
+                    pdm.Duplex = win32con.DMDUP_HORIZONTAL
+                elif duplex in ("duplex_long", "duplexlong", "long_edge", "double", "duplex", "vertical"):
+                    pdm.Duplex = win32con.DMDUP_VERTICAL
+                pdm.Fields |= win32con.DM_DUPLEX
+
+                win32print.SetPrinter(hprinter, 2, pinfo, 0)
+            except Exception as dm_err:
+                print(f"[AGENT DEVMODE CONFIG WARNING]: {dm_err}")
+
+        settings_parts = []
         if scale_mode in ("actual", "actual_size") and not is_image:
             settings_parts.append("shrink")
         else:
             settings_parts.append("fit")
 
-        # Duplex (Kyocera hardware duplex support)
+        # Duplex
         if is_color or duplex == "single":
             settings_parts.append("noduplex")
         elif duplex in ("duplex_short", "duplexshort", "short_edge", "short", "horizontal"):
@@ -462,31 +549,45 @@ def print_document_silently(
         else:
             settings_parts.append("noduplex")
 
-        # Orientation
-        if orientation.lower() == "landscape":
-            settings_parts.append("landscape")
-        else:
-            settings_parts.append("portrait")
+        # IMPORTANT: NO DOUBLE ROTATION!
+        # The PDF is already rendered with the exact physical page dimensions (e.g. 297x210mm).
+        # We do NOT pass "landscape" to SumatraPDF because Sumatra would apply a redundant 90-deg rotation!
+        # Windows DEVMODE already commands the hardware driver to print in Landscape!
 
-        # Paper Size & Paper Kind (DMPAPER_A4 = 9, DMPAPER_LETTER = 1, DMPAPER_LEGAL = 5)
         paper_map = {"a4": (9, "a4"), "letter": (1, "letter"), "legal": (5, "legal")}
         pid, pname = paper_map.get(paper_size.lower(), (9, "a4"))
         settings_parts.append(f"paper={pname}")
         settings_parts.append(f"paperkind={pid}")
-
-        # Copies
         settings_parts.append(f"{max(1, copies)}x")
 
-        # Color Mode
         if color_mode.lower() in ("color", "colour"):
             settings_parts.append("color")
         else:
             settings_parts.append("monochrome")
 
+        settings_parts.append("ignore-pdf-print-settings")
         settings_str = ",".join(settings_parts)
-        cmd = [sumatra, "-print-to", printer_name, "-print-settings", settings_str, str(target_print_file.resolve())]
-        subprocess.run(cmd, check=True, timeout=30)
-        return True
+
+        cmd = [sumatra, "-print-to", printer_name, "-print-settings", settings_str, "-silent", str(target_print_file.resolve())]
+        try:
+            subprocess.run(cmd, check=True, timeout=45)
+            time.sleep(2.0)
+            return True
+        finally:
+            if hprinter:
+                try:
+                    pinfo = win32print.GetPrinter(hprinter, 2)
+                    pdm = pinfo["pDevMode"]
+                    if orig_devmode_orient is not None:
+                        pdm.Orientation = orig_devmode_orient
+                    if orig_devmode_duplex is not None:
+                        pdm.Duplex = orig_devmode_duplex
+                    if orig_devmode_paper is not None:
+                        pdm.PaperSize = orig_devmode_paper
+                    win32print.SetPrinter(hprinter, 2, pinfo, 0)
+                    win32print.ClosePrinter(hprinter)
+                except Exception as restore_err:
+                    print(f"[AGENT DEVMODE RESTORE WARNING]: {restore_err}")
 
     # Direct Windows GDI printing for Images (JPG, PNG, BMP, WEBP)
     if ext in (".jpg", ".jpeg", ".png", ".webp", ".bmp"):
@@ -725,6 +826,7 @@ def run_agent():
 
                 target_printer = select_target_printer(color_mode, config, installed_printers)
                 print(f"[AGENT CLAIMED] {order_id}, {target_printer}")
+                print(f"[PRINT CONFIG] orientation={str(orientation).lower()}")
                 try:
                     # Format Print Job Details Banner
                     if str(print_mode).lower() == "micro_xerox" and pages_per_sheet > 1:
