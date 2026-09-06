@@ -121,8 +121,16 @@ def download_file(backend_url: str, file_rel_path: str, agent_token: str = "", o
     full_url = f"{backend_url.rstrip('/')}{file_rel_path if file_rel_path.startswith('/') else '/' + file_rel_path}"
 
     req = urllib.request.Request(full_url, headers={"User-Agent": "PrintFlowAgent/1.0", "X-Print-Agent-Token": agent_token})
-    with urllib.request.urlopen(req, timeout=30) as response, target_path.open("wb") as out_file:
-        shutil.copyfileobj(response, out_file)
+    try:
+        with urllib.request.urlopen(req, timeout=30) as response, target_path.open("wb") as out_file:
+            shutil.copyfileobj(response, out_file)
+    except Exception:
+        if target_path.exists():
+            try:
+                target_path.unlink()
+            except Exception:
+                pass
+        raise
 
     return target_path
 

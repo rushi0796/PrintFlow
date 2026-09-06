@@ -363,3 +363,10 @@ def delete_document(document_id: str):
     init_storage()
     placeholder = "%s" if DATABASE_URL else "?"
     _execute(f"DELETE FROM printflow_documents WHERE document_id={placeholder}", (document_id,))
+
+
+def delete_order(order_id: str):
+    init_storage()
+    placeholder = "%s" if DATABASE_URL else "?"
+    _execute(f"DELETE FROM printflow_orders WHERE order_id={placeholder} OR razorpay_order_id={placeholder}", (order_id, order_id))
+
