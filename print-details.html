@@ -135,17 +135,29 @@
             transition: all 0.25s cubic-bezier(0.2, 0.8, 0.2, 1);
         }
 
-        /* FULL PAGE: Maximizes complete original canvas inside printable margins */
+        /* FULL PAGE: Maximizes complete original canvas to fill sheet to all corners */
         .paper-sheet.fit .live-preview-container {
-            padding: 4px;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+        }
+
+        .paper-sheet.fit .real-preview-element {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            display: block;
+            margin: auto;
         }
 
         /* ACTUAL SIZE: Natural un-maximized scale centered with standard document margins */
         .paper-sheet.actual .live-preview-container {
             padding: 22px;
+            width: 100%;
+            height: 100%;
         }
 
-        .real-preview-element {
+        .paper-sheet.actual .real-preview-element {
             max-width: 100%;
             max-height: 100%;
             object-fit: contain;

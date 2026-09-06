@@ -227,9 +227,9 @@ def optimize_pdf_for_full_page(
     orientation: str = "portrait"
 ) -> Path:
     """
-    Scales the ENTIRE original page canvas proportionally to the maximum available
-    printable area of the selected paper without any content-cropping or distortion.
-    Preserves 100% of the original background, margins, and artwork.
+    Scales the ENTIRE original page/image canvas proportionally to cover
+    and fill the selected paper dimensions to all four corners without white bands
+    or empty corners, preserving 100% of the artwork and colored background.
     """
     try:
         import pypdf
@@ -253,21 +253,18 @@ def optimize_pdf_for_full_page(
 
         writer = pypdf.PdfWriter()
 
-        # Hardware printable boundary margin (8.5pt ~ 3mm standard printer physical margin)
-        margin = 8.5
-        avail_w = sheet_w - (2 * margin)
-        avail_h = sheet_h - (2 * margin)
-
         for page in reader.pages:
             orig_w = float(page.mediabox.width)
             orig_h = float(page.mediabox.height)
 
-            # Proportionally scale the COMPLETE original canvas to the maximum printable dimensions
-            scale = min(avail_w / orig_w, avail_h / orig_h)
+            # Full Page Cover/Bleed scaling:
+            # Scale proportionally so that the canvas completely covers the sheet
+            # and all four corners are filled without empty margins.
+            scale = max(sheet_w / orig_w, sheet_h / orig_h)
             scaled_w = orig_w * scale
             scaled_h = orig_h * scale
 
-            # Center the complete canvas on the physical paper
+            # Center the scaled canvas so any minor bleed is symmetrically balanced
             tx = (sheet_w - scaled_w) / 2.0
             ty = (sheet_h - scaled_h) / 2.0
 
@@ -392,9 +389,11 @@ def print_document_silently(
         else:
             settings_parts.append("portrait")
 
-        # Paper Size
-        if paper_size:
-            settings_parts.append(f"paper={paper_size.lower()}")
+        # Paper Size & Paper Kind (DMPAPER_A4 = 9, DMPAPER_LETTER = 1, DMPAPER_LEGAL = 5)
+        paper_map = {"a4": (9, "a4"), "letter": (1, "letter"), "legal": (5, "legal")}
+        pid, pname = paper_map.get(paper_size.lower(), (9, "a4"))
+        settings_parts.append(f"paper={pname}")
+        settings_parts.append(f"paperkind={pid}")
 
         # Copies
         settings_parts.append(f"{max(1, copies)}x")
@@ -454,7 +453,7 @@ def print_document_silently(
                     new_w = int(dot_w * scale)
                     new_h = int(dot_h * scale)
                 else:
-                    scale = min(printable_width / img_w, printable_height / img_h)
+                    scale = max(printable_width / img_w, printable_height / img_h)
                     new_w = int(img_w * scale)
                     new_h = int(img_h * scale)
 
