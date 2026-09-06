@@ -531,11 +531,19 @@ def run_agent():
 
     print(f" Target Backend: {backend_url}")
     print(f" Poll Interval : {poll_interval} seconds")
-    print(" Agent Status   : STARTING...\n")
+    print(" Agent Status   : DISCOVERING PRINTERS...")
 
+    installed_printers = get_installed_windows_printers()
+    printer_summary = [p["name"] for p in installed_printers if "OneNote" not in p["name"] and "Fax" not in p["name"] and "XPS" not in p["name"]]
+    print(f" Detected {len(installed_printers)} printer(s): {', '.join(printer_summary)}")
+    print(" Agent Status   : READY & POLLING FOR JOBS...\n")
+
+    loop_count = 0
     while True:
         try:
-            installed_printers = get_installed_windows_printers()
+            loop_count += 1
+            if loop_count % 20 == 0:
+                installed_printers = get_installed_windows_printers()
 
             poll_url = f"{backend_url}/api/agent/poll"
             req_data = json.dumps({
