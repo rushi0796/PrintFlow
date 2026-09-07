@@ -213,6 +213,19 @@ def sanitize_filename(name: str, fallback_ext: str = ".pdf") -> str:
 def download_file(backend_url: str, file_rel_path: str, agent_token: str = "", original_file_name: str = "") -> Path:
     clean_name = sanitize_filename(original_file_name or Path(file_rel_path).name)
     target_path = TEMP_DOWNLOAD_DIR / clean_name
+
+    # Fast-path: Check if file exists locally in uploads directory
+    rel_clean = str(file_rel_path).replace("\\", "/").lstrip("/")
+    local_candidates = [
+        BASE_DIR / rel_clean,
+        BASE_DIR / "uploads" / Path(file_rel_path).name,
+        Path(file_rel_path)
+    ]
+    for cand in local_candidates:
+        if cand.is_file() and cand.stat().st_size > 0:
+            shutil.copyfile(cand, target_path)
+            return target_path
+
     full_url = f"{backend_url.rstrip('/')}{file_rel_path if file_rel_path.startswith('/') else '/' + file_rel_path}"
 
     req = urllib.request.Request(full_url, headers={"User-Agent": "PrintFlowAgent/1.0", "X-Print-Agent-Token": agent_token})
@@ -1127,14 +1140,14 @@ def run_agent():
                         print(f"[PRINT COMPLETED] {order_id}")
                         print("[AGENT] Print completed")
 
-                    time.sleep(2.5)
+                    time.sleep(5.0)
                     try:
                         clean_stem = local_file.stem.strip()
                         for tmp_f in TEMP_DOWNLOAD_DIR.glob("*"):
                             if tmp_f.is_file() and (tmp_f.name == local_file.name or (clean_stem and clean_stem in tmp_f.name)):
                                 try:
                                     tmp_f.unlink()
-                                    print(f"[AGENT LOCAL PRIVACY CLEANUP] Local temp file '{tmp_f.name}' deleted 2.5s after printing.")
+                                    print(f"[AGENT LOCAL PRIVACY CLEANUP] Local temp file '{tmp_f.name}' deleted after printing.")
                                 except Exception:
                                     pass
                     except Exception as c_err:

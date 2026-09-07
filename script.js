@@ -374,6 +374,10 @@ function saveUploadStateToLocalStorage() {
         localStorage.setItem("backendFilePath", primaryPath);
     }
     localStorage.setItem("fileListDetails", JSON.stringify(detailsList));
+    localStorage.removeItem("lastOrderId");
+    localStorage.removeItem("razorpayOrderId");
+    localStorage.removeItem("currentCheckoutPaid");
+    localStorage.removeItem("newCheckoutPending");
 
     saveAllUploadedFiles(activeItems);
 
@@ -805,6 +809,10 @@ document.addEventListener("DOMContentLoaded", function() {
                 return;
             }
 
+            localStorage.removeItem("lastOrderId");
+            localStorage.removeItem("razorpayOrderId");
+            localStorage.removeItem("currentCheckoutPaid");
+            localStorage.removeItem("newCheckoutPending");
             window.location.href = "print-details.html";
         });
     }
@@ -1880,6 +1888,11 @@ if (paymentBtn) {
     paymentBtn.addEventListener("click", function (e) {
         if (e && e.preventDefault) e.preventDefault();
         updatePrintDetailsAndPreview();
+        // Clear any old completed order state so payment.html initiates a fresh checkout
+        localStorage.removeItem("lastOrderId");
+        localStorage.removeItem("razorpayOrderId");
+        localStorage.removeItem("currentCheckoutPaid");
+        localStorage.setItem("newCheckoutPending", "true");
         window.location.href = "payment.html";
     });
 }
@@ -1944,44 +1957,11 @@ if (paymentFile && paymentCopies && paymentAmount) {
         paymentOrientation.textContent = "Orientation: " + (orientationVal === "landscape" ? "Landscape" : "Portrait");
     }
 
-    // Auto-redirect if customer refreshes payment.html after already paying
-    const existingOrderId = localStorage.getItem("lastOrderId");
-    if (existingOrderId && existingOrderId.startsWith("PF-")) {
-        fetch(apiUrl(`/api/orders/${existingOrderId}/status`, `/api/orders/${existingOrderId}/status`))
-            .then(res => res.ok ? res.json() : null)
-            .then(data => {
-                if (data && data.status === "success" && ["PRINT_QUEUED", "PRINTING", "COMPLETED"].includes(data.order_status)) {
-                    console.log("[PAYMENT] Order already paid. Auto-redirecting to success.html");
-                    if (payBtn) {
-                        payBtn.disabled = true;
-                        payBtn.textContent = "✓ Paid - Redirecting...";
-                    }
-                    showPaymentSuccessModal("Payment Confirmed", "Your print order is active in the queue. Redirecting to status...");
-                    setTimeout(() => {
-                        window.location.replace(`success.html?order_id=${encodeURIComponent(existingOrderId)}`);
-                    }, 400);
-                } else {
-                    // Check reconciliation status in case browser callback was missed
-                    fetch(apiUrl(`/api/payment-status/${existingOrderId}`, `/api/payment-status/${existingOrderId}`))
-                        .then(r => r.ok ? r.json() : null)
-                        .then(recon => {
-                            if (recon && recon.paid === true) {
-                                console.log("[PAYMENT] Order reconciled as paid on page load. Auto-redirecting to success.html");
-                                if (payBtn) {
-                                    payBtn.disabled = true;
-                                    payBtn.textContent = "✓ Paid - Redirecting...";
-                                }
-                                showPaymentSuccessModal("Payment Confirmed", "Your payment is confirmed. Redirecting to status...");
-                                setTimeout(() => {
-                                    window.location.replace(`success.html?order_id=${encodeURIComponent(existingOrderId)}`);
-                                }, 400);
-                            }
-                        })
-                        .catch(() => {});
-                }
-            })
-            .catch(() => {});
-    }
+    // Fresh checkout guarantee: Always purge any previous order state so clicking Pay creates a brand new order
+    localStorage.removeItem("newCheckoutPending");
+    localStorage.removeItem("lastOrderId");
+    localStorage.removeItem("razorpayOrderId");
+    localStorage.removeItem("currentCheckoutPaid");
 
     getSavedPdfFile().then(selectedFile => {
         if (selectedFile) {
@@ -2078,9 +2058,10 @@ if (payBtn) {
 
         paymentVerifiedSuccess = false;
 
-        // Double payment protection: check if existing order is already paid
+        // Double payment protection: check if CURRENT checkout was already paid
+        const isCheckoutPaid = (localStorage.getItem("currentCheckoutPaid") === "true");
         const currentSavedOrderId = localStorage.getItem("lastOrderId");
-        if (currentSavedOrderId && currentSavedOrderId.startsWith("PF-")) {
+        if (isCheckoutPaid && currentSavedOrderId && currentSavedOrderId.startsWith("PF-")) {
             try {
                 const quickCheck = await fetch(apiUrl(`/api/orders/${currentSavedOrderId}/status`, `/api/orders/${currentSavedOrderId}/status`));
                 if (quickCheck.ok) {
@@ -2273,6 +2254,7 @@ if (payBtn) {
 
                     if (verified) {
                         paymentVerifiedSuccess = true;
+                        localStorage.setItem("currentCheckoutPaid", "true");
                         localStorage.setItem("lastOrderId", nextOrderId);
                         showPaymentSuccessModal("Payment Successful!", "✓ Payment verified. Your document is queued for printing.");
                         setTimeout(() => {
@@ -2311,6 +2293,7 @@ if (payBtn) {
                         if (reconResult && reconResult.paid === true) {
                             paymentVerifiedSuccess = true;
                             const nextOrderId = reconResult.data?.order_id || canonicalOrderId;
+                            localStorage.setItem("currentCheckoutPaid", "true");
                             localStorage.setItem("lastOrderId", nextOrderId);
                             showPaymentSuccessModal("Payment Successful!", "✓ Payment verified. Your document is queued for printing.");
                             setTimeout(() => {
@@ -2340,6 +2323,7 @@ if (payBtn) {
                 if (reconResult && reconResult.paid === true) {
                     paymentVerifiedSuccess = true;
                     const nextOrderId = reconResult.data?.order_id || canonicalOrderId;
+                    localStorage.setItem("currentCheckoutPaid", "true");
                     localStorage.setItem("lastOrderId", nextOrderId);
                     showPaymentSuccessModal("Payment Successful!", "✓ Payment verified. Your document is queued for printing.");
                     setTimeout(() => {
@@ -2674,7 +2658,8 @@ function clearUserDocumentSession() {
         "uploadedFileName", "backendFilePath", "pdfPageCount", "copies",
         "amount", "printSide", "duplex", "duplexBinding", "binding", "colorMode", "orientation", "paperSize",
         "scaleMode", "margins", "printMode", "pagesPerSheet", "pageOrder",
-        "pdfDataUrl", "selectedPdfFile"
+        "pdfDataUrl", "selectedPdfFile", "lastOrderId", "razorpayOrderId",
+        "currentCheckoutPaid", "newCheckoutPending"
     ];
     keysToRemove.forEach(k => {
         localStorage.removeItem(k);
