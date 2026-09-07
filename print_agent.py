@@ -465,10 +465,15 @@ def optimize_pdf_for_full_page(
             orig_w = float(page.mediabox.width)
             orig_h = float(page.mediabox.height)
 
-            # Keep content upright matching Adobe Acrobat behavior (no 90-degree content rotation)
-
-            orig_w = float(page.mediabox.width)
-            orig_h = float(page.mediabox.height)
+            # ROTATE CONTENT TO MATCH TARGET ORIENTATION
+            if is_landscape and orig_w < orig_h:
+                # Portrait page -> rotate 90 degrees into landscape
+                page.rotate(90)
+                page.transfer_rotation_to_content()
+            elif not is_landscape and orig_w > orig_h:
+                # Landscape page -> rotate 90 degrees into portrait
+                page.rotate(90)
+                page.transfer_rotation_to_content()
             llx = float(page.mediabox.lower_left[0])
             lly = float(page.mediabox.lower_left[1])
 
@@ -569,7 +574,12 @@ def print_document_silently(
             elif img.mode != "RGB":
                 img = img.convert("RGB")
 
-            # Preserve upright image content without forced 90-degree rotation
+            # Rotate image to match requested orientation
+            is_land = (str(orientation).lower() == "landscape")
+            if is_land and img.height > img.width:
+                img = img.rotate(270, expand=True)
+            elif not is_land and img.width > img.height:
+                img = img.rotate(270, expand=True)
 
             clean_stem = re.sub(r'[^a-zA-Z0-9_\-]+', '_', target_print_file.stem).strip('_') or 'image'
             pdf_path = target_print_file.parent / f"{clean_stem}_img.pdf"
@@ -700,43 +710,6 @@ def print_document_silently(
     # Windows PDF silent execution with SumatraPDF
     sumatra = find_sumatra_executable()
     if ext == ".pdf" and sumatra:
-        orig_devmode_orient = None
-        orig_devmode_duplex = None
-        orig_devmode_paper = None
-        hprinter = None
-
-        if sys.platform == "win32":
-            try:
-                import win32print, win32con
-                hprinter = win32print.OpenPrinter(printer_name, {"DesiredAccess": win32print.PRINTER_ALL_ACCESS})
-                pinfo = win32print.GetPrinter(hprinter, 2)
-                pdm = pinfo["pDevMode"]
-                orig_devmode_orient = pdm.Orientation
-                orig_devmode_duplex = pdm.Duplex
-                orig_devmode_paper = pdm.PaperSize
-
-                # Set physical DEVMODE orientation (2 = Landscape, 1 = Portrait)
-                pdm.Orientation = 2 if orientation.lower() == "landscape" else 1
-                pdm.Fields |= win32con.DM_ORIENTATION
-
-                # Paper size (A4 = 9, Letter = 1, Legal = 5)
-                paper_map = {"a4": 9, "letter": 1, "legal": 5}
-                pdm.PaperSize = paper_map.get(paper_size.lower(), 9)
-                pdm.Fields |= win32con.DM_PAPERSIZE
-
-                # Duplex setting
-                if is_color or duplex == "single":
-                    pdm.Duplex = win32con.DMDUP_SIMPLEX
-                elif duplex in ("duplex_short", "duplexshort", "short_edge", "short", "horizontal"):
-                    pdm.Duplex = win32con.DMDUP_HORIZONTAL
-                elif duplex in ("duplex_long", "duplexlong", "long_edge", "double", "duplex", "vertical"):
-                    pdm.Duplex = win32con.DMDUP_VERTICAL
-                pdm.Fields |= win32con.DM_DUPLEX
-
-                win32print.SetPrinter(hprinter, 2, pinfo, 0)
-            except Exception as dm_err:
-                print(f"[AGENT DEVMODE CONFIG WARNING]: {dm_err}")
-
         settings_parts = []
         # Final pre-composed PDF already matches physical sheet dimensions and hardware margin offsets
         # Use 'noscale' to prevent secondary scaling/shifting by SumatraPDF!
@@ -758,11 +731,10 @@ def print_document_silently(
         else:
             settings_parts.append("portrait")
 
-        # Windows DEVMODE already sets physical driver orientation to Landscape or Portrait.
-        paper_map = {"a4": (9, "a4"), "letter": (1, "letter"), "legal": (5, "legal")}
-        pid, pname = paper_map.get(paper_size.lower(), (9, "a4"))
+        # Paper size
+        paper_map = {"a4": "a4", "letter": "letter", "legal": "legal"}
+        pname = paper_map.get(paper_size.lower(), "a4")
         settings_parts.append(f"paper={pname}")
-        settings_parts.append(f"paperkind={pid}")
         settings_parts.append(f"{max(1, copies)}x")
 
         if color_mode.lower() in ("color", "colour"):
@@ -770,21 +742,13 @@ def print_document_silently(
         else:
             settings_parts.append("monochrome")
 
-        settings_parts.append("ignore-pdf-print-settings")
         settings_str = ",".join(settings_parts)
 
         cmd = [sumatra, "-print-to", printer_name, "-print-settings", settings_str, "-silent", str(target_print_file.resolve())]
         print(f"[SUMATRA COMMAND] {' '.join(cmd)}")
-        try:
-            subprocess.run(cmd, check=True, timeout=45)
-            time.sleep(2.0)
-            return True
-        finally:
-            if hprinter:
-                try:
-                    win32print.ClosePrinter(hprinter)
-                except Exception:
-                    pass
+        subprocess.run(cmd, check=True, timeout=45)
+        time.sleep(2.0)
+        return True
 
     # Direct Windows GDI printing for Images (JPG, PNG, BMP, WEBP)
     if ext in (".jpg", ".jpeg", ".png", ".webp", ".bmp"):
@@ -1127,14 +1091,13 @@ def run_agent():
                         print(f"[PRINT COMPLETED] {order_id}")
                         print("[AGENT] Print completed")
 
-                    time.sleep(5.0)
                     try:
-                        clean_stem = local_file.stem.strip()
+                        now_ts = time.time()
                         for tmp_f in TEMP_DOWNLOAD_DIR.glob("*"):
-                            if tmp_f.is_file() and (tmp_f.name == local_file.name or (clean_stem and clean_stem in tmp_f.name)):
+                            if tmp_f.is_file() and (now_ts - tmp_f.stat().st_mtime > 180):
                                 try:
                                     tmp_f.unlink()
-                                    print(f"[AGENT LOCAL PRIVACY CLEANUP] Local temp file '{tmp_f.name}' deleted after printing.")
+                                    print(f"[AGENT LOCAL PRIVACY CLEANUP] Expired temp file '{tmp_f.name}' deleted.")
                                 except Exception:
                                     pass
                     except Exception as c_err:

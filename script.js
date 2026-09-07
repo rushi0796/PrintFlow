@@ -1219,15 +1219,28 @@ function applyMathematicalPreviewLayout(imgEl, pageData, containerEl) {
         return;
     }
 
-    let scale;
-    if (scaleMode === "actual" || scaleMode === "actual_size") {
-        scale = Math.min(1.0, printableWidthPx / srcW, printableHeightPx / srcH);
-    } else {
-        scale = Math.min(printableWidthPx / srcW, printableHeightPx / srcH);
+    let needRotation = false;
+    let effectiveSrcW = srcW;
+    let effectiveSrcH = srcH;
+    if (isLandscape && srcW < srcH) {
+        needRotation = true;
+        effectiveSrcW = srcH;
+        effectiveSrcH = srcW;
+    } else if (!isLandscape && srcW > srcH) {
+        needRotation = true;
+        effectiveSrcW = srcH;
+        effectiveSrcH = srcW;
     }
 
-    const scaledW = srcW * scale;
-    const scaledH = srcH * scale;
+    let scale;
+    if (scaleMode === "actual" || scaleMode === "actual_size") {
+        scale = Math.min(1.0, printableWidthPx / effectiveSrcW, printableHeightPx / effectiveSrcH);
+    } else {
+        scale = Math.min(printableWidthPx / effectiveSrcW, printableHeightPx / effectiveSrcH);
+    }
+
+    const scaledW = effectiveSrcW * scale;
+    const scaledH = effectiveSrcH * scale;
 
     const offsetX = (printableWidthPx - scaledW) / 2.0;
     const offsetY = (printableHeightPx - scaledH) / 2.0;
@@ -1235,11 +1248,24 @@ function applyMathematicalPreviewLayout(imgEl, pageData, containerEl) {
     const left = hardMarginLeftPx + offsetX;
     const top = hardMarginTopPx + offsetY;
 
-    imgEl.style.transform = "none";
-    imgEl.style.width = Math.round(scaledW) + "px";
-    imgEl.style.height = Math.round(scaledH) + "px";
-    imgEl.style.left = Math.round(left) + "px";
-    imgEl.style.top = Math.round(top) + "px";
+    if (needRotation) {
+        const rawW = srcW * scale;
+        const rawH = srcH * scale;
+        imgEl.style.width = Math.round(rawW) + "px";
+        imgEl.style.height = Math.round(rawH) + "px";
+        imgEl.style.transformOrigin = "center center";
+        imgEl.style.transform = "rotate(90deg)";
+        const x0 = (left + scaledW / 2.0) - (rawW / 2.0);
+        const y0 = (top + scaledH / 2.0) - (rawH / 2.0);
+        imgEl.style.left = Math.round(x0) + "px";
+        imgEl.style.top = Math.round(y0) + "px";
+    } else {
+        imgEl.style.transform = "none";
+        imgEl.style.width = Math.round(scaledW) + "px";
+        imgEl.style.height = Math.round(scaledH) + "px";
+        imgEl.style.left = Math.round(left) + "px";
+        imgEl.style.top = Math.round(top) + "px";
+    }
     imgEl.style.position = "absolute";
     imgEl.style.objectFit = "fill";
 }
