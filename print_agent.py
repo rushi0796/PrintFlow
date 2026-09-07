@@ -465,15 +465,7 @@ def optimize_pdf_for_full_page(
             orig_w = float(page.mediabox.width)
             orig_h = float(page.mediabox.height)
 
-            # ROTATE CONTENT TO MATCH TARGET ORIENTATION
-            if is_landscape and orig_w < orig_h:
-                # Portrait page -> rotate 90 degrees into landscape
-                page.rotate(90)
-                page.transfer_rotation_to_content()
-            elif not is_landscape and orig_w > orig_h:
-                # Landscape page -> rotate 90 degrees into portrait
-                page.rotate(90)
-                page.transfer_rotation_to_content()
+            # Keep content upright matching Adobe Acrobat behavior (no 90-degree content rotation)
 
             orig_w = float(page.mediabox.width)
             orig_h = float(page.mediabox.height)
@@ -576,11 +568,7 @@ def print_document_silently(
             elif img.mode != "RGB":
                 img = img.convert("RGB")
 
-            # Rotate image to match requested orientation
-            if orientation.lower() == "landscape" and img.height > img.width:
-                img = img.rotate(270, expand=True)
-            elif orientation.lower() != "landscape" and img.width > img.height:
-                img = img.rotate(270, expand=True)
+            # Preserve upright image content without forced 90-degree rotation
 
             clean_stem = re.sub(r'[^a-zA-Z0-9_\-]+', '_', target_print_file.stem).strip('_') or 'image'
             pdf_path = target_print_file.parent / f"{clean_stem}_img.pdf"
@@ -809,12 +797,7 @@ def print_document_silently(
             if img.mode != "RGB":
                 img = img.convert("RGB")
 
-            # Single orientation conversion for image if needed
-            is_land = (orientation.lower() == "landscape")
-            if is_land and img.width < img.height:
-                img = img.rotate(90, expand=True)
-            elif not is_land and img.width > img.height:
-                img = img.rotate(90, expand=True)
+            # Preserve upright image content without forced 90-degree rotation
             hprinter = win32print.OpenPrinter(printer_name)
             try:
                 devmode = win32print.GetPrinter(hprinter, 2)["pDevMode"]
