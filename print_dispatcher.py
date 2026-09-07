@@ -120,6 +120,19 @@ def create_n_up_pdf(
             f"in {pages_per_sheet}-Up ({orientation}), but generated {actual_sheets} sheet(s)!"
         )
 
+    print("")
+    print(f"[MICRO] source_pages={num_pages}")
+    print(f"[MICRO] n_up={pages_per_sheet}")
+    print(f"[MICRO] expected_sheets={expected_sheets}")
+    print(f"[MICRO] generated_sheets={actual_sheets}")
+    print(f"[MICRO] page_order={page_order.lower()}")
+    print(f"[MICRO] print_ready_pdf={output_path.resolve()}")
+    for s in range(1, expected_sheets + 1):
+        s_start = (s - 1) * pages_per_sheet + 1
+        s_end = min(s * pages_per_sheet, num_pages)
+        print(f"[MICRO] sheet={s} source_pages={s_start}-{s_end}")
+    print("")
+
     return output_path
 
 def extract_pdf_page_subset(input_pdf_path: Path, page_range_str: str) -> Path:

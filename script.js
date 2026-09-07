@@ -1323,7 +1323,14 @@ function renderRealLivePreviewUI() {
             nupGrid.className = gridClass;
 
             const totalSheets = Math.ceil(pagesToRender.length / pagesPerSheet) || 1;
-            const currentSheet = Math.floor(livePreviewIndex / pagesPerSheet);
+            let currentSheet = Math.floor(livePreviewIndex / pagesPerSheet);
+            if (currentSheet >= totalSheets) {
+                currentSheet = Math.max(0, totalSheets - 1);
+                livePreviewIndex = currentSheet * pagesPerSheet;
+            } else if (currentSheet < 0) {
+                currentSheet = 0;
+                livePreviewIndex = 0;
+            }
             const startIdx = currentSheet * pagesPerSheet;
 
             let cellsHtml = "";
@@ -1350,7 +1357,14 @@ function renderRealLivePreviewUI() {
             nupGrid.innerHTML = cellsHtml;
 
             if (pageIndicator) {
-                const rangeStr = (maxPageInSheet >= minPageInSheet) ? ` (Pages ${minPageInSheet}–${maxPageInSheet})` : "";
+                let rangeStr = "";
+                if (maxPageInSheet >= minPageInSheet) {
+                    if (minPageInSheet === maxPageInSheet) {
+                        rangeStr = ` (Page ${minPageInSheet})`;
+                    } else {
+                        rangeStr = ` (Pages ${minPageInSheet}–${maxPageInSheet})`;
+                    }
+                }
                 const printSideEl = document.querySelector('input[name="printSide"]:checked');
                 const printSide = printSideEl ? printSideEl.value : "single";
                 let sideStr = "";
@@ -1498,6 +1512,17 @@ function updatePrintDetailsAndPreview() {
     const paymentBtnEl = document.getElementById("paymentBtn");
 
     if (!totalPriceBox && !paperSheetPreview) return;
+
+    const printModeCheckEl = document.querySelector('input[name="printMode"]:checked');
+    const curPrintMode = printModeCheckEl ? printModeCheckEl.value : "standard";
+    const curNupEl = document.getElementById("pagesPerSheet");
+    const curNup = (curPrintMode === "micro_xerox") ? (curNupEl ? parseInt(curNupEl.value, 10) : 2) : 1;
+
+    if (window._lastPreviewMode !== curPrintMode || window._lastPagesPerSheet !== curNup) {
+        livePreviewIndex = 0;
+        window._lastPreviewMode = curPrintMode;
+        window._lastPagesPerSheet = curNup;
+    }
 
     const totalDocPages = Number(localStorage.getItem("pdfPageCount")) || (livePreviewPages.length ? livePreviewPages.length : 1);
     const copies = copiesBox ? (Number(copiesBox.value) || 1) : 1;
@@ -1691,39 +1716,68 @@ if (printDetailsFileName) {
     const nextPageBtn = document.getElementById("nextPageBtn");
 
     if (prevPageBtn) {
-        prevPageBtn.addEventListener("click", function() {
+        prevPageBtn.addEventListener("click", function(e) {
+            if (e && e.preventDefault) e.preventDefault();
             const printModeEl = document.querySelector('input[name="printMode"]:checked');
             const printMode = printModeEl ? printModeEl.value : "standard";
-            const printSideEl = document.querySelector('input[name="printSide"]:checked');
-            const printSide = printSideEl ? printSideEl.value : "single";
-            const pagesPerSheetEl = document.getElementById("pagesPerSheet");
-            let step = 1;
-            if (printMode === "micro_xerox" && pagesPerSheetEl) {
-                step = parseInt(pagesPerSheetEl.value, 10);
-            } else if (printSide === "double") {
-                step = 2;
+            const pagesToRender = getEffectivePreviewPages();
+            if (!pagesToRender.length) return;
+
+            if (printMode === "micro_xerox") {
+                const pagesPerSheetEl = document.getElementById("pagesPerSheet");
+                const nup = pagesPerSheetEl ? parseInt(pagesPerSheetEl.value, 10) : 2;
+                const currentSheet = Math.floor(livePreviewIndex / nup);
+                if (currentSheet > 0) {
+                    livePreviewIndex = (currentSheet - 1) * nup;
+                }
+            } else {
+                const printSideEl = document.querySelector('input[name="printSide"]:checked');
+                const printSide = printSideEl ? printSideEl.value : "single";
+                if (printSide === "double") {
+                    const currentSpread = Math.floor(livePreviewIndex / 2);
+                    if (currentSpread > 0) {
+                        livePreviewIndex = (currentSpread - 1) * 2;
+                    }
+                } else {
+                    if (livePreviewIndex > 0) {
+                        livePreviewIndex--;
+                    }
+                }
             }
-            livePreviewIndex = Math.max(0, livePreviewIndex - step);
             renderRealLivePreviewUI();
         });
     }
 
     if (nextPageBtn) {
-        nextPageBtn.addEventListener("click", function() {
+        nextPageBtn.addEventListener("click", function(e) {
+            if (e && e.preventDefault) e.preventDefault();
             const printModeEl = document.querySelector('input[name="printMode"]:checked');
             const printMode = printModeEl ? printModeEl.value : "standard";
-            const printSideEl = document.querySelector('input[name="printSide"]:checked');
-            const printSide = printSideEl ? printSideEl.value : "single";
-            const pagesPerSheetEl = document.getElementById("pagesPerSheet");
-            let step = 1;
-            if (printMode === "micro_xerox" && pagesPerSheetEl) {
-                step = parseInt(pagesPerSheetEl.value, 10);
-            } else if (printSide === "double") {
-                step = 2;
-            }
             const pagesToRender = getEffectivePreviewPages();
-            if (livePreviewIndex + step < pagesToRender.length) {
-                livePreviewIndex += step;
+            if (!pagesToRender.length) return;
+
+            if (printMode === "micro_xerox") {
+                const pagesPerSheetEl = document.getElementById("pagesPerSheet");
+                const nup = pagesPerSheetEl ? parseInt(pagesPerSheetEl.value, 10) : 2;
+                const totalSheets = Math.ceil(pagesToRender.length / nup) || 1;
+                const currentSheet = Math.floor(livePreviewIndex / nup);
+                if (currentSheet < totalSheets - 1) {
+                    livePreviewIndex = (currentSheet + 1) * nup;
+                }
+            } else {
+                const printSideEl = document.querySelector('input[name="printSide"]:checked');
+                const printSide = printSideEl ? printSideEl.value : "single";
+                if (printSide === "double") {
+                    const totalSpreads = Math.ceil(pagesToRender.length / 2) || 1;
+                    const currentSpread = Math.floor(livePreviewIndex / 2);
+                    if (currentSpread < totalSpreads - 1) {
+                        livePreviewIndex = (currentSpread + 1) * 2;
+                    }
+                } else {
+                    if (livePreviewIndex < pagesToRender.length - 1) {
+                        livePreviewIndex++;
+                    }
+                }
             }
             renderRealLivePreviewUI();
         });

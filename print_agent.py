@@ -343,6 +343,19 @@ def create_n_up_pdf(
                 f"does not match expected paper dimensions {sheet_w:.1f}x{sheet_h:.1f} pt!"
             )
 
+    print("")
+    print(f"[MICRO] source_pages={num_pages}")
+    print(f"[MICRO] n_up={pages_per_sheet}")
+    print(f"[MICRO] expected_sheets={expected_sheets}")
+    print(f"[MICRO] generated_sheets={actual_sheets}")
+    print(f"[MICRO] page_order={page_order.lower()}")
+    print(f"[MICRO] print_ready_pdf={output_path.resolve()}")
+    for s in range(1, expected_sheets + 1):
+        s_start = (s - 1) * pages_per_sheet + 1
+        s_end = min(s * pages_per_sheet, num_pages)
+        print(f"[MICRO] sheet={s} source_pages={s_start}-{s_end}")
+    print("")
+
     print(f"[MICRO XEROX N-UP ENGINE] Synthesized {actual_sheets} sheet(s) for {num_pages} source pages ({pages_per_sheet}-Up, {orientation}, {cols}x{rows} grid).")
     return output_path
 
