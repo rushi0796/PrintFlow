@@ -4,3 +4,6 @@ python-multipart
 razorpay
 requests
 psycopg2-binary
+pypdf
+pillow
+pywin32

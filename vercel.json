@@ -77,6 +77,14 @@
       "destination": "/api/index.py"
     },
     {
+      "source": "/payment-status/(.*)",
+      "destination": "/api/index.py"
+    },
+    {
+      "source": "/api/payment-status/(.*)",
+      "destination": "/api/index.py"
+    },
+    {
       "source": "/api/agent/status",
       "destination": "/api/index.py"
     },

@@ -526,6 +526,26 @@ def create_razorpay_order_endpoint(request: RazorpayOrderRequest):
     is_live_key = key_id.startswith("rzp_live_")
     mode_str = "LIVE" if is_live_key else "TEST"
 
+    # Prevent accidental second payment: if order already exists and is paid
+    if request.order_id:
+        existing_order = get_order(request.order_id)
+        if existing_order and existing_order.get("paid") and existing_order.get("status") in ("PRINT_QUEUED", "PRINTING", "COMPLETED"):
+            print("")
+            print("[PAYMENT ALREADY PAID]")
+            print(f"PF order ID: {existing_order.get('order_id')}")
+            print("")
+            return {
+                "status": "already_paid",
+                "message": "Order is already paid and queued for printing.",
+                "key_id": key_id,
+                "order_id": existing_order.get("razorpay_order_id"),
+                "pf_order_id": existing_order.get("order_id"),
+                "print_order_id": existing_order.get("order_id"),
+                "amount": int(round(existing_order.get("amount", 2.0) * 100)),
+                "currency": request.currency or "INR",
+                "order": existing_order
+            }
+
     if request.amount >= 100:
         amount_in_paise = int(round(request.amount))
     else:
@@ -654,7 +674,11 @@ def verify_razorpay_payment(payload: dict):
 
     queued_order = queue_order_for_printing(payload)
     canonical_id = queued_order.get("order_id") or payload.get("print_order_id") or razorpay_order_id
-    print(f"[PAYMENT VERIFIED] {canonical_id}, {razorpay_payment_id}")
+    print("")
+    print("[PAYMENT VERIFIED]")
+    print(f"PF order ID: {canonical_id}")
+    print(f"payment ID: {razorpay_payment_id}")
+    print("")
 
     return {
         "status": "success",
@@ -665,6 +689,166 @@ def verify_razorpay_payment(payload: dict):
         "order": queued_order,
         "payload": payload
     }
+
+@app.get("/api/payment-status/{print_order_id}")
+@app.get("/payment-status/{print_order_id}")
+def get_payment_status_endpoint(print_order_id: str):
+    order = get_order(print_order_id)
+    if not order:
+        orders = load_orders()
+        for o in orders:
+            if o.get("order_id") == print_order_id or o.get("razorpay_order_id") == print_order_id:
+                order = o
+                break
+
+    if not order:
+        raise HTTPException(status_code=404, detail=f"PrintFlow order '{print_order_id}' not found")
+
+    canonical_pf_id = order.get("order_id") or print_order_id
+
+    # 1. Idempotency Check: if order is already paid and in queue/printing/completed
+    if order.get("paid") and order.get("status") in ("PRINT_QUEUED", "PRINTING", "COMPLETED"):
+        print("")
+        print("[PAYMENT ALREADY PAID]")
+        print(f"PF order ID: {canonical_pf_id}")
+        print("")
+        return {
+            "status": "success",
+            "paid": True,
+            "order_status": order.get("status"),
+            "order_id": canonical_pf_id,
+            "print_order_id": canonical_pf_id,
+            "razorpay_order_id": order.get("razorpay_order_id"),
+            "razorpay_payment_id": order.get("razorpay_payment_id"),
+            "order": order
+        }
+
+    rzp_order_id = order.get("razorpay_order_id")
+    if not rzp_order_id:
+        print("")
+        print("[PAYMENT RECONCILE]")
+        print(f"PF order ID: {canonical_pf_id}")
+        print("Razorpay order ID: None")
+        print("Razorpay payment state: no_razorpay_order")
+        print("result: not_paid")
+        print("")
+        return {
+            "status": "unpaid",
+            "paid": False,
+            "order_status": order.get("status", "Pending"),
+            "order_id": canonical_pf_id,
+            "message": "No Razorpay order associated with this order"
+        }
+
+    key_id = (os.environ.get("RAZORPAY_KEY_ID") or "").strip().strip('"').strip("'")
+    key_secret = (os.environ.get("RAZORPAY_KEY_SECRET") or "").strip().strip('"').strip("'")
+
+    if not key_id or not key_secret:
+        return {
+            "status": "unpaid",
+            "paid": False,
+            "order_status": order.get("status", "Pending"),
+            "order_id": canonical_pf_id,
+            "message": "Razorpay credentials not configured in server environment"
+        }
+
+    # 2. Server-to-server query to Razorpay for actual captured payment
+    try:
+        url = f"https://api.razorpay.com/v1/orders/{rzp_order_id}/payments"
+        headers = {
+            "User-Agent": "Razorpay/v1 PythonSDK/1.4.0",
+            "Accept": "application/json"
+        }
+        resp = requests.get(url, auth=HTTPBasicAuth(key_id, key_secret), headers=headers, timeout=10)
+
+        captured_payment = None
+        payment_state = "unpaid"
+
+        if resp.status_code == 200:
+            payments_data = resp.json()
+            items = payments_data.get("items", [])
+            for p in items:
+                if p.get("status") == "captured" or p.get("captured") is True:
+                    captured_payment = p
+                    payment_state = "captured"
+                    break
+                elif p.get("status") in ("failed", "created", "authorized"):
+                    payment_state = p.get("status")
+        else:
+            print(f"[PAYMENT RECONCILE WARNING] Razorpay payments API returned HTTP {resp.status_code}: {resp.text[:100]}")
+
+        # If payment list doesn't explicitly show captured, check order details
+        if not captured_payment:
+            order_url = f"https://api.razorpay.com/v1/orders/{rzp_order_id}"
+            order_resp = requests.get(order_url, auth=HTTPBasicAuth(key_id, key_secret), headers=headers, timeout=10)
+            if order_resp.status_code == 200:
+                ord_data = order_resp.json()
+                if ord_data.get("status") == "paid" or (ord_data.get("amount_paid", 0) >= ord_data.get("amount", 1) and ord_data.get("amount", 1) > 0):
+                    payment_state = "captured"
+                    if resp.status_code == 200 and resp.json().get("items"):
+                        captured_payment = resp.json().get("items")[0]
+
+        if captured_payment or payment_state == "captured":
+            payment_id = (captured_payment.get("id") if captured_payment else None) or order.get("razorpay_payment_id") or f"pay_recon_{rzp_order_id[-8:]}"
+
+            print("")
+            print("[PAYMENT RECONCILE]")
+            print(f"PF order ID: {canonical_pf_id}")
+            print(f"Razorpay order ID: {rzp_order_id}")
+            print(f"Razorpay payment state: captured")
+            print(f"result: confirmed")
+            print("")
+            print("[PAYMENT VERIFIED]")
+            print(f"PF order ID: {canonical_pf_id}")
+            print(f"payment ID: {payment_id}")
+            print("")
+
+            # Transition order to PRINT_QUEUED preserving ALL 14 print configuration settings
+            queued_order = queue_order_for_printing({
+                "print_order_id": canonical_pf_id,
+                "razorpay_payment_id": payment_id,
+                "razorpay_order_id": rzp_order_id
+            })
+
+            return {
+                "status": "success",
+                "paid": True,
+                "order_status": queued_order.get("status", "PRINT_QUEUED"),
+                "order_id": canonical_pf_id,
+                "print_order_id": canonical_pf_id,
+                "razorpay_order_id": rzp_order_id,
+                "razorpay_payment_id": payment_id,
+                "order": queued_order
+            }
+        else:
+            print("")
+            print("[PAYMENT RECONCILE]")
+            print(f"PF order ID: {canonical_pf_id}")
+            print(f"Razorpay order ID: {rzp_order_id}")
+            print(f"Razorpay payment state: {payment_state}")
+            print("result: not_paid")
+            print("")
+            return {
+                "status": "unpaid",
+                "paid": False,
+                "order_status": order.get("status", "Pending"),
+                "order_id": canonical_pf_id,
+                "message": "Payment not captured by Razorpay"
+            }
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        print(f"[PAYMENT RECONCILE ERROR]: {exc}")
+        # Temporary server/network error during reconciliation must NOT be interpreted as failure
+        return {
+            "status": "unpaid",
+            "paid": False,
+            "order_status": order.get("status", "Pending"),
+            "order_id": canonical_pf_id,
+            "error": str(exc),
+            "message": "Reconciliation check temporary error"
+        }
 
 @app.post("/upload-pdf")
 @app.post("/api/upload-pdf")

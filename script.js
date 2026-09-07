@@ -1880,6 +1880,24 @@ if (paymentFile && paymentCopies && paymentAmount) {
                     setTimeout(() => {
                         window.location.replace(`success.html?order_id=${encodeURIComponent(existingOrderId)}`);
                     }, 400);
+                } else {
+                    // Check reconciliation status in case browser callback was missed
+                    fetch(apiUrl(`/api/payment-status/${existingOrderId}`, `/api/payment-status/${existingOrderId}`))
+                        .then(r => r.ok ? r.json() : null)
+                        .then(recon => {
+                            if (recon && recon.paid === true) {
+                                console.log("[PAYMENT] Order reconciled as paid on page load. Auto-redirecting to success.html");
+                                if (payBtn) {
+                                    payBtn.disabled = true;
+                                    payBtn.textContent = "✓ Paid - Redirecting...";
+                                }
+                                showPaymentSuccessModal("Payment Confirmed", "Your payment is confirmed. Redirecting to status...");
+                                setTimeout(() => {
+                                    window.location.replace(`success.html?order_id=${encodeURIComponent(existingOrderId)}`);
+                                }, 400);
+                            }
+                        })
+                        .catch(() => {});
                 }
             })
             .catch(() => {});
@@ -1946,6 +1964,29 @@ function showPaymentSuccessModal(title, description) {
     }
 }
 
+async function reconcilePaymentWithBackend(orderId, maxAttempts = 5, delayMs = 1500) {
+    if (!orderId) return { paid: false };
+    console.log(`[PAYMENT RECONCILE] Checking backend reconciliation for ${orderId} (max ${maxAttempts} attempts)...`);
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        try {
+            const res = await fetch(apiUrl(`/api/payment-status/${orderId}`, `/api/payment-status/${orderId}`));
+            if (res.ok) {
+                const data = await res.json();
+                if (data && data.paid === true) {
+                    console.log(`[PAYMENT RECONCILE] Payment confirmed captured on attempt ${attempt}:`, data);
+                    return { paid: true, data };
+                }
+            }
+        } catch (netErr) {
+            console.warn(`[PAYMENT RECONCILE] Attempt ${attempt} network error:`, netErr);
+        }
+        if (attempt < maxAttempts) {
+            await new Promise(r => setTimeout(r, delayMs));
+        }
+    }
+    return { paid: false };
+}
+
 let isPaymentInFlight = false;
 let paymentVerifiedSuccess = false;
 
@@ -1956,6 +1997,24 @@ if (payBtn) {
         if (isPaymentInFlight) return;
 
         paymentVerifiedSuccess = false;
+
+        // Double payment protection: check if existing order is already paid
+        const currentSavedOrderId = localStorage.getItem("lastOrderId");
+        if (currentSavedOrderId && currentSavedOrderId.startsWith("PF-")) {
+            try {
+                const quickCheck = await fetch(apiUrl(`/api/orders/${currentSavedOrderId}/status`, `/api/orders/${currentSavedOrderId}/status`));
+                if (quickCheck.ok) {
+                    const qcData = await quickCheck.json();
+                    if (qcData && ["PRINT_QUEUED", "PRINTING", "COMPLETED"].includes(qcData.order_status)) {
+                        showPaymentSuccessModal("Payment Already Confirmed", "This order is already queued for printing. Redirecting...");
+                        setTimeout(() => {
+                            window.location.replace(`success.html?order_id=${encodeURIComponent(currentSavedOrderId)}`);
+                        }, 400);
+                        return;
+                    }
+                }
+            } catch (e) {}
+        }
 
         if (typeof Razorpay === "undefined") {
             showPaymentFailedModal("SDK Error", "Razorpay SDK is loading. Please check your internet connection and try again.");
@@ -2037,6 +2096,15 @@ if (payBtn) {
             }
 
             const orderData = await orderRes.json();
+            if (orderData && orderData.status === "already_paid") {
+                const pfId = orderData.pf_order_id || orderData.print_order_id || currentSavedOrderId;
+                localStorage.setItem("lastOrderId", pfId);
+                showPaymentSuccessModal("Payment Confirmed", "Your print order is already confirmed and in queue.");
+                setTimeout(() => {
+                    window.location.replace(`success.html?order_id=${encodeURIComponent(pfId)}`);
+                }, 400);
+                return;
+            }
             if (!orderData || orderData.status === "error" || !orderData.order_id) {
                 throw new Error(orderData?.detail || "Invalid Razorpay order payload");
             }
@@ -2112,7 +2180,19 @@ if (payBtn) {
                         } catch (e) {}
                     }
 
+                    // Fallback to server-to-server Razorpay reconciliation if signature verification is inconclusive/times out
+                    if (!verified) {
+                        console.log("[PAYMENT RECONCILE] Fallback to backend reconciliation for:", canonicalOrderId);
+                        showPaymentSuccessModal("Payment Received", "Confirming payment with payment gateway. Please wait...");
+                        const reconResult = await reconcilePaymentWithBackend(canonicalOrderId, 5, 1500);
+                        if (reconResult && reconResult.paid === true) {
+                            verified = true;
+                            nextOrderId = reconResult.data?.order_id || canonicalOrderId;
+                        }
+                    }
+
                     if (verified) {
+                        paymentVerifiedSuccess = true;
                         localStorage.setItem("lastOrderId", nextOrderId);
                         showPaymentSuccessModal("Payment Successful!", "✓ Payment verified. Your document is queued for printing.");
                         setTimeout(() => {
@@ -2134,24 +2214,67 @@ if (payBtn) {
                 "modal": {
                     "escape": true,
                     "backdropclose": false,
-                    "ondismiss": function() {
-                        if (!paymentVerifiedSuccess) {
+                    "ondismiss": async function() {
+                        if (paymentVerifiedSuccess) return;
+
+                        const canonicalOrderId = activePfOrderId || orderData.order_id;
+                        console.log(`[PAYMENT DISMISS] Modal dismissed/switched apps for ${canonicalOrderId}. Checking reconciliation...`);
+
+                        // Give external UPI app (PhonePe, GPay, Paytm, BHIM) time to complete & reconcile with backend
+                        showPaymentSuccessModal("Payment Received – Confirming...", "Checking payment confirmation with your payment app. Please wait...");
+                        if (payBtn) {
+                            payBtn.disabled = true;
+                            payBtn.textContent = "Confirming payment...";
+                        }
+
+                        const reconResult = await reconcilePaymentWithBackend(canonicalOrderId, 5, 1200);
+                        if (reconResult && reconResult.paid === true) {
+                            paymentVerifiedSuccess = true;
+                            const nextOrderId = reconResult.data?.order_id || canonicalOrderId;
+                            localStorage.setItem("lastOrderId", nextOrderId);
+                            showPaymentSuccessModal("Payment Successful!", "✓ Payment verified. Your document is queued for printing.");
+                            setTimeout(() => {
+                                window.location.replace("success.html" + (nextOrderId ? `?order_id=${encodeURIComponent(nextOrderId)}` : ""));
+                            }, 500);
+                        } else {
+                            // Confirmed not paid / user cancelled checkout modal
+                            const successOverlay = document.getElementById("successModalOverlay");
+                            if (successOverlay) successOverlay.classList.remove("is-open");
                             isPaymentInFlight = false;
-                            payBtn.disabled = false;
-                            payBtn.textContent = originalText;
+                            if (payBtn) {
+                                payBtn.disabled = false;
+                                payBtn.textContent = originalText;
+                            }
                         }
                     }
                 }
             };
 
             const rzp = new Razorpay(options);
-            rzp.on("payment.failed", function (response) {
+            rzp.on("payment.failed", async function (response) {
                 if (paymentVerifiedSuccess) return;
+                const canonicalOrderId = activePfOrderId || orderData.order_id;
+
+                // Before declaring failure, verify with backend reconciliation to avoid false negative
+                const reconResult = await reconcilePaymentWithBackend(canonicalOrderId, 2, 800);
+                if (reconResult && reconResult.paid === true) {
+                    paymentVerifiedSuccess = true;
+                    const nextOrderId = reconResult.data?.order_id || canonicalOrderId;
+                    localStorage.setItem("lastOrderId", nextOrderId);
+                    showPaymentSuccessModal("Payment Successful!", "✓ Payment verified. Your document is queued for printing.");
+                    setTimeout(() => {
+                        window.location.replace("success.html" + (nextOrderId ? `?order_id=${encodeURIComponent(nextOrderId)}` : ""));
+                    }, 500);
+                    return;
+                }
+
                 const errorDesc = response?.error?.description || "Payment failed or cancelled.";
                 showPaymentFailedModal("Payment Failed", errorDesc);
                 isPaymentInFlight = false;
-                payBtn.disabled = false;
-                payBtn.textContent = originalText;
+                if (payBtn) {
+                    payBtn.disabled = false;
+                    payBtn.textContent = originalText;
+                }
             });
 
             const tOpen = performance.now();
