@@ -750,6 +750,12 @@ def print_document_silently(
         else:
             settings_parts.append("noduplex")
 
+        # Orientation in SumatraPDF print settings
+        if orientation.lower() == "landscape":
+            settings_parts.append("landscape")
+        else:
+            settings_parts.append("portrait")
+
         # Windows DEVMODE already sets physical driver orientation to Landscape or Portrait.
         paper_map = {"a4": (9, "a4"), "letter": (1, "letter"), "legal": (5, "legal")}
         pid, pname = paper_map.get(paper_size.lower(), (9, "a4"))
@@ -774,18 +780,9 @@ def print_document_silently(
         finally:
             if hprinter:
                 try:
-                    pinfo = win32print.GetPrinter(hprinter, 2)
-                    pdm = pinfo["pDevMode"]
-                    if orig_devmode_orient is not None:
-                        pdm.Orientation = orig_devmode_orient
-                    if orig_devmode_duplex is not None:
-                        pdm.Duplex = orig_devmode_duplex
-                    if orig_devmode_paper is not None:
-                        pdm.PaperSize = orig_devmode_paper
-                    win32print.SetPrinter(hprinter, 2, pinfo, 0)
                     win32print.ClosePrinter(hprinter)
-                except Exception as restore_err:
-                    print(f"[AGENT DEVMODE RESTORE WARNING]: {restore_err}")
+                except Exception:
+                    pass
 
     # Direct Windows GDI printing for Images (JPG, PNG, BMP, WEBP)
     if ext in (".jpg", ".jpeg", ".png", ".webp", ".bmp"):

@@ -384,6 +384,23 @@ def dispatch_print_job(order_data: dict) -> dict:
             # 1. SumatraPDF silent printing if available
             sumatra = find_sumatra_executable()
             if sumatra and ext == ".pdf":
+                try:
+                    import win32print, win32con
+                    hprinter = win32print.OpenPrinter(target_printer, {"DesiredAccess": win32print.PRINTER_ALL_ACCESS})
+                    try:
+                        pinfo = win32print.GetPrinter(hprinter, 2)
+                        pdm = pinfo["pDevMode"]
+                        pdm.Orientation = 2 if orientation.lower() == "landscape" else 1
+                        pdm.Fields |= win32con.DM_ORIENTATION
+                        paper_map_dm = {"a4": 9, "letter": 1, "legal": 5}
+                        pdm.PaperSize = paper_map_dm.get(paper_size.lower(), 9)
+                        pdm.Fields |= win32con.DM_PAPERSIZE
+                        win32print.SetPrinter(hprinter, 2, pinfo, 0)
+                    finally:
+                        win32print.ClosePrinter(hprinter)
+                except Exception as dm_err:
+                    print(f"[PRINT DISPATCH DEVMODE WARNING]: {dm_err}")
+
                 settings_parts = []
                 if scale_mode in ("actual", "actual_size") and not is_image:
                     settings_parts.append("shrink")
