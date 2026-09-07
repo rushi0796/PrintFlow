@@ -525,7 +525,8 @@ def print_document_silently(
 
     # Color safety check: Micro Xerox is strictly B&W
     if str(print_mode).lower() == "micro_xerox" and is_color:
-        raise RuntimeError("MICRO_XEROX_COLOR_NOT_PERMITTED: Micro Xerox is strictly B&W only.")
+        is_color = False
+        color_mode = "black_white"
 
     # Convert DOC / DOCX to PDF via Word COM if available
     if ext in (".doc", ".docx"):
@@ -1022,6 +1023,9 @@ def run_agent():
                             page_order = claimed_order.get("page_order", page_order)
                             page_range = claimed_order.get("page_range", page_range) or "all"
                             amount = float(claimed_order.get("amount", amount) or amount)
+                            if str(print_mode).lower() == "micro_xerox":
+                                is_color = False
+                                color_mode = "black_white"
                             file_name = claimed_order.get("file_name", file_name)
                 except urllib.error.HTTPError as http_err:
                     if http_err.code == 409:
