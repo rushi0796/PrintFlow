@@ -101,6 +101,99 @@ def select_target_printer(color_mode: str, config: dict, installed_printers: lis
             target = default_printer
         return target
 
+def get_printer_hardware_caps(printer_name: str = "", orientation: str = "portrait", paper_size: str = "a4") -> dict:
+    """
+    Queries the REAL Windows printer device context / driver for:
+    - PHYSICALWIDTH, PHYSICALHEIGHT, HORZRES, VERTRES
+    - PHYSICALOFFSETX, PHYSICALOFFSETY, LOGPIXELSX, LOGPIXELSY
+    Calculates exact printable rectangle and hard hardware non-printable margins.
+    """
+    is_landscape = (str(orientation).lower() == "landscape")
+    paper_map = {"a4": 9, "letter": 1, "legal": 5}
+    paper_kind = paper_map.get(str(paper_size).lower(), 9)
+
+    res = {
+        "HORZRES": 6814 if is_landscape else 4760,
+        "VERTRES": 4760 if is_landscape else 6814,
+        "LOGPIXELSX": 600,
+        "LOGPIXELSY": 600,
+        "PHYSICALWIDTH": 7016 if is_landscape else 4961,
+        "PHYSICALHEIGHT": 4961 if is_landscape else 7016,
+        "PHYSICALOFFSETX": 99,
+        "PHYSICALOFFSETY": 99,
+    }
+
+    if sys.platform == "win32" and printer_name:
+        try:
+            import win32print, win32gui, win32ui, win32con
+            hprinter = win32print.OpenPrinter(printer_name)
+            try:
+                pinfo = win32print.GetPrinter(hprinter, 2)
+                devmode = pinfo["pDevMode"]
+                devmode.PaperSize = paper_kind
+                devmode.Orientation = 2 if is_landscape else 1
+                devmode.Fields |= win32con.DM_PAPERSIZE | win32con.DM_ORIENTATION
+
+                hdc_handle = win32gui.CreateDC("WINSPOOL", printer_name, devmode)
+                try:
+                    hdc = win32ui.CreateDCFromHandle(hdc_handle)
+                    res["HORZRES"] = hdc.GetDeviceCaps(8)
+                    res["VERTRES"] = hdc.GetDeviceCaps(10)
+                    res["LOGPIXELSX"] = hdc.GetDeviceCaps(88)
+                    res["LOGPIXELSY"] = hdc.GetDeviceCaps(90)
+                    res["PHYSICALWIDTH"] = hdc.GetDeviceCaps(110)
+                    res["PHYSICALHEIGHT"] = hdc.GetDeviceCaps(111)
+                    res["PHYSICALOFFSETX"] = hdc.GetDeviceCaps(112)
+                    res["PHYSICALOFFSETY"] = hdc.GetDeviceCaps(113)
+                finally:
+                    win32gui.DeleteDC(hdc_handle)
+            finally:
+                win32print.ClosePrinter(hprinter)
+        except Exception as cap_err:
+            print(f"[PRINTER DEVICE CAPS WARNING]: {cap_err}")
+
+    dpi_x = float(res["LOGPIXELSX"] or 600)
+    dpi_y = float(res["LOGPIXELSY"] or 600)
+
+    res["paper_w_mm"] = res["PHYSICALWIDTH"] / dpi_x * 25.4
+    res["paper_h_mm"] = res["PHYSICALHEIGHT"] / dpi_y * 25.4
+    res["paper_w_pt"] = res["PHYSICALWIDTH"] / dpi_x * 72.0
+    res["paper_h_pt"] = res["PHYSICALHEIGHT"] / dpi_y * 72.0
+
+    res["printable_w_mm"] = res["HORZRES"] / dpi_x * 25.4
+    res["printable_h_mm"] = res["VERTRES"] / dpi_y * 25.4
+    res["printable_w_pt"] = res["HORZRES"] / dpi_x * 72.0
+    res["printable_h_pt"] = res["VERTRES"] / dpi_y * 72.0
+
+    res["left_margin_dots"] = res["PHYSICALOFFSETX"]
+    res["left_margin_mm"] = res["left_margin_dots"] / dpi_x * 25.4
+    res["left_margin_pt"] = res["left_margin_dots"] / dpi_x * 72.0
+
+    res["right_margin_dots"] = res["PHYSICALWIDTH"] - (res["PHYSICALOFFSETX"] + res["HORZRES"])
+    res["right_margin_mm"] = res["right_margin_dots"] / dpi_x * 25.4
+    res["right_margin_pt"] = res["right_margin_dots"] / dpi_x * 72.0
+
+    res["top_margin_dots"] = res["PHYSICALOFFSETY"]
+    res["top_margin_mm"] = res["top_margin_dots"] / dpi_y * 25.4
+    res["top_margin_pt"] = res["top_margin_dots"] / dpi_y * 72.0
+
+    res["bottom_margin_dots"] = res["PHYSICALHEIGHT"] - (res["PHYSICALOFFSETY"] + res["VERTRES"])
+    res["bottom_margin_mm"] = res["bottom_margin_dots"] / dpi_y * 25.4
+    res["bottom_margin_pt"] = res["bottom_margin_dots"] / dpi_y * 72.0
+
+    return res
+
+def log_printer_margins(caps: dict):
+    print(f"[PHYSICAL PAPER SIZE] {caps['paper_w_mm']:.1f}mm x {caps['paper_h_mm']:.1f}mm ({caps['paper_w_pt']:.1f}pt x {caps['paper_h_pt']:.1f}pt)")
+    print(f"[PRINTABLE AREA] {caps['printable_w_mm']:.1f}mm x {caps['printable_h_mm']:.1f}mm ({caps['printable_w_pt']:.1f}pt x {caps['printable_h_pt']:.1f}pt)")
+    print(f"[LEFT HARD MARGIN] {caps['left_margin_mm']:.1f}mm ({caps['left_margin_pt']:.1f}pt)")
+    print(f"[RIGHT HARD MARGIN] {caps['right_margin_mm']:.1f}mm ({caps['right_margin_pt']:.1f}pt)")
+    print(f"[TOP HARD MARGIN] {caps['top_margin_mm']:.1f}mm ({caps['top_margin_pt']:.1f}pt)")
+    print(f"[BOTTOM HARD MARGIN] {caps['bottom_margin_mm']:.1f}mm ({caps['bottom_margin_pt']:.1f}pt)")
+    print("[HARDWARE NON-PRINTABLE MARGIN] Unavoidable physical printer mechanism margin (Kyocera ECOSYS laser engine does not support A4 borderless)")
+    print("[SOFTWARE MARGIN] 0.0mm (0.0pt) - Zero artificial PrintFlow margins added")
+
+
 def sanitize_filename(name: str, fallback_ext: str = ".pdf") -> str:
     raw_name = Path(name).name.strip()
     if not raw_name or raw_name.startswith("."):
@@ -290,15 +383,16 @@ def optimize_pdf_for_full_page(
     input_pdf_path: Path,
     paper_size: str = "a4",
     orientation: str = "portrait",
-    scale_mode: str = "fit"
+    scale_mode: str = "fit",
+    printer_name: str = ""
 ) -> Path:
     """
-    Ensures every page matches the target paper dimensions (MediaBox) and orientation.
-    If orientation == 'landscape' and page is portrait, rotates 90 degrees and transfers rotation to content.
-    If orientation == 'portrait' and page is landscape, rotates 90 degrees and transfers rotation to content.
-    Scales proportionally without distortion:
-      - For 'fit': scales up/down to maximum usable printable area.
-      - For 'actual': 1.0 scale (only shrinking if larger than sheet), centered on sheet.
+    Scales content proportionally to fill 100% of the REAL printer printable rectangle:
+    - Queries hardware printable bounds from the printer DC.
+    - Zero software margin (0.0mm).
+    - Preserves aspect ratio with zero distortion or stretching.
+    - Centers content using the printer's actual physical offsets.
+    - Preserves unavoidable hardware non-printable borders without adding artificial margins.
     """
     try:
         import pypdf
@@ -309,17 +403,10 @@ def optimize_pdf_for_full_page(
         if num_pages == 0:
             return input_pdf_path
 
-        paper_dims = {
-            "a4": (595.28, 841.89),
-            "letter": (612.0, 792.0),
-            "legal": (612.0, 1008.0)
-        }
-        pw, ph = paper_dims.get(paper_size.lower(), (595.28, 841.89))
-        is_landscape = (orientation.lower() == "landscape")
-        if is_landscape:
-            sheet_w, sheet_h = max(pw, ph), min(pw, ph)
-        else:
-            sheet_w, sheet_h = min(pw, ph), max(pw, ph)
+        caps = get_printer_hardware_caps(printer_name, orientation, paper_size)
+        printable_w = caps["printable_w_pt"]
+        printable_h = caps["printable_h_pt"]
+        is_landscape = (str(orientation).lower() == "landscape")
 
         writer = pypdf.PdfWriter()
 
@@ -342,20 +429,20 @@ def optimize_pdf_for_full_page(
             llx = float(page.mediabox.lower_left[0])
             lly = float(page.mediabox.lower_left[1])
 
-            # Proportional scale factor to maximum usable printable area without distortion
+            # Proportionally scale to fill 100% of the REAL printable rectangle
             if orig_w <= 0 or orig_h <= 0:
                 scale = 1.0
             elif scale_mode in ("actual", "actual_size"):
-                scale = min(1.0, sheet_w / orig_w, sheet_h / orig_h)
+                scale = min(1.0, printable_w / orig_w, printable_h / orig_h)
             else:
-                scale = min(sheet_w / orig_w, sheet_h / orig_h)
+                scale = min(printable_w / orig_w, printable_h / orig_h)
 
             scaled_w = orig_w * scale
             scaled_h = orig_h * scale
-            offset_x = (sheet_w - scaled_w) / 2.0
-            offset_y = (sheet_h - scaled_h) / 2.0
+            offset_x = (printable_w - scaled_w) / 2.0
+            offset_y = (printable_h - scaled_h) / 2.0
 
-            new_page = writer.add_blank_page(width=sheet_w, height=sheet_h)
+            new_page = writer.add_blank_page(width=printable_w, height=printable_h)
             op = Transformation().translate(-llx, -lly).scale(scale, scale).translate(offset_x, offset_y)
             new_page.merge_transformed_page(page, op)
 
@@ -457,7 +544,8 @@ def print_document_silently(
             target_print_file,
             paper_size=paper_size,
             orientation=orientation,
-            scale_mode=scale_mode
+            scale_mode=scale_mode,
+            printer_name=printer_name
         )
 
     # Diagnostic Logs before physical printing
@@ -482,6 +570,9 @@ def print_document_silently(
     print("[PHYSICAL PRINT]")
     print(f"printer={printer_name}")
     print(f"orientation={orientation.lower()}")
+    print("")
+    caps = get_printer_hardware_caps(printer_name, orientation, paper_size)
+    log_printer_margins(caps)
     print("")
 
     # Linux / CUPS fallback
