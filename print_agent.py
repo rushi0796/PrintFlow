@@ -511,20 +511,29 @@ def print_document_silently(
 
     # Convert DOC / DOCX to PDF via Word COM if available
     if ext in (".doc", ".docx"):
+        word = None
         try:
             import win32com.client
-            word = win32com.client.Dispatch("Word.Application")
+            word = win32com.client.DispatchEx("Word.Application")
             word.Visible = False
-            doc = word.Documents.Open(str(file_path.resolve()))
-            pdf_path = file_path.parent / f"{file_path.stem}.pdf"
-            doc.SaveAs(str(pdf_path.resolve()), FileFormat=17)
-            doc.Close(False)
-            word.Quit()
+            word.DisplayAlerts = 0
+            doc = word.Documents.Open(str(file_path.resolve()), ReadOnly=True, ConfirmConversions=False)
+            try:
+                pdf_path = file_path.parent / f"{file_path.stem}.pdf"
+                doc.SaveAs(str(pdf_path.resolve()), FileFormat=17)
+            finally:
+                doc.Close(False)
             if pdf_path.exists():
                 target_print_file = pdf_path
                 ext = ".pdf"
         except Exception as word_err:
             print("[AGENT WORD COM EXPORT WARNING]:", word_err)
+        finally:
+            if word is not None:
+                try:
+                    word.Quit()
+                except Exception:
+                    pass
 
     # Universal Image-to-PDF Conversion for Rock-Solid Printing (Single page & Micro Xerox)
     if is_image:
@@ -822,18 +831,27 @@ def print_document_silently(
 
     # Word COM direct print fallback for DOC/DOCX
     if ext in (".doc", ".docx"):
+        word = None
         try:
             import win32com.client
-            word = win32com.client.Dispatch("Word.Application")
+            word = win32com.client.DispatchEx("Word.Application")
             word.Visible = False
-            doc = word.Documents.Open(str(target_print_file.resolve()))
-            word.ActivePrinter = printer_name
-            doc.PrintOut(Copies=copies)
-            doc.Close(False)
-            word.Quit()
+            word.DisplayAlerts = 0
+            doc = word.Documents.Open(str(target_print_file.resolve()), ReadOnly=True, ConfirmConversions=False)
+            try:
+                word.ActivePrinter = printer_name
+                doc.PrintOut(Copies=copies)
+            finally:
+                doc.Close(False)
             return True
         except Exception as word_err:
             print("[AGENT WORD COM WARNING]:", word_err)
+        finally:
+            if word is not None:
+                try:
+                    word.Quit()
+                except Exception:
+                    pass
 
     # Windows Shell fallback for formats with PrintTo support (PDF/Word/etc. - NOT images)
     if ext not in (".jpg", ".jpeg", ".png", ".webp", ".bmp"):
@@ -936,7 +954,18 @@ def run_agent():
                 file_name = job.get("file_name", "") or (Path(file_rel_path).name if file_rel_path else "document.pdf")
                 is_color = str(color_mode).lower() in ("color", "colour")
 
-                if not order_id or not file_rel_path:
+                if not order_id:
+                    continue
+
+                if not file_rel_path:
+                    print(f"[AGENT POLL WARNING] Order {order_id} has empty file_path. Marking failed.")
+                    try:
+                        comp_url = f"{backend_url}/api/agent/complete/{order_id}"
+                        req_data = json.dumps({"status": "FAILED", "error": "Empty file path"}).encode("utf-8")
+                        c_req = urllib.request.Request(comp_url, data=req_data, headers={"Content-Type": "application/json", "X-Print-Agent-Token": agent_token}, method="POST")
+                        urllib.request.urlopen(c_req, timeout=5)
+                    except Exception:
+                        pass
                     continue
 
                 claim_url = f"{backend_url}/api/agent/claim/{order_id}"

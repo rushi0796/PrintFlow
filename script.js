@@ -218,7 +218,7 @@ function updateContinueButtonState() {
         return;
     }
 
-    const allUploaded = activeItems.every(i => i.status === "UPLOADED");
+    const allUploaded = activeItems.every(i => i.status === "UPLOADED" && !i.isDetectingPages);
     if (allUploaded) {
         continueBtn.disabled = false;
         continueBtn.style.opacity = "1";
@@ -428,7 +428,7 @@ function renderFileRowUI(item) {
             <div class="file-meta-row">
                 <span>${formatFileSize(item.size)}</span>
                 <span>•</span>
-                <span>${item.pages} page${item.pages > 1 ? 's' : ''}</span>
+                <span>${item.isDetectingPages ? '<span class="detecting-pages-text">Detecting pages...</span>' : `${item.pages} page${item.pages > 1 ? 's' : ''}`}</span>
                 <span>•</span>
                 ${statusBadgeHtml}
             </div>
@@ -519,6 +519,8 @@ async function handleFileSelection(eventOrFiles) {
             continue;
         }
 
+        const isDocx = (ext === "doc" || ext === "docx");
+        const isPdf = (ext === "pdf" || file.type === "application/pdf");
         const typeInfo = getFileTypeDetails(file);
         const item = {
             id: fileId,
@@ -530,6 +532,7 @@ async function handleFileSelection(eventOrFiles) {
             status: "WAITING",
             progress: 0,
             pages: 1,
+            isDetectingPages: isDocx || isPdf,
             backendPath: "",
             xhr: null,
             error: null,
@@ -539,14 +542,16 @@ async function handleFileSelection(eventOrFiles) {
         fileQueue.push(item);
         renderFileRowUI(item);
 
-        if (ext === "pdf" || file.type === "application/pdf") {
+        if (isPdf) {
             countPdfPages(file).then(pages => {
                 item.pages = pages;
+                item.isDetectingPages = false;
                 renderFileRowUI(item);
                 calculateAndUpdateTotalPages();
                 saveUploadStateToLocalStorage();
             }).catch(err => {
                 item.pages = 1;
+                item.isDetectingPages = false;
                 renderFileRowUI(item);
             });
         }
@@ -581,10 +586,22 @@ async function uploadSingleFile(item) {
         item.progress = 100;
         item.backendPath = data.file_path;
         item.error = null;
+
+        if (data.page_count !== undefined || data.pages !== undefined) {
+            const detected = parseInt(data.page_count !== undefined ? data.page_count : data.pages, 10);
+            if (!isNaN(detected) && detected > 0) {
+                item.pages = detected;
+            }
+        }
+        item.isDetectingPages = false;
+
+        calculateAndUpdateTotalPages();
+        saveUploadStateToLocalStorage();
     } catch (err) {
         item.status = "FAILED";
         item.progress = 0;
         item.error = err.message || "Network error";
+        item.isDetectingPages = false;
     }
 
     renderFileRowUI(item);
@@ -776,12 +793,12 @@ document.addEventListener("DOMContentLoaded", function() {
                 return;
             }
 
-            const isStillUploading = activeItems.some(i => i.status === "UPLOADING" || i.status === "WAITING");
+            const isStillUploading = activeItems.some(i => i.status === "UPLOADING" || i.status === "WAITING" || i.isDetectingPages);
             const hasFailed = activeItems.some(i => i.status === "FAILED");
             if (isStillUploading || hasFailed) {
                 if (pdfErrorMsg) {
                     pdfErrorMsg.textContent = isStillUploading
-                        ? "Please wait for files to finish uploading before continuing"
+                        ? "Please wait for files to finish uploading and detecting pages before continuing"
                         : "Please retry failed uploads before continuing";
                     pdfErrorMsg.style.display = "block";
                 }
@@ -899,6 +916,7 @@ async function prepareRealLivePreviewPages() {
 
     try {
         const fileEntries = await loadAllSavedFiles();
+        let overallPageNum = 0;
         for (let fi = 0; fi < fileEntries.length; fi++) {
             const entry = fileEntries[fi];
             const file = entry.file;
@@ -908,6 +926,7 @@ async function prepareRealLivePreviewPages() {
             const isPdf = (file.type === "application/pdf") || ext === "pdf";
 
             if (isImage) {
+                overallPageNum++;
                 const imgUrl = URL.createObjectURL(file);
                 const dims = await new Promise(resolve => {
                     const tempImg = new Image();
@@ -921,7 +940,7 @@ async function prepareRealLivePreviewPages() {
                     src: imgUrl,
                     width: dims.width,
                     height: dims.height,
-                    docPageNum: fi + 1
+                    docPageNum: overallPageNum
                 });
             } else if (isPdf && typeof pdfjsLib !== "undefined") {
                 try {
@@ -937,6 +956,7 @@ async function prepareRealLivePreviewPages() {
                     const dpr = Math.max(window.devicePixelRatio || 1, 2);
 
                     for (let p = 1; p <= numPages; p++) {
+                        overallPageNum++;
                         const page = await pdf.getPage(p);
                         const unscaledVp = page.getViewport({ scale: 1.0 });
                         const scaleX = (availableWidth * dpr) / (unscaledVp.width || 1);
@@ -950,39 +970,45 @@ async function prepareRealLivePreviewPages() {
                         await page.render({ canvasContext: ctx, viewport: vp }).promise;
                         livePreviewPages.push({
                             type: "canvas",
-                            title: `${fileName} (P.${p})`,
+                            title: numPages > 1 ? `${fileName} (P.${p})` : fileName,
                             src: canvas.toDataURL("image/png"),
                             width: unscaledVp.width,
                             height: unscaledVp.height,
-                            docPageNum: p
+                            docPageNum: overallPageNum
                         });
                     }
                 } catch (pdfErr) {
                     console.warn("PDF render warning:", pdfErr);
                 }
             } else {
-                const canvas = document.createElement("canvas");
-                canvas.width = 400;
-                canvas.height = 560;
-                const ctx = canvas.getContext("2d");
-                ctx.fillStyle = "#ffffff";
-                ctx.fillRect(0, 0, 400, 560);
-                ctx.fillStyle = "#1e293b";
-                ctx.font = "bold 16px sans-serif";
-                ctx.fillText(fileName.substring(0, 24), 20, 40);
-                ctx.fillStyle = "#64748b";
-                ctx.font = "12px sans-serif";
-                ctx.fillText(`Format: ${ext.toUpperCase()}`, 20, 68);
-                ctx.fillStyle = "#cbd5e1";
-                for (let y = 95; y < 500; y += 18) {
-                    ctx.fillRect(20, y, Math.random() * 120 + 220, 6);
+                const docPages = Math.max(1, parseInt(entry.meta?.pages || 1, 10));
+                for (let p = 1; p <= docPages; p++) {
+                    overallPageNum++;
+                    const canvas = document.createElement("canvas");
+                    canvas.width = 400;
+                    canvas.height = 560;
+                    const ctx = canvas.getContext("2d");
+                    ctx.fillStyle = "#ffffff";
+                    ctx.fillRect(0, 0, 400, 560);
+                    ctx.fillStyle = "#1e293b";
+                    ctx.font = "bold 16px sans-serif";
+                    ctx.fillText(fileName.substring(0, 24), 20, 40);
+                    ctx.fillStyle = "#64748b";
+                    ctx.font = "12px sans-serif";
+                    ctx.fillText(`Format: ${ext.toUpperCase()}${docPages > 1 ? ` (Page ${p} of ${docPages})` : ''}`, 20, 68);
+                    ctx.fillStyle = "#cbd5e1";
+                    for (let y = 95; y < 500; y += 18) {
+                        ctx.fillRect(20, y, Math.random() * 120 + 220, 6);
+                    }
+                    livePreviewPages.push({
+                        type: "canvas",
+                        title: docPages > 1 ? `${fileName} (P.${p})` : fileName,
+                        src: canvas.toDataURL("image/png"),
+                        width: 400,
+                        height: 560,
+                        docPageNum: overallPageNum
+                    });
                 }
-                livePreviewPages.push({
-                    type: "canvas",
-                    title: fileName,
-                    src: canvas.toDataURL("image/png"),
-                    docPageNum: fi + 1
-                });
             }
         }
     } catch (err) {

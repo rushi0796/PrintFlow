@@ -6,6 +6,10 @@ import hmac
 import hashlib
 import time
 import threading
+import tempfile
+import io
+import zipfile
+import re
 from typing import Optional
 from pathlib import Path
 from uuid import uuid4
@@ -850,6 +854,94 @@ def get_payment_status_endpoint(print_order_id: str):
             "message": "Reconciliation check temporary error"
         }
 
+def calculate_document_page_count(filename: str, content: bytes) -> int:
+    ext = Path(filename).suffix.lower()
+
+    # 1. Images are strictly 1 page
+    if ext in (".png", ".jpg", ".jpeg", ".webp", ".bmp"):
+        return 1
+
+    # 2. PDF documents: count using pypdf
+    if ext == ".pdf":
+        try:
+            import pypdf
+            reader = pypdf.PdfReader(io.BytesIO(content))
+            return max(1, len(reader.pages))
+        except Exception as e:
+            print(f"[PDF PAGE COUNT ERROR] {e}")
+            return 1
+
+    # 3. Word documents (.doc, .docx)
+    if ext in (".doc", ".docx"):
+        # On Windows: Try Word COM automation
+        if os.name == "nt":
+            try:
+                import win32com.client
+                import pythoncom
+                pythoncom.CoInitialize()
+
+                temp_file = None
+                with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tf:
+                    tf.write(content)
+                    temp_file = Path(tf.name)
+
+                word = None
+                try:
+                    word = win32com.client.DispatchEx("Word.Application")
+                    word.Visible = False
+                    word.DisplayAlerts = 0
+                    doc = word.Documents.Open(str(temp_file.resolve()), ReadOnly=True, ConfirmConversions=False)
+                    try:
+                        pages = int(doc.ComputeStatistics(2))  # wdStatisticPages = 2
+                        print(f"[DOCX PAGE COUNT METHOD] COM (ComputeStatistics) -> {pages} pages for {filename}")
+                        if pages > 0:
+                            return pages
+                    finally:
+                        doc.Close(False)
+                finally:
+                    if word is not None:
+                        try:
+                            word.Quit()
+                        except Exception:
+                            pass
+                    if temp_file and temp_file.exists():
+                        try:
+                            temp_file.unlink()
+                        except Exception:
+                            pass
+                    pythoncom.CoUninitialize()
+            except Exception as com_err:
+                print(f"[DOCX COM COUNT FAILED] {com_err}, falling back to XML/parser")
+
+        # Fallback for DOCX: Inspect XML metadata / structure
+        if ext == ".docx":
+            try:
+                with zipfile.ZipFile(io.BytesIO(content), "r") as zf:
+                    pages_from_app = 0
+                    if "docProps/app.xml" in zf.namelist():
+                        app_xml = zf.read("docProps/app.xml").decode("utf-8", errors="ignore")
+                        m = re.search(r"<Pages>(\d+)</Pages>", app_xml)
+                        if m:
+                            pages_from_app = int(m.group(1))
+
+                    pages_from_breaks = 0
+                    if "word/document.xml" in zf.namelist():
+                        doc_xml = zf.read("word/document.xml").decode("utf-8", errors="ignore")
+                        br_count = len(re.findall(r'w:type=[\'"]page[\'"]', doc_xml))
+                        last_br_count = len(re.findall(r'w:lastRenderedPageBreak', doc_xml))
+                        pages_from_breaks = br_count + last_br_count + 1
+
+                    detected = max(pages_from_breaks, pages_from_app, 1)
+                    print(f"[DOCX PAGE COUNT METHOD] XML (breaks={pages_from_breaks}, app={pages_from_app}) -> {detected} pages for {filename}")
+                    return detected
+            except Exception as xml_err:
+                print(f"[DOCX XML COUNT FAILED] {xml_err}")
+
+        print(f"[DOCX PAGE COUNT METHOD] Fallback -> 1 page for {filename}")
+        return 1
+
+    return 1
+
 @app.post("/upload-pdf")
 @app.post("/api/upload-pdf")
 async def upload_pdf(file: UploadFile = File(...)):
@@ -867,11 +959,17 @@ async def upload_pdf(file: UploadFile = File(...)):
         document_id = save_document(original_name, file.content_type or "application/octet-stream", content)
         returned_path = f"/api/documents/{document_id}"
 
+        # Calculate exact rendered page count
+        page_count = calculate_document_page_count(original_name, content)
+        print(f"[UPLOAD FILE] {original_name} -> {page_count} page(s)")
+
         return {
             "status": "success",
             "message": "File uploaded successfully",
             "file_name": original_name,
-            "file_path": returned_path
+            "file_path": returned_path,
+            "page_count": page_count,
+            "pages": page_count
         }
     except HTTPException:
         raise

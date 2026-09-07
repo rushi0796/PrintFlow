@@ -461,6 +461,18 @@ h3 {
 .status-failed { background: #fee2e2; color: #b91c1c; }
 .status-canceled { background: #f1f5f9; color: #94a3b8; }
 
+.detecting-pages-text {
+    color: #0284c7;
+    font-style: italic;
+    font-weight: 600;
+    animation: pulseDetecting 1.5s infinite ease-in-out;
+}
+
+@keyframes pulseDetecting {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+}
+
 /* Per-file Progress Bar */
 .file-progress-bar-wrap {
     height: 4px;
