@@ -1004,12 +1004,13 @@ def retry_order_endpoint(
     x_customer_mobile: Optional[str] = Header(None),
     x_admin_token: Optional[str] = Header(None)
 ):
-    orders = load_orders()
-    matching_order = None
-    for order in orders:
-        if order.get("order_id") == order_id or order.get("razorpay_order_id") == order_id:
-            matching_order = order
-            break
+    matching_order = get_order(order_id)
+    if not matching_order:
+        orders = load_orders()
+        for order in orders:
+            if order.get("order_id") == order_id or order.get("razorpay_order_id") == order_id:
+                matching_order = order
+                break
 
     if matching_order:
         order_mobile = matching_order.get("customer_mobile")
@@ -1019,6 +1020,7 @@ def retry_order_endpoint(
                 raise HTTPException(status_code=403, detail="Access denied: Unauthorized order access")
 
         matching_order["status"] = "PRINT_QUEUED"
+        matching_order["print_error"] = None
         save_order(matching_order)
         return {
             "status": "success",
