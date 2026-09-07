@@ -795,6 +795,13 @@ def print_document_silently(
             img = Image.open(target_print_file)
             if img.mode != "RGB":
                 img = img.convert("RGB")
+
+            # Single orientation conversion for image if needed
+            is_land = (orientation.lower() == "landscape")
+            if is_land and img.width < img.height:
+                img = img.rotate(90, expand=True)
+            elif not is_land and img.width > img.height:
+                img = img.rotate(90, expand=True)
             hprinter = win32print.OpenPrinter(printer_name)
             try:
                 devmode = win32print.GetPrinter(hprinter, 2)["pDevMode"]

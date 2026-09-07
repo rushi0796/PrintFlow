@@ -194,9 +194,8 @@ def optimize_pdf_for_full_page(
     orientation: str = "portrait"
 ) -> Path:
     """
-    Scales the ENTIRE original page/image canvas corner-to-corner to cover
-    and fill the selected paper dimensions to all four edges without white bands,
-    letterboxing, pillarboxing, or empty corners, preserving 100% of the artwork.
+    Proportionally scales the document to fit within the paper/printable area
+    preserving 100% of the artwork and aspect ratio with ZERO stretching or distortion.
     """
     try:
         import pypdf
@@ -213,7 +212,8 @@ def optimize_pdf_for_full_page(
             "legal": (612.0, 1008.0)
         }
         pw, ph = paper_dims.get(paper_size.lower(), (595.28, 841.89))
-        if orientation.lower() == "landscape":
+        is_landscape = (str(orientation).lower() == "landscape")
+        if is_landscape:
             sheet_w, sheet_h = max(pw, ph), min(pw, ph)
         else:
             sheet_w, sheet_h = min(pw, ph), max(pw, ph)
@@ -223,15 +223,33 @@ def optimize_pdf_for_full_page(
         for page in reader.pages:
             orig_w = float(page.mediabox.width)
             orig_h = float(page.mediabox.height)
+
+            # Single orientation conversion if needed
+            if is_landscape and orig_w < orig_h:
+                page.rotate(90)
+                page.transfer_rotation_to_content()
+            elif not is_landscape and orig_w > orig_h:
+                page.rotate(90)
+                page.transfer_rotation_to_content()
+
+            orig_w = float(page.mediabox.width)
+            orig_h = float(page.mediabox.height)
             llx = float(page.mediabox.lower_left[0])
             lly = float(page.mediabox.lower_left[1])
 
-            # True corner-to-corner scale factors
-            scale_x = sheet_w / orig_w if orig_w > 0 else 1.0
-            scale_y = sheet_h / orig_h if orig_h > 0 else 1.0
+            # Proportional scale preserving aspect ratio
+            if orig_w <= 0 or orig_h <= 0:
+                scale = 1.0
+            else:
+                scale = min(sheet_w / orig_w, sheet_h / orig_h)
+
+            scaled_w = orig_w * scale
+            scaled_h = orig_h * scale
+            offset_x = (sheet_w - scaled_w) / 2.0
+            offset_y = (sheet_h - scaled_h) / 2.0
 
             new_page = writer.add_blank_page(width=sheet_w, height=sheet_h)
-            op = Transformation().translate(-llx, -lly).scale(scale_x, scale_y)
+            op = Transformation().translate(-llx, -lly).scale(scale, scale).translate(offset_x, offset_y)
             new_page.merge_transformed_page(page, op)
 
         out_path = input_pdf_path.parent / f"fp_{input_pdf_path.name}"

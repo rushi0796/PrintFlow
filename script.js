@@ -2746,6 +2746,7 @@ class ThermalPrinterAudio {
         this.ctx = null;
         this.activeNodes = null;
         this.isPlaying = false;
+        this.pendingStart = false;
     }
 
     init() {
@@ -2766,13 +2767,25 @@ class ThermalPrinterAudio {
             if (!this.ctx) return;
             if (this.isPlaying) this.stop();
 
+            if (this.ctx.state === "suspended") {
+                this.pendingStart = true;
+                this.ctx.resume().then(() => {
+                    if (this.pendingStart) {
+                        this.pendingStart = false;
+                        this.start();
+                    }
+                }).catch(() => {});
+                return;
+            }
+
             const t = this.ctx.currentTime;
             this.isPlaying = true;
+            this.pendingStart = false;
 
-            // Master Gain node with smooth attack
+            // Master Gain node with clear, audibly rich mechanical volume (0.85)
             const masterGain = this.ctx.createGain();
             masterGain.gain.setValueAtTime(0.0001, t);
-            masterGain.gain.exponentialRampToValueAtTime(0.22, t + 0.05);
+            masterGain.gain.exponentialRampToValueAtTime(0.85, t + 0.05);
             masterGain.connect(this.ctx.destination);
 
             // 1. Mechanical Stepper Motor Core (Sawtooth oscillator)
@@ -2792,11 +2805,11 @@ class ThermalPrinterAudio {
             // Motor tone shaping filter (warm mechanical lowpass)
             const motorFilter = this.ctx.createBiquadFilter();
             motorFilter.type = "lowpass";
-            motorFilter.frequency.setValueAtTime(460, t);
+            motorFilter.frequency.setValueAtTime(520, t);
             osc.connect(motorFilter);
 
             const motorGain = this.ctx.createGain();
-            motorGain.gain.setValueAtTime(0.18, t);
+            motorGain.gain.setValueAtTime(0.45, t);
             motorFilter.connect(motorGain);
             motorGain.connect(masterGain);
 
@@ -2818,7 +2831,7 @@ class ThermalPrinterAudio {
             noiseFilter.Q.setValueAtTime(1.8, t);
 
             const noiseGain = this.ctx.createGain();
-            noiseGain.gain.setValueAtTime(0.09, t);
+            noiseGain.gain.setValueAtTime(0.35, t);
 
             whiteNoise.connect(noiseFilter);
             noiseFilter.connect(noiseGain);
@@ -2831,11 +2844,12 @@ class ThermalPrinterAudio {
 
             this.activeNodes = { masterGain, osc, lfo, whiteNoise };
         } catch (e) {
-            console.warn("[ThermalPrinterAudio] Audio context unlock note:", e);
+            console.warn("[ThermalPrinterAudio] Audio start note:", e);
         }
     }
 
     stop() {
+        this.pendingStart = false;
         if (!this.isPlaying || !this.ctx || !this.activeNodes) return;
         try {
             const t = this.ctx.currentTime;
@@ -2863,10 +2877,18 @@ class ThermalPrinterAudio {
 }
 
 const thermalAudio = new ThermalPrinterAudio();
-["click", "touchstart", "keydown"].forEach(evt => {
-    window.addEventListener(evt, () => {
-        thermalAudio.init();
-    }, { once: true });
+const unlockThermalAudio = () => {
+    thermalAudio.init();
+    if (thermalAudio.ctx && thermalAudio.ctx.state === "suspended") {
+        thermalAudio.ctx.resume().catch(() => {});
+    }
+    if (thermalAudio.pendingStart) {
+        thermalAudio.pendingStart = false;
+        thermalAudio.start();
+    }
+};
+["click", "pointerdown", "mousedown", "touchstart", "keydown", "mousemove"].forEach(evt => {
+    window.addEventListener(evt, unlockThermalAudio, { passive: true });
 });
 
 function initSuccessReceiptPage() {
