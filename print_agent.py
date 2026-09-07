@@ -248,83 +248,103 @@ def create_n_up_pdf(
     pages_per_sheet: int,
     page_order: str = "horizontal",
     paper_size: str = "a4",
-    orientation: str = "portrait"
+    orientation: str = "portrait",
+    printer_name: str = ""
 ) -> Path:
+    pages_per_sheet = int(pages_per_sheet)
     if pages_per_sheet <= 1:
         return input_pdf_path
 
-    try:
-        import pypdf
-        from pypdf import Transformation
-        reader = pypdf.PdfReader(str(input_pdf_path))
-        num_pages = len(reader.pages)
-        if num_pages == 0:
-            return input_pdf_path
+    if not input_pdf_path.exists():
+        raise RuntimeError(f"MICRO_NUP_INPUT_NOT_FOUND: '{input_pdf_path}' does not exist")
 
-        writer = pypdf.PdfWriter()
+    import pypdf
+    from pypdf import Transformation
+    import math
 
-        grid_map = {
-            2: (1, 2),
-            4: (2, 2),
-            6: (2, 3),
-            9: (3, 3),
-            16: (4, 4),
-        }
-        cols, rows = grid_map.get(pages_per_sheet, (1, 1))
+    reader = pypdf.PdfReader(str(input_pdf_path))
+    num_pages = len(reader.pages)
+    if num_pages == 0:
+        raise RuntimeError(f"MICRO_NUP_EMPTY_INPUT: Input PDF '{input_pdf_path.name}' has 0 pages")
 
-        paper_dims = {
-            "a4": (595.28, 841.89),
-            "letter": (612.0, 792.0),
-            "legal": (612.0, 1008.0)
-        }
-        pw, ph = paper_dims.get(paper_size.lower(), (595.28, 841.89))
-        if orientation.lower() == "landscape":
-            sheet_w, sheet_h = max(pw, ph), min(pw, ph)
-            if pages_per_sheet == 2:
-                cols, rows = 2, 1
-            elif pages_per_sheet == 6:
-                cols, rows = 3, 2
-        else:
-            sheet_w, sheet_h = min(pw, ph), max(pw, ph)
-            if pages_per_sheet == 2:
-                cols, rows = 1, 2
-            elif pages_per_sheet == 6:
-                cols, rows = 2, 3
+    caps = get_printer_hardware_caps(printer_name, orientation, paper_size)
+    sheet_w = caps["paper_w_pt"]
+    sheet_h = caps["paper_h_pt"]
+    printable_w = caps["printable_w_pt"]
+    printable_h = caps["printable_h_pt"]
+    left_margin_pt = caps["left_margin_pt"]
+    top_margin_pt = caps["top_margin_pt"]
 
-        cell_w = sheet_w / cols
-        cell_h = sheet_h / rows
+    is_landscape = (str(orientation).lower() == "landscape")
+    grid_map = {
+        2: (2, 1) if is_landscape else (1, 2),
+        4: (2, 2),
+        6: (3, 2) if is_landscape else (2, 3),
+        9: (3, 3),
+        16: (4, 4),
+    }
+    cols, rows = grid_map.get(pages_per_sheet, (2, 1) if is_landscape else (1, 2))
 
-        i = 0
-        while i < num_pages:
-            blank_page = writer.add_blank_page(width=sheet_w, height=sheet_h)
-            for r in range(rows):
-                for c in range(cols):
-                    idx = i + (c * rows + r) if page_order == "vertical" else i + (r * cols + c)
-                    if idx < num_pages:
-                        src_page = reader.pages[idx]
-                        orig_w = float(src_page.mediabox.width)
-                        orig_h = float(src_page.mediabox.height)
-                        llx = float(src_page.mediabox.lower_left[0])
-                        lly = float(src_page.mediabox.lower_left[1])
+    cell_w = printable_w / cols
+    cell_h = printable_h / rows
 
-                        scale = min(cell_w / orig_w, cell_h / orig_h) * 0.96 if (orig_w > 0 and orig_h > 0) else 1.0
+    writer = pypdf.PdfWriter()
+    expected_sheets = math.ceil(num_pages / pages_per_sheet)
+
+    i = 0
+    while i < num_pages:
+        blank_page = writer.add_blank_page(width=sheet_w, height=sheet_h)
+        for r in range(rows):
+            for c in range(cols):
+                idx = i + (c * rows + r) if page_order == "vertical" else i + (r * cols + c)
+                if idx < num_pages:
+                    src_page = reader.pages[idx]
+                    orig_w = float(src_page.mediabox.width)
+                    orig_h = float(src_page.mediabox.height)
+                    llx = float(src_page.mediabox.lower_left[0])
+                    lly = float(src_page.mediabox.lower_left[1])
+
+                    if orig_w > 0 and orig_h > 0:
+                        # Strictly proportional scaling to fit inside the cell - ZERO arbitrary reduction
+                        scale = min(cell_w / orig_w, cell_h / orig_h)
                         scaled_w = orig_w * scale
                         scaled_h = orig_h * scale
 
-                        tx = c * cell_w + (cell_w - scaled_w) / 2.0
-                        ty = sheet_h - ((r + 1) * cell_h) + (cell_h - scaled_h) / 2.0
+                        x_cell_left = left_margin_pt + c * cell_w
+                        y_cell_top = (sheet_h - top_margin_pt) - r * cell_h
+                        y_cell_bottom = y_cell_top - cell_h
+
+                        tx = x_cell_left + (cell_w - scaled_w) / 2.0
+                        ty = y_cell_bottom + (cell_h - scaled_h) / 2.0
 
                         op = Transformation().translate(-llx, -lly).scale(scale, scale).translate(tx, ty)
                         blank_page.merge_transformed_page(src_page, op)
-            i += pages_per_sheet
+        i += pages_per_sheet
 
-        output_path = input_pdf_path.parent / f"nup_{pages_per_sheet}_{input_pdf_path.name}"
-        with open(output_path, "wb") as f_out:
-            writer.write(f_out)
-        return output_path
-    except Exception as nup_err:
-        print(f"[MICRO XEROX N-UP WARNING]: {nup_err}")
-        return input_pdf_path
+    output_path = input_pdf_path.parent / f"nup_{pages_per_sheet}_{input_pdf_path.name}"
+    with open(output_path, "wb") as f_out:
+        writer.write(f_out)
+
+    # HARD PRE-PRINT ASSERTIONS ON OUTPUT N-UP PDF
+    verify_reader = pypdf.PdfReader(str(output_path))
+    actual_sheets = len(verify_reader.pages)
+    if actual_sheets != expected_sheets:
+        raise RuntimeError(
+            f"MICRO_OUTPUT_PAGE_COUNT_MISMATCH: Expected {expected_sheets} sheet(s) for {num_pages} source pages "
+            f"in {pages_per_sheet}-Up ({orientation}), but generated {actual_sheets} sheet(s)!"
+        )
+
+    for p_idx, page in enumerate(verify_reader.pages):
+        pw = float(page.mediabox.width)
+        ph = float(page.mediabox.height)
+        if abs(pw - sheet_w) > 2.0 or abs(ph - sheet_h) > 2.0:
+            raise RuntimeError(
+                f"MICRO_SHEET_DIMENSION_MISMATCH: Sheet {p_idx+1} dimension {pw:.1f}x{ph:.1f} pt "
+                f"does not match expected paper dimensions {sheet_w:.1f}x{sheet_h:.1f} pt!"
+            )
+
+    print(f"[MICRO XEROX N-UP ENGINE] Synthesized {actual_sheets} sheet(s) for {num_pages} source pages ({pages_per_sheet}-Up, {orientation}, {cols}x{rows} grid).")
+    return output_path
 
 def extract_pdf_page_subset(input_pdf_path: Path, page_range_str: str) -> Path:
     if not page_range_str or str(page_range_str).strip().lower() == "all":
@@ -393,6 +413,7 @@ def optimize_pdf_for_full_page(
     - Preserves aspect ratio with zero distortion or stretching.
     - Centers content using the printer's actual physical offsets.
     - Preserves unavoidable hardware non-printable borders without adding artificial margins.
+    - NO SILENT FALLBACK: Hard raises on failure.
     """
     try:
         import pypdf
@@ -401,11 +422,15 @@ def optimize_pdf_for_full_page(
         reader = pypdf.PdfReader(str(input_pdf_path))
         num_pages = len(reader.pages)
         if num_pages == 0:
-            return input_pdf_path
+            raise RuntimeError(f"FULL_PAGE_EMPTY_INPUT: Input PDF '{input_pdf_path.name}' has 0 pages")
 
         caps = get_printer_hardware_caps(printer_name, orientation, paper_size)
+        sheet_w = caps["paper_w_pt"]
+        sheet_h = caps["paper_h_pt"]
         printable_w = caps["printable_w_pt"]
         printable_h = caps["printable_h_pt"]
+        left_margin_pt = caps["left_margin_pt"]
+        bottom_margin_pt = caps["bottom_margin_pt"]
         is_landscape = (str(orientation).lower() == "landscape")
 
         writer = pypdf.PdfWriter()
@@ -439,10 +464,10 @@ def optimize_pdf_for_full_page(
 
             scaled_w = orig_w * scale
             scaled_h = orig_h * scale
-            offset_x = (printable_w - scaled_w) / 2.0
-            offset_y = (printable_h - scaled_h) / 2.0
+            offset_x = left_margin_pt + (printable_w - scaled_w) / 2.0
+            offset_y = bottom_margin_pt + (printable_h - scaled_h) / 2.0
 
-            new_page = writer.add_blank_page(width=printable_w, height=printable_h)
+            new_page = writer.add_blank_page(width=sheet_w, height=sheet_h)
             op = Transformation().translate(-llx, -lly).scale(scale, scale).translate(offset_x, offset_y)
             new_page.merge_transformed_page(page, op)
 
@@ -451,8 +476,8 @@ def optimize_pdf_for_full_page(
             writer.write(f_out)
         return out_path
     except Exception as opt_err:
-        print(f"[FULL PAGE SCALE WARNING]: {opt_err}")
-        return input_pdf_path
+        print(f"[FULL PAGE SCALE ERROR]: {opt_err}")
+        raise RuntimeError(f"FULL_PAGE_OPTIMIZATION_FAILED: {opt_err}") from opt_err
 
 def print_document_silently(
     file_path: Path,
@@ -465,7 +490,8 @@ def print_document_silently(
     scale_mode: str = "fit",
     pages_per_sheet: int = 1,
     page_order: str = "horizontal",
-    page_range: str = "all"
+    page_range: str = "all",
+    print_mode: str = "standard"
 ):
     ext = file_path.suffix.lower()
     target_print_file = file_path
@@ -478,6 +504,10 @@ def print_document_silently(
         color_mode = "color"
     else:
         color_mode = "black_white"
+
+    # Color safety check: Micro Xerox is strictly B&W
+    if str(print_mode).lower() == "micro_xerox" and is_color:
+        raise RuntimeError("MICRO_XEROX_COLOR_NOT_PERMITTED: Micro Xerox is strictly B&W only.")
 
     # Convert DOC / DOCX to PDF via Word COM if available
     if ext in (".doc", ".docx"):
@@ -530,14 +560,16 @@ def print_document_silently(
     if ext == ".pdf" and page_range and str(page_range).strip().lower() != "all":
         target_print_file = extract_pdf_page_subset(target_print_file, page_range)
 
-    # Process Micro Xerox layout for PDF
-    if ext == ".pdf" and pages_per_sheet > 1:
+    # Process Micro Xerox layout or Full Page layout for PDF
+    if ext == ".pdf" and (str(print_mode).lower() == "micro_xerox" or pages_per_sheet > 1):
+        target_nup = pages_per_sheet if pages_per_sheet > 1 else 2
         target_print_file = create_n_up_pdf(
             target_print_file,
-            pages_per_sheet,
+            target_nup,
             page_order,
             paper_size=paper_size,
-            orientation=orientation
+            orientation=orientation,
+            printer_name=printer_name
         )
     elif ext == ".pdf":
         target_print_file = optimize_pdf_for_full_page(
@@ -574,6 +606,16 @@ def print_document_silently(
     caps = get_printer_hardware_caps(printer_name, orientation, paper_size)
     log_printer_margins(caps)
     print("")
+
+    if ext == ".pdf":
+        import pypdf
+        v_reader = pypdf.PdfReader(str(target_print_file))
+        actual_pages = len(v_reader.pages)
+        print(f"[FINAL PRINT-READY PDF] file={target_print_file.name}, pages={actual_pages}")
+        for p_idx, p in enumerate(v_reader.pages):
+            pw = float(p.mediabox.width)
+            ph = float(p.mediabox.height)
+            print(f"[FINAL PDF VALIDATION] Page {p_idx+1}/{actual_pages}: {pw:.1f}x{ph:.1f} pt")
 
     # Linux / CUPS fallback
     if sys.platform != "win32":
@@ -625,10 +667,9 @@ def print_document_silently(
                 print(f"[AGENT DEVMODE CONFIG WARNING]: {dm_err}")
 
         settings_parts = []
-        if scale_mode in ("actual", "actual_size") and not is_image:
-            settings_parts.append("shrink")
-        else:
-            settings_parts.append("fit")
+        # Final pre-composed PDF already matches physical sheet dimensions and hardware margin offsets
+        # Use 'noscale' to prevent secondary scaling/shifting by SumatraPDF!
+        settings_parts.append("noscale")
 
         # Duplex
         if is_color or duplex == "single":
@@ -640,11 +681,7 @@ def print_document_silently(
         else:
             settings_parts.append("noduplex")
 
-        # IMPORTANT: NO DOUBLE ROTATION!
-        # The PDF is already rendered with the exact physical page dimensions (e.g. 297x210mm).
-        # We do NOT pass "landscape" to SumatraPDF because Sumatra would apply a redundant 90-deg rotation!
-        # Windows DEVMODE already commands the hardware driver to print in Landscape!
-
+        # Windows DEVMODE already sets physical driver orientation to Landscape or Portrait.
         paper_map = {"a4": (9, "a4"), "letter": (1, "letter"), "legal": (5, "legal")}
         pid, pname = paper_map.get(paper_size.lower(), (9, "a4"))
         settings_parts.append(f"paper={pname}")
@@ -660,6 +697,7 @@ def print_document_silently(
         settings_str = ",".join(settings_parts)
 
         cmd = [sumatra, "-print-to", printer_name, "-print-settings", settings_str, "-silent", str(target_print_file.resolve())]
+        print(f"[SUMATRA COMMAND] {' '.join(cmd)}")
         try:
             subprocess.run(cmd, check=True, timeout=45)
             time.sleep(2.0)
@@ -711,23 +749,14 @@ def print_document_silently(
                 printable_height = hdc.GetDeviceCaps(10)
                 img_w, img_h = img.size
 
-                if scale_mode in ("actual", "actual_size") and not is_image:
-                    dpi_x = hdc.GetDeviceCaps(88)
-                    dpi_y = hdc.GetDeviceCaps(90)
-                    img_dpi = img.info.get("dpi", (96, 96))
-                    img_dpi_x = img_dpi[0] if (isinstance(img_dpi, tuple) and img_dpi[0] > 0) else 96
-                    img_dpi_y = img_dpi[1] if (isinstance(img_dpi, tuple) and img_dpi[1] > 0) else 96
-
-                    dot_w = int(img_w * (dpi_x / img_dpi_x))
-                    dot_h = int(img_h * (dpi_y / img_dpi_y))
-                    scale = min(1.0, printable_width / max(1, dot_w), printable_height / max(1, dot_h))
-                    new_w = int(dot_w * scale)
-                    new_h = int(dot_h * scale)
+                if scale_mode in ("actual", "actual_size"):
+                    scale = min(1.0, printable_width / max(1, img_w), printable_height / max(1, img_h))
                 else:
-                    new_w = printable_width
-                    new_h = printable_height
-                    x = 0
-                    y = 0
+                    scale = min(printable_width / max(1, img_w), printable_height / max(1, img_h))
+                new_w = int(img_w * scale)
+                new_h = int(img_h * scale)
+                x = (printable_width - new_w) // 2
+                y = (printable_height - new_h) // 2
 
                 safe_doc_name = "".join(c for c in target_print_file.name if ord(c) < 128 and c.isalnum()) or "document"
                 for _ in range(copies):
@@ -980,7 +1009,8 @@ def run_agent():
                         scale_mode=scale_mode,
                         pages_per_sheet=pages_per_sheet,
                         page_order=page_order,
-                        page_range=page_range
+                        page_range=page_range,
+                        print_mode=print_mode
                     )
                     print("[AGENT] Print dispatched")
 

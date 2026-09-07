@@ -12,3 +12,6 @@ orders/*.sqlite3
 .vercel
 agent_temp/
 WhatsApp Image*
+nup_*.pdf
+test_*.pdf
+real_*.pdf

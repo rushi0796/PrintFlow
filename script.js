@@ -909,10 +909,18 @@ async function prepareRealLivePreviewPages() {
 
             if (isImage) {
                 const imgUrl = URL.createObjectURL(file);
+                const dims = await new Promise(resolve => {
+                    const tempImg = new Image();
+                    tempImg.onload = () => resolve({ width: tempImg.naturalWidth || 800, height: tempImg.naturalHeight || 1100 });
+                    tempImg.onerror = () => resolve({ width: 800, height: 1100 });
+                    tempImg.src = imgUrl;
+                });
                 livePreviewPages.push({
                     type: "image",
                     title: fileName,
                     src: imgUrl,
+                    width: dims.width,
+                    height: dims.height,
                     docPageNum: fi + 1
                 });
             } else if (isPdf && typeof pdfjsLib !== "undefined") {
@@ -944,8 +952,8 @@ async function prepareRealLivePreviewPages() {
                             type: "canvas",
                             title: `${fileName} (P.${p})`,
                             src: canvas.toDataURL("image/png"),
-                            width: vp.width,
-                            height: vp.height,
+                            width: unscaledVp.width,
+                            height: unscaledVp.height,
                             docPageNum: p
                         });
                     }
@@ -1094,6 +1102,140 @@ function getEffectivePreviewPages() {
     return livePreviewPages.filter(p => pageSet.has(p.docPageNum || 1));
 }
 
+function getDefaultContainerDimensions(isNotebook, paperSize, isLandscape) {
+    if (isNotebook) {
+        if (paperSize === "letter") return isLandscape ? { w: 152, h: 118 } : { w: 138, h: 178 };
+        if (paperSize === "legal") return isLandscape ? { w: 158, h: 96 } : { w: 126, h: 210 };
+        return isLandscape ? { w: 152, h: 108 } : { w: 136, h: 192 };
+    }
+    if (paperSize === "letter") return isLandscape ? { w: 214, h: 165 } : { w: 165, h: 214 };
+    if (paperSize === "legal") return isLandscape ? { w: 247, h: 150 } : { w: 150, h: 247 };
+    return isLandscape ? { w: 226, h: 160 } : { w: 160, h: 226 };
+}
+
+function applyMathematicalPreviewLayout(imgEl, pageData, containerEl) {
+    if (!imgEl || !containerEl) return;
+
+    const paperSizeEl = document.getElementById("paperSize");
+    const paperSize = (paperSizeEl ? paperSizeEl.value : (localStorage.getItem("paperSize") || "a4")).toLowerCase();
+
+    const orientationEl = document.querySelector('input[name="orientation"]:checked');
+    const orientation = (orientationEl ? orientationEl.value : (localStorage.getItem("orientation") || "portrait")).toLowerCase();
+    const isLandscape = (orientation === "landscape");
+
+    const scaleModeEl = document.querySelector('input[name="scaleMode"]:checked');
+    const scaleMode = (scaleModeEl ? scaleModeEl.value : (localStorage.getItem("scaleMode") || "fit")).toLowerCase();
+
+    // Kyocera ECOSYS M2040dn KX real hardware device caps
+    let paperW_mm = 210.02;
+    let paperH_mm = 296.98;
+    let printableW_mm = 201.51;
+    let printableH_mm = 288.46;
+    let hardMarginLeftMm = 4.19;
+    let hardMarginTopMm = 4.19;
+
+    if (paperSize === "letter") {
+        paperW_mm = 215.9;
+        paperH_mm = 279.4;
+        printableW_mm = 207.39;
+        printableH_mm = 270.85;
+    } else if (paperSize === "legal") {
+        paperW_mm = 215.9;
+        paperH_mm = 355.6;
+        printableW_mm = 207.39;
+        printableH_mm = 347.05;
+    }
+
+    if (isLandscape) {
+        const tmpW = paperW_mm;
+        paperW_mm = paperH_mm;
+        paperH_mm = tmpW;
+
+        const tmpPrintW = printableW_mm;
+        printableW_mm = printableH_mm;
+        printableH_mm = tmpPrintW;
+    }
+
+    const sheetRect = containerEl ? containerEl.getBoundingClientRect() : null;
+    let sheetW = (sheetRect && sheetRect.width > 0) ? sheetRect.width : (containerEl ? containerEl.clientWidth : 0);
+    let sheetH = (sheetRect && sheetRect.height > 0) ? sheetRect.height : (containerEl ? containerEl.clientHeight : 0);
+
+    const isNotebook = Boolean(containerEl && containerEl.id && containerEl.id.startsWith("notebook"));
+    const defaultDims = getDefaultContainerDimensions(isNotebook, paperSize, isLandscape);
+    if (sheetW <= 0 || sheetH <= 0 || (isLandscape && sheetW < sheetH) || (!isLandscape && sheetW > sheetH)) {
+        sheetW = defaultDims.w;
+        sheetH = defaultDims.h;
+    }
+
+    const pxPerMmX = sheetW / paperW_mm;
+    const pxPerMmY = sheetH / paperH_mm;
+
+    const printableWidthPx = printableW_mm * pxPerMmX;
+    const printableHeightPx = printableH_mm * pxPerMmY;
+    const hardMarginLeftPx = hardMarginLeftMm * pxPerMmX;
+    const hardMarginTopPx = hardMarginTopMm * pxPerMmY;
+
+    let srcW = (pageData && pageData.width) || imgEl.naturalWidth || 0;
+    let srcH = (pageData && pageData.height) || imgEl.naturalHeight || 0;
+
+    if (srcW <= 0 || srcH <= 0) {
+        imgEl.onload = () => {
+            applyMathematicalPreviewLayout(imgEl, pageData, containerEl);
+        };
+        return;
+    }
+
+    let needRotation = false;
+    let effectiveSrcW = srcW;
+    let effectiveSrcH = srcH;
+    if (isLandscape && srcW < srcH) {
+        needRotation = true;
+        effectiveSrcW = srcH;
+        effectiveSrcH = srcW;
+    } else if (!isLandscape && srcW > srcH) {
+        needRotation = true;
+        effectiveSrcW = srcH;
+        effectiveSrcH = srcW;
+    }
+
+    let scale;
+    if (scaleMode === "actual" || scaleMode === "actual_size") {
+        scale = Math.min(1.0, printableWidthPx / effectiveSrcW, printableHeightPx / effectiveSrcH);
+    } else {
+        scale = Math.min(printableWidthPx / effectiveSrcW, printableHeightPx / effectiveSrcH);
+    }
+
+    const scaledW = effectiveSrcW * scale;
+    const scaledH = effectiveSrcH * scale;
+
+    const offsetX = (printableWidthPx - scaledW) / 2.0;
+    const offsetY = (printableHeightPx - scaledH) / 2.0;
+
+    const left = hardMarginLeftPx + offsetX;
+    const top = hardMarginTopPx + offsetY;
+
+    if (needRotation) {
+        const rawW = srcW * scale;
+        const rawH = srcH * scale;
+        imgEl.style.width = Math.round(rawW) + "px";
+        imgEl.style.height = Math.round(rawH) + "px";
+        imgEl.style.transformOrigin = "center center";
+        imgEl.style.transform = "rotate(90deg)";
+        const x0 = (left + scaledW / 2.0) - (rawW / 2.0);
+        const y0 = (top + scaledH / 2.0) - (rawH / 2.0);
+        imgEl.style.left = Math.round(x0) + "px";
+        imgEl.style.top = Math.round(y0) + "px";
+    } else {
+        imgEl.style.transform = "none";
+        imgEl.style.width = Math.round(scaledW) + "px";
+        imgEl.style.height = Math.round(scaledH) + "px";
+        imgEl.style.left = Math.round(left) + "px";
+        imgEl.style.top = Math.round(top) + "px";
+    }
+    imgEl.style.position = "absolute";
+    imgEl.style.objectFit = "fill";
+}
+
 function renderRealLivePreviewUI() {
     const liveImg = document.getElementById("livePreviewImg");
     const loadingEl = document.getElementById("livePreviewLoading");
@@ -1236,6 +1378,8 @@ function renderRealLivePreviewUI() {
                 if (notebookLeftBlank) notebookLeftBlank.style.display = "none";
                 const leftLabel = leftPage.docPageNum ? `Page ${leftPage.docPageNum} • Front` : `Page ${leftIdx + 1} • Front`;
                 if (notebookLeftTagText) notebookLeftTagText.textContent = leftLabel;
+                const leftContainer = document.getElementById("notebookLeftPage") || notebookSpread;
+                applyMathematicalPreviewLayout(notebookLeftImg, leftPage, leftContainer);
             } else {
                 if (notebookLeftImg) notebookLeftImg.style.display = "none";
                 if (notebookLeftBlank) notebookLeftBlank.style.display = "flex";
@@ -1250,6 +1394,8 @@ function renderRealLivePreviewUI() {
                 if (notebookRightBlank) notebookRightBlank.style.display = "none";
                 const rightLabel = rightPage.docPageNum ? `Page ${rightPage.docPageNum} • Back` : `Page ${rightIdx + 1} • Back`;
                 if (notebookRightTagText) notebookRightTagText.textContent = rightLabel;
+                const rightContainer = document.getElementById("notebookRightPage") || notebookSpread;
+                applyMathematicalPreviewLayout(notebookRightImg, rightPage, rightContainer);
 
                 if (duplexBinding === "short_edge") {
                     if (notebookFlipBadge) notebookFlipBadge.style.display = "inline-block";
@@ -1298,6 +1444,7 @@ function renderRealLivePreviewUI() {
                 liveImg.src = activePage.src;
                 liveImg.style.display = "block";
                 liveImg.alt = activePage.title;
+                applyMathematicalPreviewLayout(liveImg, activePage, paperSheetPreview);
             }
 
             if (pageIndicator) {
@@ -1637,6 +1784,7 @@ if (printDetailsFileName) {
 
         settingsForm.addEventListener("change", updatePrintDetailsAndPreview);
         settingsForm.addEventListener("input", updatePrintDetailsAndPreview);
+        window.addEventListener("resize", updatePrintDetailsAndPreview);
     }
     updatePrintDetailsAndPreview();
 }

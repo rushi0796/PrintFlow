@@ -30,79 +30,97 @@ def create_n_up_pdf(
     paper_size: str = "a4",
     orientation: str = "portrait"
 ) -> Path:
+    pages_per_sheet = int(pages_per_sheet)
     if pages_per_sheet <= 1:
         return input_pdf_path
 
-    try:
-        import pypdf
-        from pypdf import Transformation
-        reader = pypdf.PdfReader(str(input_pdf_path))
-        num_pages = len(reader.pages)
-        if num_pages == 0:
-            return input_pdf_path
+    if not input_pdf_path.exists():
+        raise RuntimeError(f"MICRO_NUP_INPUT_NOT_FOUND: '{input_pdf_path}' does not exist")
 
-        writer = pypdf.PdfWriter()
+    import pypdf
+    from pypdf import Transformation
+    import math
 
-        grid_map = {
-            2: (1, 2),
-            4: (2, 2),
-            6: (2, 3),
-            9: (3, 3),
-            16: (4, 4),
-        }
-        cols, rows = grid_map.get(pages_per_sheet, (1, 1))
+    reader = pypdf.PdfReader(str(input_pdf_path))
+    num_pages = len(reader.pages)
+    if num_pages == 0:
+        raise RuntimeError(f"MICRO_NUP_EMPTY_INPUT: Input PDF '{input_pdf_path.name}' has 0 pages")
 
-        paper_dims = {
-            "a4": (595.28, 841.89),
-            "letter": (612.0, 792.0),
-            "legal": (612.0, 1008.0)
-        }
-        pw, ph = paper_dims.get(paper_size.lower(), (595.28, 841.89))
-        if orientation.lower() == "landscape":
-            sheet_w, sheet_h = max(pw, ph), min(pw, ph)
-            if pages_per_sheet == 2:
-                cols, rows = 2, 1
-            elif pages_per_sheet == 6:
-                cols, rows = 3, 2
-        else:
-            sheet_w, sheet_h = min(pw, ph), max(pw, ph)
-            if pages_per_sheet == 2:
-                cols, rows = 1, 2
-            elif pages_per_sheet == 6:
-                cols, rows = 2, 3
+    is_landscape = (orientation.lower() == "landscape")
+    grid_map = {
+        2: (2, 1) if is_landscape else (1, 2),
+        4: (2, 2),
+        6: (3, 2) if is_landscape else (2, 3),
+        9: (3, 3),
+        16: (4, 4),
+    }
+    cols, rows = grid_map.get(pages_per_sheet, (2, 1) if is_landscape else (1, 2))
 
-        cell_w = sheet_w / cols
-        cell_h = sheet_h / rows
+    paper_dims = {
+        "a4": (595.28, 841.89),
+        "letter": (612.0, 792.0),
+        "legal": (612.0, 1008.0)
+    }
+    pw, ph = paper_dims.get(paper_size.lower(), (595.28, 841.89))
+    if is_landscape:
+        sheet_w, sheet_h = max(pw, ph), min(pw, ph)
+    else:
+        sheet_w, sheet_h = min(pw, ph), max(pw, ph)
 
-        i = 0
-        while i < num_pages:
-            blank_page = writer.add_blank_page(width=sheet_w, height=sheet_h)
-            for r in range(rows):
-                for c in range(cols):
-                    idx = i + (c * rows + r) if page_order == "vertical" else i + (r * cols + c)
-                    if idx < num_pages:
-                        src_page = reader.pages[idx]
-                        orig_w = float(src_page.mediabox.width)
-                        orig_h = float(src_page.mediabox.height)
+    # Standard hardware printable area (margins ~4.2mm / 12pt)
+    margin_x = 12.0
+    margin_y = 12.0
+    printable_w = sheet_w - (margin_x * 2.0)
+    printable_h = sheet_h - (margin_y * 2.0)
 
-                        scale = min(cell_w / orig_w, cell_h / orig_h) * 0.95
+    cell_w = printable_w / cols
+    cell_h = printable_h / rows
+
+    writer = pypdf.PdfWriter()
+    expected_sheets = math.ceil(num_pages / pages_per_sheet)
+
+    i = 0
+    while i < num_pages:
+        blank_page = writer.add_blank_page(width=sheet_w, height=sheet_h)
+        for r in range(rows):
+            for c in range(cols):
+                idx = i + (c * rows + r) if page_order == "vertical" else i + (r * cols + c)
+                if idx < num_pages:
+                    src_page = reader.pages[idx]
+                    orig_w = float(src_page.mediabox.width)
+                    orig_h = float(src_page.mediabox.height)
+                    llx = float(src_page.mediabox.lower_left[0])
+                    lly = float(src_page.mediabox.lower_left[1])
+
+                    if orig_w > 0 and orig_h > 0:
+                        scale = min(cell_w / orig_w, cell_h / orig_h)
                         scaled_w = orig_w * scale
                         scaled_h = orig_h * scale
 
-                        tx = c * cell_w + (cell_w - scaled_w) / 2.0
-                        ty = sheet_h - ((r + 1) * cell_h) + (cell_h - scaled_h) / 2.0
+                        x_cell_left = margin_x + c * cell_w
+                        y_cell_top = (sheet_h - margin_y) - r * cell_h
+                        y_cell_bottom = y_cell_top - cell_h
 
-                        op = Transformation().scale(scale, scale).translate(tx, ty)
+                        tx = x_cell_left + (cell_w - scaled_w) / 2.0
+                        ty = y_cell_bottom + (cell_h - scaled_h) / 2.0
+
+                        op = Transformation().translate(-llx, -lly).scale(scale, scale).translate(tx, ty)
                         blank_page.merge_transformed_page(src_page, op)
-            i += pages_per_sheet
+        i += pages_per_sheet
 
-        output_path = input_pdf_path.parent / f"nup_{pages_per_sheet}_{input_pdf_path.name}"
-        with open(output_path, "wb") as f_out:
-            writer.write(f_out)
-        return output_path
-    except Exception as nup_err:
-        print(f"[MICRO XEROX N-UP WARNING]: {nup_err}")
-        return input_pdf_path
+    output_path = input_pdf_path.parent / f"nup_{pages_per_sheet}_{input_pdf_path.name}"
+    with open(output_path, "wb") as f_out:
+        writer.write(f_out)
+
+    verify_reader = pypdf.PdfReader(str(output_path))
+    actual_sheets = len(verify_reader.pages)
+    if actual_sheets != expected_sheets:
+        raise RuntimeError(
+            f"MICRO_OUTPUT_PAGE_COUNT_MISMATCH: Expected {expected_sheets} sheet(s) for {num_pages} source pages "
+            f"in {pages_per_sheet}-Up ({orientation}), but generated {actual_sheets} sheet(s)!"
+        )
+
+    return output_path
 
 def extract_pdf_page_subset(input_pdf_path: Path, page_range_str: str) -> Path:
     if not page_range_str or str(page_range_str).strip().lower() == "all":

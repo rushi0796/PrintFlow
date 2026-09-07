@@ -21,8 +21,23 @@ if not DATABASE_URL:
         if DATABASE_URL:
             break
 
+from contextlib import contextmanager
+
 LOCAL_DB = Path(__file__).resolve().parent / "orders" / "printflow.sqlite3"
 _STORAGE_INITIALIZED = False
+_PG_POOL = None
+
+
+def _get_pg_pool():
+    global _PG_POOL
+    if _PG_POOL is None and DATABASE_URL:
+        try:
+            import psycopg2.pool
+            _PG_POOL = psycopg2.pool.ThreadedConnectionPool(1, 10, DATABASE_URL, connect_timeout=5)
+        except Exception as exc:
+            print(f"[STORAGE POOL WARNING]: {exc}")
+            _PG_POOL = None
+    return _PG_POOL
 
 
 def _postgres():
@@ -42,6 +57,44 @@ def _sqlite():
     return connection
 
 
+@contextmanager
+def get_connection():
+    pool = _get_pg_pool()
+    conn = None
+    is_pooled = False
+    if pool:
+        try:
+            conn = pool.getconn()
+            is_pooled = True
+            if conn.closed:
+                pool.putconn(conn, close=True)
+                conn = pool.getconn()
+        except Exception:
+            is_pooled = False
+            conn = _postgres()
+    else:
+        conn = _postgres() or _sqlite()
+
+    try:
+        yield conn
+    finally:
+        if is_pooled and pool and conn:
+            try:
+                if not conn.closed:
+                    conn.rollback()
+            except Exception:
+                pass
+            try:
+                pool.putconn(conn)
+            except Exception:
+                pass
+        elif conn and not is_pooled:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
 def _connection():
     return _postgres() or _sqlite()
 
@@ -50,8 +103,7 @@ def init_storage():
     global _STORAGE_INITIALIZED
     if _STORAGE_INITIALIZED:
         return
-    connection = _connection()
-    try:
+    with get_connection() as connection:
         if DATABASE_URL:
             with connection.cursor() as cursor:
                 cursor.execute("""
@@ -97,7 +149,7 @@ def init_storage():
                         created_at TEXT NOT NULL
                     )
                 """)
-                for column, definition in {
+                migration_cols = {
                     "file_size": "BIGINT DEFAULT 0",
                     "paper_size": "TEXT DEFAULT 'A4'",
                     "page_range": "TEXT DEFAULT 'all'",
@@ -116,8 +168,9 @@ def init_storage():
                     "page_order": "TEXT DEFAULT 'horizontal'",
                     "customer_mobile": "TEXT DEFAULT 'Guest'",
                     "binding": "TEXT DEFAULT ''"
-                }.items():
-                    cursor.execute(f"ALTER TABLE printflow_orders ADD COLUMN IF NOT EXISTS {column} {definition}")
+                }
+                batch_alter = ", ".join(f"ADD COLUMN IF NOT EXISTS {col} {definition}" for col, definition in migration_cols.items())
+                cursor.execute(f"ALTER TABLE printflow_orders {batch_alter}")
             connection.commit()
         else:
             connection.executescript("""
@@ -165,8 +218,6 @@ def init_storage():
                     connection.execute(f"ALTER TABLE printflow_orders ADD COLUMN {column} {definition}")
             connection.commit()
         _STORAGE_INITIALIZED = True
-    finally:
-        connection.close()
 
 
 def _row_to_dict(row: Any) -> Optional[dict]:
@@ -182,29 +233,29 @@ def _row_to_dict(row: Any) -> Optional[dict]:
 
 
 def _execute(sql: str, params=(), fetch: str = "none"):
-    connection = _connection()
-    try:
+    with get_connection() as connection:
         if DATABASE_URL:
             from psycopg2.extras import RealDictCursor
             cursor = connection.cursor(cursor_factory=RealDictCursor)
         else:
             cursor = connection.cursor()
-        cursor.execute(sql, params)
-        result = None
-        if fetch == "one":
-            result = _row_to_dict(cursor.fetchone())
-        elif fetch == "all":
-            result = [_row_to_dict(row) for row in cursor.fetchall()]
-        connection.commit()
-        return result
-    except Exception:
         try:
-            connection.rollback()
+            cursor.execute(sql, params)
+            result = None
+            if fetch == "one":
+                result = _row_to_dict(cursor.fetchone())
+            elif fetch == "all":
+                result = [_row_to_dict(row) for row in cursor.fetchall()]
+            connection.commit()
+            return result
         except Exception:
-            pass
-        raise
-    finally:
-        connection.close()
+            try:
+                connection.rollback()
+            except Exception:
+                pass
+            raise
+        finally:
+            cursor.close()
 
 
 def save_order(order: dict) -> dict:
@@ -289,8 +340,7 @@ def get_active_queue_orders() -> list[dict]:
 def queue_paid_order(order_id: str, razorpay_order_id: str, payment_id: str) -> Optional[dict]:
     init_storage()
     if DATABASE_URL:
-        connection = _connection()
-        try:
+        with get_connection() as connection:
             from psycopg2.extras import RealDictCursor
             with connection.cursor(cursor_factory=RealDictCursor) as cursor:
                 cursor.execute("SELECT * FROM printflow_orders WHERE order_id=%s FOR UPDATE", (order_id,))
@@ -303,8 +353,6 @@ def queue_paid_order(order_id: str, razorpay_order_id: str, payment_id: str) -> 
                 result = dict(cursor.fetchone())
             connection.commit()
             return result
-        finally:
-            connection.close()
     order = get_order(order_id)
     if not order:
         return None
@@ -323,8 +371,7 @@ def claim_order(order_id: str) -> Optional[dict]:
             (order_id, order_id),
             "one"
         )
-    connection = _connection()
-    try:
+    with get_connection() as connection:
         cursor = connection.cursor()
         cursor.execute(
             "UPDATE printflow_orders SET status='PRINTING', document_status='PRINTING', claimed_at=strftime('%s', 'now') WHERE (order_id=? OR razorpay_order_id=?) AND status='PRINT_QUEUED'",
@@ -332,8 +379,6 @@ def claim_order(order_id: str) -> Optional[dict]:
         )
         connection.commit()
         return get_order(order_id) if cursor.rowcount == 1 else None
-    finally:
-        connection.close()
 
 
 def complete_order(order_id: str, status: str, error: str = "", printer: str = "") -> Optional[dict]:
