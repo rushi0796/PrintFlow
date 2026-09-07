@@ -580,6 +580,53 @@ def print_document_silently(
             printer_name=printer_name
         )
 
+    # B&W Duplex odd-page trailing blank page handling
+    # Only applies to standard B&W duplex printing (never single-side, color, or Micro Xerox)
+    is_micro_xerox = (str(print_mode).lower() == "micro_xerox" or pages_per_sheet > 1)
+    is_duplex_job = (not is_color) and (duplex in (
+        "duplex_long", "duplex_short", "duplexlong", "duplexshort",
+        "long_edge", "short_edge", "double", "duplex", "vertical", "horizontal"
+    ))
+
+    if ext == ".pdf" and not is_color and not is_micro_xerox and is_duplex_job:
+        import pypdf
+        reader = pypdf.PdfReader(str(target_print_file))
+        source_pages = len(reader.pages)
+        canonical_duplex_log = "duplex_short" if duplex in ("duplex_short", "duplexshort", "short_edge", "short", "horizontal") else "duplex_long"
+
+        if source_pages % 2 != 0:
+            writer = pypdf.PdfWriter()
+            for p in reader.pages:
+                writer.add_page(p)
+            last_page = reader.pages[-1]
+            last_w = float(last_page.mediabox.width)
+            last_h = float(last_page.mediabox.height)
+            writer.add_blank_page(width=last_w, height=last_h)
+
+            clean_stem = re.sub(r'[^a-zA-Z0-9_\-]+', '_', target_print_file.stem).strip('_')
+            duplex_pdf_path = target_print_file.parent / f"{clean_stem}_duplex_even.pdf"
+            with open(duplex_pdf_path, "wb") as f_out:
+                writer.write(f_out)
+
+            target_print_file = duplex_pdf_path
+            final_pages = source_pages + 1
+
+            print("")
+            print("[FINAL DUPLEX DOCUMENT]")
+            print(f"source_pages={source_pages}")
+            print(f"final_pages={final_pages}")
+            print(f"duplex={canonical_duplex_log}")
+            print("trailing_blank_page=true")
+            print("")
+        else:
+            print("")
+            print("[FINAL DUPLEX DOCUMENT]")
+            print(f"source_pages={source_pages}")
+            print(f"final_pages={source_pages}")
+            print(f"duplex={canonical_duplex_log}")
+            print("trailing_blank_page=false")
+            print("")
+
     # Diagnostic Logs before physical printing
     paper_str = "A4" if paper_size.lower() == "a4" else paper_size.upper()
     color_str = "bw" if not is_color else "color"

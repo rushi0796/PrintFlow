@@ -1,0 +1,5 @@
+﻿# PrintFlow Windows PrintAgent Dependencies
+pypdf>=5.0.0
+pillow>=10.0.0
+pywin32>=306
+requests>=2.31.0
