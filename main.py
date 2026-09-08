@@ -32,6 +32,8 @@ from storage import (
     queue_paid_order,
     save_document,
     save_order,
+    save_agent_state,
+    get_agent_state,
 )
 
 app = FastAPI()
@@ -360,10 +362,17 @@ def queue_order_for_printing(payload: dict):
 @app.post("/api/agent/poll")
 def agent_poll_endpoint(req: dict, x_print_agent_token: Optional[str] = Header(None)):
     verify_agent_token(x_print_agent_token)
-    AGENT_STATE["last_seen"] = time.time()
+    now_ts = time.time()
+    AGENT_STATE["last_seen"] = now_ts
     AGENT_STATE["status"] = "ONLINE"
+    printers_list = req.get("printers", [])
     if "printers" in req:
-        AGENT_STATE["printers"] = req["printers"]
+        AGENT_STATE["printers"] = printers_list
+
+    try:
+        save_agent_state(printers_list, status="ONLINE", last_seen=now_ts)
+    except Exception as exc:
+        print(f"[AGENT STATE SAVE ERROR] {exc}")
 
     try:
         queued_jobs = get_queued_orders()
@@ -520,7 +529,25 @@ def logout_endpoint(
 @app.get("/api/agent/status")
 @app.get("/api/printers")
 def agent_status_endpoint():
-    is_online = (time.time() - AGENT_STATE["last_seen"]) < 12
+    persisted_state = None
+    try:
+        persisted_state = get_agent_state()
+    except Exception as exc:
+        print(f"[AGENT STATE GET ERROR] {exc}")
+
+    if persisted_state and persisted_state.get("last_seen"):
+        now = time.time()
+        last_seen = persisted_state["last_seen"]
+        is_online = (now - last_seen) < 15
+        printers = persisted_state.get("printers", [])
+        return {
+            "status": "success",
+            "agent_online": is_online,
+            "last_seen": last_seen,
+            "discovered_printers": printers
+        }
+
+    is_online = (time.time() - AGENT_STATE["last_seen"]) < 15
     return {
         "status": "success",
         "agent_online": is_online,

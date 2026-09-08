@@ -1,7 +1,7 @@
 import json
 import os
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 from uuid import uuid4
@@ -149,6 +149,14 @@ def init_storage():
                         created_at TEXT NOT NULL
                     )
                 """)
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS printflow_agent_state (
+                        id TEXT PRIMARY KEY,
+                        printers TEXT DEFAULT '[]',
+                        status TEXT DEFAULT 'OFFLINE',
+                        last_seen DOUBLE PRECISION DEFAULT 0.0
+                    )
+                """)
                 migration_cols = {
                     "file_size": "BIGINT DEFAULT 0",
                     "paper_size": "TEXT DEFAULT 'A4'",
@@ -190,6 +198,12 @@ def init_storage():
                     document_id TEXT PRIMARY KEY, file_name TEXT NOT NULL,
                     mime_type TEXT NOT NULL, content BLOB NOT NULL,
                     created_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS printflow_agent_state (
+                    id TEXT PRIMARY KEY,
+                    printers TEXT DEFAULT '[]',
+                    status TEXT DEFAULT 'OFFLINE',
+                    last_seen REAL DEFAULT 0.0
                 );
             """)
             existing_columns = {
@@ -289,7 +303,7 @@ def save_order(order: dict) -> dict:
     order.setdefault("paid", False)
     order.setdefault("status", "Pending")
     order.setdefault("document_status", "UPLOADED")
-    order.setdefault("timestamp", datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"))
+    order.setdefault("timestamp", datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"))
     order.setdefault("print_error", None)
     order.setdefault("claimed_at", None)
     order.setdefault("printed_by_printer", None)
@@ -428,7 +442,7 @@ def complete_order(order_id: str, status: str, error: str = "", printer: str = "
     if spooler_job_id:
         order["spooler_job_id"] = spooler_job_id
     if status == "COMPLETED":
-        order["completed_at"] = datetime.utcnow().isoformat()
+        order["completed_at"] = datetime.now(timezone.utc).isoformat()
     return save_order(order)
 
 
@@ -437,7 +451,7 @@ def save_document(file_name: str, mime_type: str, content: bytes) -> str:
     document_id = uuid4().hex
     columns = "document_id, file_name, mime_type, content, created_at"
     placeholders = "%s, %s, %s, %s, %s" if DATABASE_URL else "?, ?, ?, ?, ?"
-    _execute(f"INSERT INTO printflow_documents ({columns}) VALUES ({placeholders})", (document_id, file_name, mime_type or "application/octet-stream", content, datetime.utcnow().isoformat()))
+    _execute(f"INSERT INTO printflow_documents ({columns}) VALUES ({placeholders})", (document_id, file_name, mime_type or "application/octet-stream", content, datetime.now(timezone.utc).isoformat()))
     return document_id
 
 
@@ -457,4 +471,51 @@ def delete_order(order_id: str):
     init_storage()
     placeholder = "%s" if DATABASE_URL else "?"
     _execute(f"DELETE FROM printflow_orders WHERE order_id={placeholder} OR razorpay_order_id={placeholder}", (order_id, order_id))
+
+
+def save_agent_state(printers: list, status: str = "ONLINE", last_seen: float = 0.0):
+    init_storage()
+    if not last_seen:
+        last_seen = time.time()
+    printers_json = json.dumps(printers)
+    if DATABASE_URL:
+        sql = """
+            INSERT INTO printflow_agent_state (id, printers, status, last_seen)
+            VALUES ('default', %s, %s, %s)
+            ON CONFLICT (id) DO UPDATE SET
+                printers = EXCLUDED.printers,
+                status = EXCLUDED.status,
+                last_seen = EXCLUDED.last_seen
+        """
+        _execute(sql, (printers_json, status, last_seen), fetch="none")
+    else:
+        sql = """
+            INSERT INTO printflow_agent_state (id, printers, status, last_seen)
+            VALUES ('default', ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                printers = excluded.printers,
+                status = excluded.status,
+                last_seen = excluded.last_seen
+        """
+        _execute(sql, (printers_json, status, last_seen), fetch="none")
+
+
+def get_agent_state() -> dict:
+    init_storage()
+    placeholder = "%s" if DATABASE_URL else "?"
+    row = _execute(f"SELECT printers, status, last_seen FROM printflow_agent_state WHERE id={placeholder} LIMIT 1", ('default',), fetch="one")
+    if not row:
+        return {"printers": [], "status": "OFFLINE", "last_seen": 0.0}
+    printers = []
+    if row.get("printers"):
+        try:
+            printers = json.loads(row["printers"]) if isinstance(row["printers"], str) else row["printers"]
+        except Exception:
+            pass
+    return {
+        "printers": printers,
+        "status": row.get("status", "OFFLINE"),
+        "last_seen": float(row.get("last_seen", 0.0) or 0.0)
+    }
+
 
