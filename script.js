@@ -2140,8 +2140,34 @@ if (payBtn) {
                 console.warn("[PAYMENT] Error parsing fileListDetails:", parseErr);
             }
 
-            const effectivePath = uploadedPath || (filesManifest.length > 0 ? filesManifest[0].path : "");
-            const effectiveName = fileNameVal || (filesManifest.length > 0 ? filesManifest.map(f => f.name).join(", ") : "");
+            const uploadedPath = localStorage.getItem("backendFilePath") || "";
+            const rawAmount = localStorage.getItem("amount");
+            const amountVal = (rawAmount && !isNaN(parseFloat(rawAmount)))
+                ? parseFloat(rawAmount)
+                : calculatePrice(pageCountVal, copiesVal, colorModeVal, printSideVal, printModeVal, pagesPerSheetVal);
+
+            const rawMobile = localStorage.getItem("mobileNumber") || localStorage.getItem("customerMobile") || "9876543210";
+            const cleanContact = rawMobile.replace(/\D/g, "").slice(-10) || "9876543210";
+
+            const effectivePath = (filesManifest.length > 0 && filesManifest[0].path) ? filesManifest[0].path : uploadedPath;
+            const effectiveName = fileNameVal || (filesManifest.length > 0 ? filesManifest.map(f => f.name).join(", ") : "document.pdf");
+
+            // Preflight validation to prevent uncaught runtime errors
+            if (!effectivePath && filesManifest.length === 0) {
+                isPaymentInFlight = false;
+                payBtn.disabled = false;
+                payBtn.textContent = originalText;
+                showPaymentFailedModal("No Document Found", "Please select and upload a document before proceeding to payment.");
+                return;
+            }
+
+            if (isNaN(amountVal) || amountVal <= 0) {
+                isPaymentInFlight = false;
+                payBtn.disabled = false;
+                payBtn.textContent = originalText;
+                showPaymentFailedModal("Invalid Amount", "Unable to calculate payment amount. Please return to print settings and try again.");
+                return;
+            }
 
             const payload = {
                 amount: amountVal,

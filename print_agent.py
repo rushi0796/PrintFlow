@@ -723,13 +723,19 @@ def convert_image_to_pdf_page(
 
     if is_fill:
         s = max(avail_w / max(1, img_w), avail_h / max(1, img_h))
-    else:  # fit
-        s = min(avail_w / max(1, img_w), avail_h / max(1, img_h))
-
-    draw_w = img_w * s
-    draw_h = img_h * s
-    draw_x = l_m + (avail_w - draw_w) / 2.0
-    draw_y = b_m + (avail_h - draw_h) / 2.0
+        draw_w = img_w * s
+        draw_h = img_h * s
+        draw_x = l_m + (avail_w - draw_w) / 2.0
+        draw_y = b_m + (avail_h - draw_h) / 2.0
+    else:  # fit / full_page
+        # Fit into available printable area with controlled ~4% expansion toward physical borders
+        base_s = min(avail_w / max(1, img_w), avail_h / max(1, img_h))
+        max_limit_s = min((canvas_w - 4.0) / max(1, img_w), (canvas_h - 4.0) / max(1, img_h))
+        s = min(base_s * 1.04, max_limit_s)
+        draw_w = img_w * s
+        draw_h = img_h * s
+        draw_x = (canvas_w - draw_w) / 2.0
+        draw_y = (canvas_h - draw_h) / 2.0
 
     temp_rgb_path = out_pdf_path.parent / f"tmp_rgb_{out_pdf_path.stem}.jpg"
     img.save(temp_rgb_path, "JPEG", quality=95)
