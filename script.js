@@ -948,7 +948,9 @@ async function prepareRealLivePreviewPages() {
                     src: imgUrl,
                     width: dims.width,
                     height: dims.height,
-                    docPageNum: overallPageNum
+                    docPageNum: overallPageNum,
+                    fileIndex: fi,
+                    filePageNum: 1
                 });
             } else if (isPdf && typeof pdfjsLib !== "undefined") {
                 try {
@@ -982,7 +984,9 @@ async function prepareRealLivePreviewPages() {
                             src: canvas.toDataURL("image/png"),
                             width: unscaledVp.width,
                             height: unscaledVp.height,
-                            docPageNum: overallPageNum
+                            docPageNum: overallPageNum,
+                            fileIndex: fi,
+                            filePageNum: p
                         });
                     }
                 } catch (pdfErr) {
@@ -1014,7 +1018,9 @@ async function prepareRealLivePreviewPages() {
                         src: canvas.toDataURL("image/png"),
                         width: 400,
                         height: 560,
-                        docPageNum: overallPageNum
+                        docPageNum: overallPageNum,
+                        fileIndex: fi,
+                        filePageNum: p
                     });
                 }
             }
@@ -1122,18 +1128,25 @@ function parseAndValidatePageSelection(selectionType, customStr, totalPages) {
 
 function getEffectivePreviewPages() {
     if (!livePreviewPages || !livePreviewPages.length) return [];
-    const pageSelEl = document.querySelector('input[name="pageSelection"]:checked');
-    const pageSelection = pageSelEl ? pageSelEl.value : "all";
-    const customInputEl = document.getElementById("customPagesInput");
-    const customStr = customInputEl ? customInputEl.value.trim() : "";
-    const totalPages = livePreviewPages.length;
 
-    const validation = parseAndValidatePageSelection(pageSelection, customStr, totalPages);
-    if (!validation.isValid || !validation.pages.length) {
-        return livePreviewPages;
+    const manifest = (window.currentFileManifest && window.currentFileManifest.length)
+        ? window.currentFileManifest
+        : (typeof getStoredFileManifest === "function" ? getStoredFileManifest() : []);
+    const activeFile = manifest[window.activePreviewFileIndex || 0] || manifest[0];
+    if (!activeFile) return livePreviewPages;
+
+    let filePages = livePreviewPages.filter(p => p.fileIndex === (window.activePreviewFileIndex || 0));
+    if (!filePages.length) {
+        filePages = livePreviewPages;
     }
-    const pageSet = new Set(validation.pages);
-    return livePreviewPages.filter(p => pageSet.has(p.docPageNum || 1));
+
+    const selectedSet = new Set(activeFile.selectedPages || []);
+    const filtered = filePages.filter((p, idx) => {
+        const pageNum = p.filePageNum || (idx + 1);
+        return selectedSet.has(pageNum);
+    });
+
+    return filtered.length ? filtered : filePages;
 }
 
 function getDefaultContainerDimensions(isNotebook, paperSize, isLandscape) {
@@ -1509,168 +1522,261 @@ function renderRealLivePreviewUI() {
     }
 }
 
-function updatePrintDetailsAndPreview() {
-    const copiesBox = document.getElementById("copies");
-    const totalPriceBox = document.getElementById("totalPrice");
-    const paperSheetPreview = document.getElementById("paperSheetPreview");
-    const microXeroxSection = document.getElementById("microXeroxSection");
-    const previewLabelBadge = document.getElementById("previewLabelBadge");
-    const doubleSideLabel = document.getElementById("doubleSideLabel");
-    const radioDoubleSide = document.getElementById("radioDoubleSide");
-    const paymentBtnEl = document.getElementById("paymentBtn");
+window.currentFileManifest = [];
+window.activePreviewFileIndex = 0;
 
-    if (!totalPriceBox && !paperSheetPreview) return;
-
-    const printModeCheckEl = document.querySelector('input[name="printMode"]:checked');
-    const curPrintMode = printModeCheckEl ? printModeCheckEl.value : "standard";
-    const curNupEl = document.getElementById("pagesPerSheet");
-    const curNup = (curPrintMode === "micro_xerox") ? (curNupEl ? parseInt(curNupEl.value, 10) : 2) : 1;
-
-    if (window._lastPreviewMode !== curPrintMode || window._lastPagesPerSheet !== curNup) {
-        livePreviewIndex = 0;
-        window._lastPreviewMode = curPrintMode;
-        window._lastPagesPerSheet = curNup;
+function getStoredFileManifest() {
+    let manifest = [];
+    try {
+        const storedConfigs = localStorage.getItem("printflowFileConfigs");
+        if (storedConfigs) {
+            const parsed = JSON.parse(storedConfigs);
+            if (Array.isArray(parsed) && parsed.length > 0) {
+                manifest = parsed;
+            }
+        }
+    } catch (e) {
+        console.warn("getStoredFileManifest config parse note:", e);
     }
 
-    const totalDocPages = Number(localStorage.getItem("pdfPageCount")) || (livePreviewPages.length ? livePreviewPages.length : 1);
-    const copies = copiesBox ? (Number(copiesBox.value) || 1) : 1;
-
-    // Pages Selection Handling
-    const pageSelEl = document.querySelector('input[name="pageSelection"]:checked');
-    const pageSelection = pageSelEl ? pageSelEl.value : "all";
-    const customInputEl = document.getElementById("customPagesInput");
-    const customPagesVal = customInputEl ? customInputEl.value.trim() : "";
-    const customContainer = document.getElementById("customPagesContainer");
-    const customErrorEl = document.getElementById("customPagesError");
-
-    if (customContainer) {
-        customContainer.style.display = (pageSelection === "custom") ? "block" : "none";
-    }
-
-    const validation = parseAndValidatePageSelection(pageSelection, customPagesVal, totalDocPages);
-    if (customErrorEl) {
-        if (!validation.isValid && pageSelection === "custom") {
-            customErrorEl.textContent = validation.error;
-            customErrorEl.style.display = "block";
-        } else {
-            customErrorEl.textContent = "";
-            customErrorEl.style.display = "none";
+    if (!manifest.length) {
+        try {
+            const storedDetails = localStorage.getItem("fileListDetails");
+            if (storedDetails) {
+                const parsed = JSON.parse(storedDetails);
+                if (Array.isArray(parsed) && parsed.length > 0) {
+                    manifest = parsed.map((item, idx) => ({
+                        id: item.id || `file_${idx}_${Date.now()}`,
+                        name: item.name || `Document ${idx + 1}.pdf`,
+                        path: item.path || item.backendPath || "",
+                        size: item.size || 0,
+                        pages: parseInt(item.pages || 1, 10),
+                        sequence: typeof item.sequence === "number" ? item.sequence : idx
+                    }));
+                }
+            }
+        } catch (e) {
+            console.warn("getStoredFileManifest details parse note:", e);
         }
     }
 
-    if (paymentBtnEl) {
-        paymentBtnEl.disabled = (!validation.isValid && pageSelection === "custom");
+    if (!manifest.length) {
+        const singleName = localStorage.getItem("fileName") || "document.pdf";
+        const singlePath = localStorage.getItem("backendFilePath") || "";
+        const singlePages = parseInt(localStorage.getItem("pdfPageCount") || "1", 10);
+        manifest.push({
+            id: `file_0_${Date.now()}`,
+            name: singleName,
+            path: singlePath,
+            size: parseInt(localStorage.getItem("fileSize") || "0", 10),
+            pages: singlePages,
+            sequence: 0
+        });
     }
 
-    const effectivePagesCount = validation.isValid ? validation.pages.length : totalDocPages;
+    // Ensure defaults and compute sheets & price
+    manifest = manifest.map((f, idx) => {
+        const ensured = ensureFileConfigDefaults(f, idx);
+        return computeFileSheetsAndPrice(ensured);
+    });
+
+    window.currentFileManifest = manifest;
+    return manifest;
+}
+
+function ensureFileConfigDefaults(file, idx) {
+    const f = { ...file };
+    f.id = f.id || `file_${idx}_${Date.now()}`;
+    f.name = f.name || `Document ${idx + 1}.pdf`;
+    f.path = f.path || f.backendPath || localStorage.getItem("backendFilePath") || "";
+    f.pages = Math.max(1, parseInt(f.pages || 1, 10));
+    f.sequence = typeof f.sequence === "number" ? f.sequence : idx;
+
+    f.pageSelection = f.pageSelection || "all";
+    f.customPagesInput = typeof f.customPagesInput === "string" ? f.customPagesInput : "";
+    f.pageRange = f.pageRange || "all";
+    f.selectedPagesCount = typeof f.selectedPagesCount === "number" ? f.selectedPagesCount : f.pages;
+
+    f.printSide = f.printSide || "single";
+    f.duplexBinding = f.duplexBinding || "long_edge";
+    f.duplex = f.duplex || (f.printSide === "double" ? (f.duplexBinding === "short_edge" ? "duplex_short" : "duplex_long") : "single");
+
+    f.copies = Math.max(1, parseInt(f.copies || 1, 10));
+    f.colorMode = f.colorMode || "black_white";
+    f.orientation = f.orientation || "portrait";
+    f.paperSize = f.paperSize || "a4";
+    f.scaleMode = f.scaleMode || "fit";
+    f.printMode = f.printMode || "standard";
+    f.pagesPerSheet = parseInt(f.pagesPerSheet || 1, 10);
+
+    return f;
+}
+
+function computeFileSheetsAndPrice(file) {
+    const f = { ...file };
+    const totalPages = Math.max(1, parseInt(f.pages || 1, 10));
+    const validation = parseAndValidatePageSelection(f.pageSelection, f.customPagesInput, totalPages);
+
+    f.isValid = validation.isValid;
+    f.validationError = validation.isValid ? "" : validation.error;
+    f.selectedPages = validation.isValid ? validation.pages : Array.from({ length: totalPages }, (_, i) => i + 1);
+    f.selectedPagesCount = f.selectedPages.length;
+    f.pageRange = validation.isValid ? validation.canonicalString : "all";
+
+    // Duplex resolution
+    if (f.colorMode === "color" || f.printSide === "single") {
+        f.duplex = "single";
+    } else {
+        f.duplex = (f.duplexBinding === "short_edge") ? "duplex_short" : "duplex_long";
+    }
+
+    const copies = Math.max(1, parseInt(f.copies || 1, 10));
+
+    // Pricing & sheet calculation:
+    if (f.printMode === "micro_xerox" && f.pagesPerSheet > 1) {
+        const sheetsPerCopy = Math.ceil(f.selectedPagesCount / f.pagesPerSheet);
+        f.calculatedSheets = sheetsPerCopy * copies;
+        f.calculatedPrice = parseFloat((sheetsPerCopy * copies * PRICING.micro_xerox_sheet).toFixed(2));
+    } else if (f.colorMode === "color") {
+        f.calculatedSheets = f.selectedPagesCount * copies;
+        f.calculatedPrice = parseFloat((f.selectedPagesCount * copies * PRICING.color_single).toFixed(2));
+    } else if (f.printSide === "double") {
+        const sheetsPerCopy = Math.ceil(f.selectedPagesCount / 2);
+        f.calculatedSheets = sheetsPerCopy * copies;
+        f.calculatedPrice = parseFloat((f.selectedPagesCount * copies * PRICING.bw_double).toFixed(2));
+    } else {
+        // B&W Single
+        f.calculatedSheets = f.selectedPagesCount * copies;
+        f.calculatedPrice = parseFloat((f.selectedPagesCount * copies * PRICING.bw_single).toFixed(2));
+    }
+
+    return f;
+}
+
+function saveFileManifest(manifest) {
+    window.currentFileManifest = manifest;
+    localStorage.setItem("printflowFileConfigs", JSON.stringify(manifest));
+
+    // Keep legacy localStorage keys updated
+    const totalSelectedPages = manifest.reduce((acc, f) => acc + (f.selectedPagesCount * f.copies), 0);
+    const totalSheets = manifest.reduce((acc, f) => acc + f.calculatedSheets, 0);
+    const totalAmount = manifest.reduce((acc, f) => acc + f.calculatedPrice, 0);
+    const fileNames = manifest.map(f => f.name).join(", ");
+
+    localStorage.setItem("fileName", fileNames);
+    localStorage.setItem("pdfPageCount", String(totalSelectedPages));
+    localStorage.setItem("selectedPagesCount", String(totalSelectedPages));
+    localStorage.setItem("amount", totalAmount.toFixed(2));
+    if (manifest.length > 0 && manifest[0].path) {
+        localStorage.setItem("backendFilePath", manifest[0].path);
+    }
+    // Also sync fileListDetails
+    const details = manifest.map((f, idx) => ({
+        id: f.id,
+        name: f.name,
+        path: f.path,
+        pages: f.pages,
+        sequence: idx,
+        status: "UPLOADED",
+        selected_pages_count: f.selectedPagesCount,
+        page_range: f.pageRange,
+        copies: f.copies,
+        color_mode: f.colorMode,
+        duplex: f.duplex,
+        binding: f.duplexBinding,
+        orientation: f.orientation,
+        paper_size: f.paperSize,
+        scale_mode: f.scaleMode,
+        print_mode: f.printMode,
+        pages_per_sheet: f.pagesPerSheet,
+        calculated_sheets: f.calculatedSheets,
+        calculated_price: f.calculatedPrice
+    }));
+    localStorage.setItem("fileListDetails", JSON.stringify(details));
+}
+
+function updateGlobalOrderSummary(manifest) {
+    const totalFiles = manifest.length;
+    let totalSelectedPages = 0;
+    let totalSheets = 0;
+    let totalAmount = 0;
+    let allValid = true;
+
+    manifest.forEach(f => {
+        totalSelectedPages += (f.selectedPagesCount * f.copies);
+        totalSheets += f.calculatedSheets;
+        totalAmount += f.calculatedPrice;
+        if (!f.isValid || f.selectedPagesCount <= 0) {
+            allValid = false;
+        }
+    });
+
+    const fileCountBadge = document.getElementById("fileCountBadge");
+    if (fileCountBadge) {
+        fileCountBadge.textContent = `${totalFiles} Document${totalFiles > 1 ? 's' : ''}`;
+    }
+
+    const summaryTotalFiles = document.getElementById("summaryTotalFiles");
+    if (summaryTotalFiles) {
+        summaryTotalFiles.textContent = `${totalFiles} Document${totalFiles > 1 ? 's' : ''}`;
+    }
+
+    const summaryTotalPages = document.getElementById("summaryTotalPages");
+    if (summaryTotalPages) {
+        summaryTotalPages.textContent = `${totalSelectedPages} Page${totalSelectedPages > 1 ? 's' : ''}`;
+    }
+
+    const summaryTotalSheets = document.getElementById("summaryTotalSheets");
+    if (summaryTotalSheets) {
+        summaryTotalSheets.textContent = `${totalSheets} Sheet${totalSheets > 1 ? 's' : ''}`;
+    }
+
+    const totalPriceEl = document.getElementById("totalPrice");
+    if (totalPriceEl) {
+        totalPriceEl.textContent = `₹${totalAmount.toFixed(2)}`;
+    }
+
     const pageCountEl = document.getElementById("pageCount");
     if (pageCountEl) {
-        if (pageSelection !== "all" && validation.isValid) {
-            pageCountEl.textContent = `Total: ${totalDocPages} Pages | ${effectivePagesCount} Selected`;
-        } else {
-            pageCountEl.textContent = `Total: ${totalDocPages} Page${totalDocPages > 1 ? 's' : ''}`;
-        }
+        pageCountEl.textContent = `Total: ${totalFiles} Document${totalFiles > 1 ? 's' : ''} • ${totalSelectedPages} Pages`;
     }
 
-    const printModeEl = document.querySelector('input[name="printMode"]:checked');
-    const printMode = printModeEl ? printModeEl.value : "standard";
-
-    const colorModeEl = document.querySelector('input[name="colorMode"]:checked');
-    const colorMode = colorModeEl ? colorModeEl.value : "black_white";
-
-    const printSideEl = document.querySelector('input[name="printSide"]:checked');
-    let printSide = printSideEl ? printSideEl.value : "single";
-
-    const orientationEl = document.querySelector('input[name="orientation"]:checked');
-    const orientation = orientationEl ? orientationEl.value : "portrait";
-
-    const paperSizeEl = document.getElementById("paperSize");
-    const paperSize = paperSizeEl ? paperSizeEl.value : "a4";
-
-    const pagesPerSheetEl = document.getElementById("pagesPerSheet");
-    const pagesPerSheet = (printMode === "micro_xerox") ? (pagesPerSheetEl ? parseInt(pagesPerSheetEl.value, 10) : 2) : 1;
-
-    const pageOrderEl = document.querySelector('input[name="pageOrder"]:checked');
-    const pageOrder = pageOrderEl ? pageOrderEl.value : "horizontal";
-
-    const scaleModeEl = document.querySelector('input[name="scaleMode"]:checked');
-    const scaleMode = scaleModeEl ? scaleModeEl.value : "fit";
-
-    const bindingSection = document.getElementById("bindingSection");
-    const bindingLongRadio = document.getElementById("bindingLong");
-    const bindingShortRadio = document.getElementById("bindingShort");
-    const bindingEl = document.querySelector('input[name="duplexBinding"]:checked');
-    let duplexBinding = bindingEl ? bindingEl.value : "long_edge";
-
-    let duplexCapable = true;
-    if (colorMode === "color") {
-        duplexCapable = false;
-    } else if (window.discoveredPrinters && window.discoveredPrinters.length > 0) {
-        const cfg = window.agentConfig || {};
-        const targetBw = cfg.bw_printer || (window.discoveredPrinters.find(p => p.is_default) || window.discoveredPrinters[0] || {}).name;
-        const pObj = window.discoveredPrinters.find(p => p.name === targetBw);
-        if (pObj && pObj.duplex_supported === false) {
-            duplexCapable = false;
-        }
+    const fileNameEl = document.getElementById("fileName");
+    if (fileNameEl) {
+        fileNameEl.textContent = manifest.map(f => f.name).join(", ");
     }
 
-    if (!duplexCapable) {
-        if (doubleSideLabel) {
-            doubleSideLabel.style.display = (colorMode === "color") ? "none" : "flex";
-            doubleSideLabel.style.opacity = "0.5";
-            doubleSideLabel.title = "Double-sided printing is not supported by the selected printer";
-        }
-        if (radioDoubleSide) {
-            radioDoubleSide.disabled = true;
-            if (radioDoubleSide.checked) {
-                const singleRadio = document.querySelector('input[name="printSide"][value="single"]');
-                if (singleRadio) singleRadio.checked = true;
-                printSide = "single";
-            }
-        }
-        if (bindingSection) bindingSection.style.display = "none";
-        duplexBinding = "";
-    } else {
-        if (doubleSideLabel) {
-            doubleSideLabel.style.display = "flex";
-            doubleSideLabel.style.opacity = "1";
-            doubleSideLabel.title = "";
-        }
-        if (radioDoubleSide) radioDoubleSide.disabled = false;
-        if (printSide === "double") {
-            if (bindingSection) bindingSection.style.display = "block";
-            if (!duplexBinding) {
-                duplexBinding = "long_edge";
-                if (bindingLongRadio) bindingLongRadio.checked = true;
-            }
-        } else {
-            if (bindingSection) bindingSection.style.display = "none";
-            duplexBinding = "";
-        }
+    const paymentBtnEl = document.getElementById("paymentBtn");
+    if (paymentBtnEl) {
+        paymentBtnEl.disabled = (!allValid || totalSelectedPages <= 0);
     }
+}
 
-    let canonicalDuplex = "single";
-    if (duplexCapable && colorMode !== "color" && printSide === "double") {
-        canonicalDuplex = (duplexBinding === "short_edge") ? "duplex_short" : "duplex_long";
-    }
-
-    if (microXeroxSection) {
-        microXeroxSection.style.display = printMode === "micro_xerox" ? "block" : "none";
-    }
-
+function updatePrintDetailsAndPreview() {
+    const paperSheetPreview = document.getElementById("paperSheetPreview");
     const notebookSpreadPreview = document.getElementById("notebookSpreadPreview");
-    const rightPageEl = document.getElementById("notebookRightPage");
-    if (rightPageEl) rightPageEl.classList.remove("unflipped");
+    const previewLabelBadge = document.getElementById("previewLabelBadge");
+
+    if (!paperSheetPreview && !notebookSpreadPreview) return;
+
+    const manifest = (window.currentFileManifest && window.currentFileManifest.length)
+        ? window.currentFileManifest
+        : getStoredFileManifest();
+    const activeFile = manifest[window.activePreviewFileIndex || 0] || manifest[0];
+    if (!activeFile) return;
+
+    const paperSize = activeFile.paperSize || "a4";
+    const orientation = activeFile.orientation || "portrait";
+    const scaleMode = activeFile.scaleMode || "fit";
+    const colorMode = activeFile.colorMode || "black_white";
+    const printSide = activeFile.printSide || "single";
+    const duplexBinding = activeFile.duplexBinding || "long_edge";
+
+    const colorClass = (colorMode === "color") ? "color-mode" : "bw-mode";
+    const edgeClass = (duplexBinding === "short_edge") ? "short-edge" : "long-edge";
 
     if (paperSheetPreview && notebookSpreadPreview) {
-        const colorClass = (colorMode === "color") ? "color-mode" : "bw-mode";
-        const edgeClass = (duplexBinding === "short_edge") ? "short-edge" : "long-edge";
-
-        if (printMode === "micro_xerox") {
-            notebookSpreadPreview.style.display = "none";
-            paperSheetPreview.style.display = "flex";
-            paperSheetPreview.className = `paper-sheet size-${paperSize} ${orientation} ${scaleMode} ${colorClass}`;
-        } else if (printSide === "double") {
+        if (printSide === "double") {
             paperSheetPreview.style.display = "none";
             notebookSpreadPreview.style.display = "flex";
             notebookSpreadPreview.className = `notebook-spread-container size-${paperSize} ${orientation} ${scaleMode} ${colorClass} ${edgeClass}`;
@@ -1679,15 +1785,10 @@ function updatePrintDetailsAndPreview() {
             paperSheetPreview.style.display = "flex";
             paperSheetPreview.className = `paper-sheet size-${paperSize} ${orientation} ${scaleMode} ${colorClass}`;
         }
-    } else if (paperSheetPreview) {
-        const colorClass = (colorMode === "color") ? "color-mode" : "bw-mode";
-        paperSheetPreview.className = `paper-sheet size-${paperSize} ${orientation} ${scaleMode} ${colorClass}`;
     }
 
     if (previewLabelBadge) {
-        if (printMode === "micro_xerox") {
-            previewLabelBadge.textContent = `Micro Xerox ${pagesPerSheet}-Up`;
-        } else if (printSide === "double") {
+        if (printSide === "double") {
             previewLabelBadge.textContent = (duplexBinding === "short_edge")
                 ? "Double Side • Short Edge (Flip 🗓️)"
                 : "Double Side • Long Edge (Booklet 📖)";
@@ -1697,73 +1798,459 @@ function updatePrintDetailsAndPreview() {
     }
 
     renderRealLivePreviewUI();
-
-    const totalAmount = calculatePrice(effectivePagesCount, copies, colorMode, printSide, printMode, pagesPerSheet);
-    if (totalPriceBox) {
-        totalPriceBox.textContent = "Total: ₹" + totalAmount;
-    }
-
-    localStorage.setItem("copies", String(copies));
-    localStorage.setItem("amount", String(totalAmount));
-    localStorage.setItem("printMode", printMode);
-    localStorage.setItem("colorMode", colorMode);
-    localStorage.setItem("printSide", printSide);
-    localStorage.setItem("duplex", canonicalDuplex);
-    localStorage.setItem("duplexBinding", duplexBinding);
-    localStorage.setItem("binding", duplexBinding);
-    localStorage.setItem("orientation", orientation);
-    localStorage.setItem("paperSize", paperSize);
-    localStorage.setItem("pagesPerSheet", String(pagesPerSheet));
-    localStorage.setItem("pageOrder", pageOrder);
-    localStorage.setItem("scaleMode", scaleMode);
-    localStorage.setItem("pageSelection", pageSelection);
-    localStorage.setItem("customPagesInput", customPagesVal);
-    localStorage.setItem("pageRange", validation.isValid ? validation.canonicalString : "all");
-    localStorage.setItem("selectedPagesCount", String(effectivePagesCount));
 }
 
+function renderPerFileConfigCards() {
+    const container = document.getElementById("fileConfigsContainer");
+    if (!container) return;
+
+    const manifest = getStoredFileManifest();
+    container.innerHTML = "";
+
+    manifest.forEach((file, idx) => {
+        const card = document.createElement("div");
+        card.className = `file-config-card ${idx === window.activePreviewFileIndex ? 'is-active-preview' : ''}`;
+        card.dataset.idx = idx;
+        card.dataset.fileId = file.id;
+        card.draggable = true;
+
+        const isOddDuplex = (file.duplex !== "single" && (file.selectedPagesCount % 2 !== 0));
+        const blankSheetNote = isOddDuplex
+            ? `<span style="font-size:11px; color:#c2410c; font-weight:700; background:#ffedd5; padding:2px 6px; border-radius:4px; border:1px solid #fdba74;">Sheet ${Math.ceil(file.selectedPagesCount / 2)} Back is Blank</span>`
+            : "";
+
+        const sizeStr = file.size ? (file.size > 1048576 ? (file.size / 1048576).toFixed(1) + " MB" : (file.size / 1024).toFixed(0) + " KB") : "";
+
+        card.innerHTML = `
+            <div class="file-card-header">
+                <div class="file-card-lead">
+                    <div class="file-drag-handle" title="Drag to reorder print sequence">⋮⋮</div>
+                    <div class="file-reorder-btns">
+                        <button type="button" class="btn-move-file btn-move-up" data-idx="${idx}" title="Move Up" ${idx === 0 ? 'disabled' : ''}>▲</button>
+                        <button type="button" class="btn-move-file btn-move-down" data-idx="${idx}" title="Move Down" ${idx === manifest.length - 1 ? 'disabled' : ''}>▼</button>
+                    </div>
+                    <span class="file-sequence-tag">#${idx + 1}</span>
+                    <div class="file-info-block">
+                        <span class="file-name-heading" title="${escapeHtml(file.name)}">${escapeHtml(file.name)}</span>
+                        <div class="file-meta-sub">${file.pages} Page${file.pages > 1 ? 's' : ''}${sizeStr ? ' • ' + sizeStr : ''}</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="file-settings-grid">
+                <!-- 1. Pages selection -->
+                <div class="file-setting-item" style="grid-column: 1 / -1;">
+                    <label class="file-input-label">📄 Pages to Print</label>
+                    <div class="pages-radio-grid">
+                        <label><input type="radio" name="pageSel_${idx}" value="all" ${file.pageSelection === 'all' ? 'checked' : ''}> All (${file.pages})</label>
+                        <label><input type="radio" name="pageSel_${idx}" value="odd" ${file.pageSelection === 'odd' ? 'checked' : ''}> Odd Pages</label>
+                        <label><input type="radio" name="pageSel_${idx}" value="even" ${file.pageSelection === 'even' ? 'checked' : ''}> Even Pages</label>
+                        <label><input type="radio" name="pageSel_${idx}" value="custom" ${file.pageSelection === 'custom' ? 'checked' : ''}> Custom Range</label>
+                    </div>
+                    <div class="custom-range-container" style="display: ${file.pageSelection === 'custom' ? 'block' : 'none'}; margin-top: 6px;">
+                        <input type="text" class="setting-input custom-page-range-input" data-idx="${idx}" placeholder="e.g. 1-3, 5" value="${escapeHtml(file.customPagesInput || '')}">
+                        <div class="custom-range-hint" style="font-size: 11px; color: #78350f; margin-top: 2px;">Enter page numbers or ranges (e.g. 1, 3, 5-8)</div>
+                        <div class="custom-range-error" style="color: #dc2626; font-size: 11px; font-weight: 700; display: ${file.validationError ? 'block' : 'none'}; margin-top: 2px;">${escapeHtml(file.validationError || '')}</div>
+                    </div>
+                </div>
+
+                <!-- 2. Print Side (Duplex) -->
+                <div class="file-setting-item">
+                    <label class="file-input-label">📖 Print Side</label>
+                    <select class="setting-select file-side-select" data-idx="${idx}">
+                        <option value="single" ${file.printSide === 'single' ? 'selected' : ''}>Single Side (₹2/pg)</option>
+                        <option value="double_long" ${(file.printSide === 'double' && file.duplexBinding !== 'short_edge') ? 'selected' : ''}>Double Side • Long Edge (Booklet 📖 - ₹1/pg)</option>
+                        <option value="double_short" ${(file.printSide === 'double' && file.duplexBinding === 'short_edge') ? 'selected' : ''}>Double Side • Short Edge (Flip 🗓️ - ₹1/pg)</option>
+                    </select>
+                </div>
+
+                <!-- 3. Copies -->
+                <div class="file-setting-item">
+                    <label class="file-input-label">🔢 Copies</label>
+                    <div class="copies-counter-box">
+                        <button type="button" class="btn-step-copy step-minus" data-idx="${idx}">-</button>
+                        <input type="number" class="setting-input copy-input-num file-copies-input" data-idx="${idx}" min="1" max="99" value="${file.copies || 1}">
+                        <button type="button" class="btn-step-copy step-plus" data-idx="${idx}">+</button>
+                    </div>
+                </div>
+
+                <!-- 4. Color Mode -->
+                <div class="file-setting-item">
+                    <label class="file-input-label">🎨 Color Mode</label>
+                    <select class="setting-select file-color-select" data-idx="${idx}">
+                        <option value="black_white" ${file.colorMode === 'black_white' ? 'selected' : ''}>Black & White (B&W)</option>
+                        <option value="color" ${file.colorMode === 'color' ? 'selected' : ''}>Color Print (₹6/pg)</option>
+                    </select>
+                </div>
+
+                <!-- 5. Orientation -->
+                <div class="file-setting-item">
+                    <label class="file-input-label">🔄 Orientation</label>
+                    <select class="setting-select file-orientation-select" data-idx="${idx}">
+                        <option value="portrait" ${file.orientation === 'portrait' ? 'selected' : ''}>Portrait (Vertical)</option>
+                        <option value="landscape" ${file.orientation === 'landscape' ? 'selected' : ''}>Landscape (Horizontal)</option>
+                    </select>
+                </div>
+
+                <!-- 6. Paper Size -->
+                <div class="file-setting-item">
+                    <label class="file-input-label">📏 Paper Size</label>
+                    <select class="setting-select file-papersize-select" data-idx="${idx}">
+                        <option value="a4" ${file.paperSize === 'a4' ? 'selected' : ''}>A4</option>
+                        <option value="letter" ${file.paperSize === 'letter' ? 'selected' : ''}>Letter</option>
+                        <option value="legal" ${file.paperSize === 'legal' ? 'selected' : ''}>Legal</option>
+                    </select>
+                </div>
+
+                <!-- 7. Fit / Scale -->
+                <div class="file-setting-item">
+                    <label class="file-input-label">📐 Fit / Scale</label>
+                    <select class="setting-select file-scale-select" data-idx="${idx}">
+                        <option value="fit" ${file.scaleMode === 'fit' ? 'selected' : ''}>Fit to Printable Area</option>
+                        <option value="actual" ${file.scaleMode === 'actual' ? 'selected' : ''}>Actual Size (100%)</option>
+                    </select>
+                </div>
+            </div>
+
+            <!-- File Summary Strip -->
+            <div class="file-summary-strip">
+                <div class="sheet-flow-indicator">
+                    <span>📄 Selected: <strong>${file.selectedPagesCount} Page${file.selectedPagesCount > 1 ? 's' : ''}</strong></span>
+                    <span>•</span>
+                    <span>📑 Physical Sheets: <strong class="sheet-badge">${file.calculatedSheets} Sheet${file.calculatedSheets > 1 ? 's' : ''}</strong></span>
+                    ${blankSheetNote}
+                </div>
+                <div class="file-cost-badge-row">
+                    <span style="color:#78350f; font-weight:700; font-size:12px;">File Subtotal:</span>
+                    <span class="file-subtotal-badge">₹${file.calculatedPrice.toFixed(2)}</span>
+                </div>
+            </div>
+        `;
+
+        container.appendChild(card);
+    });
+
+    attachCardEventListeners();
+    updateGlobalOrderSummary(manifest);
+    updatePrintDetailsAndPreview();
+}
+
+function attachCardEventListeners() {
+    const container = document.getElementById("fileConfigsContainer");
+    if (!container) return;
+
+    // Card selection for preview
+    container.querySelectorAll(".file-config-card").forEach(card => {
+        card.addEventListener("click", (e) => {
+            if (e.target.closest("button") || e.target.closest("input") || e.target.closest("select")) return;
+            const idx = parseInt(card.dataset.idx, 10);
+            if (!isNaN(idx) && idx !== window.activePreviewFileIndex) {
+                window.activePreviewFileIndex = idx;
+                container.querySelectorAll(".file-config-card").forEach((c, i) => {
+                    c.classList.toggle("is-active-preview", i === window.activePreviewFileIndex);
+                });
+                updatePrintDetailsAndPreview();
+            }
+        });
+    });
+
+    // Move buttons
+    container.querySelectorAll(".btn-move-up").forEach(btn => {
+        btn.addEventListener("click", (e) => {
+            e.stopPropagation();
+            const idx = parseInt(btn.dataset.idx, 10);
+            if (idx > 0) {
+                const manifest = getStoredFileManifest();
+                const temp = manifest[idx];
+                manifest[idx] = manifest[idx - 1];
+                manifest[idx - 1] = temp;
+                manifest.forEach((f, i) => { f.sequence = i; });
+                window.activePreviewFileIndex = idx - 1;
+                saveFileManifest(manifest);
+                renderPerFileConfigCards();
+            }
+        });
+    });
+
+    container.querySelectorAll(".btn-move-down").forEach(btn => {
+        btn.addEventListener("click", (e) => {
+            e.stopPropagation();
+            const idx = parseInt(btn.dataset.idx, 10);
+            const manifest = getStoredFileManifest();
+            if (idx < manifest.length - 1) {
+                const temp = manifest[idx];
+                manifest[idx] = manifest[idx + 1];
+                manifest[idx + 1] = temp;
+                manifest.forEach((f, i) => { f.sequence = i; });
+                window.activePreviewFileIndex = idx + 1;
+                saveFileManifest(manifest);
+                renderPerFileConfigCards();
+            }
+        });
+    });
+
+    // Drag and Drop
+    let draggedIndex = null;
+    container.querySelectorAll(".file-config-card").forEach(card => {
+        card.addEventListener("dragstart", (e) => {
+            draggedIndex = parseInt(card.dataset.idx, 10);
+            card.classList.add("is-dragging");
+            e.dataTransfer.effectAllowed = "move";
+            e.dataTransfer.setData("text/plain", String(draggedIndex));
+        });
+
+        card.addEventListener("dragend", () => {
+            card.classList.remove("is-dragging");
+            container.querySelectorAll(".file-config-card").forEach(c => {
+                c.classList.remove("drag-over-top", "drag-over-bottom");
+            });
+        });
+
+        card.addEventListener("dragover", (e) => {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = "move";
+            const rect = card.getBoundingClientRect();
+            const midY = rect.top + rect.height / 2;
+            if (e.clientY < midY) {
+                card.classList.add("drag-over-top");
+                card.classList.remove("drag-over-bottom");
+            } else {
+                card.classList.add("drag-over-bottom");
+                card.classList.remove("drag-over-top");
+            }
+        });
+
+        card.addEventListener("dragleave", () => {
+            card.classList.remove("drag-over-top", "drag-over-bottom");
+        });
+
+        card.addEventListener("drop", (e) => {
+            e.preventDefault();
+            const targetIndex = parseInt(card.dataset.idx, 10);
+            card.classList.remove("drag-over-top", "drag-over-bottom");
+            if (draggedIndex === null || isNaN(targetIndex) || draggedIndex === targetIndex) return;
+
+            const manifest = getStoredFileManifest();
+            const [movedItem] = manifest.splice(draggedIndex, 1);
+            manifest.splice(targetIndex, 0, movedItem);
+            manifest.forEach((f, i) => { f.sequence = i; });
+            window.activePreviewFileIndex = targetIndex;
+            saveFileManifest(manifest);
+            renderPerFileConfigCards();
+        });
+    });
+
+    // Page selection radios
+    container.querySelectorAll(".pages-radio-grid input[type='radio']").forEach(radio => {
+        radio.addEventListener("change", () => {
+            const idx = parseInt(radio.name.split("_")[1], 10);
+            const manifest = getStoredFileManifest();
+            if (manifest[idx]) {
+                manifest[idx].pageSelection = radio.value;
+                const card = container.querySelector(`.file-config-card[data-idx="${idx}"]`);
+                const customContainer = card ? card.querySelector(".custom-range-container") : null;
+                if (customContainer) {
+                    customContainer.style.display = (radio.value === "custom") ? "block" : "none";
+                }
+                const updated = computeFileSheetsAndPrice(manifest[idx]);
+                manifest[idx] = updated;
+                saveFileManifest(manifest);
+                updateCardSummaryStrip(card, updated);
+                updateGlobalOrderSummary(manifest);
+                if (idx === window.activePreviewFileIndex) updatePrintDetailsAndPreview();
+            }
+        });
+    });
+
+    // Custom pages range input
+    container.querySelectorAll(".custom-page-range-input").forEach(input => {
+        input.addEventListener("input", () => {
+            const idx = parseInt(input.dataset.idx, 10);
+            const manifest = getStoredFileManifest();
+            if (manifest[idx]) {
+                manifest[idx].customPagesInput = input.value.trim();
+                const updated = computeFileSheetsAndPrice(manifest[idx]);
+                manifest[idx] = updated;
+                const card = container.querySelector(`.file-config-card[data-idx="${idx}"]`);
+                const errEl = card ? card.querySelector(".custom-range-error") : null;
+                if (errEl) {
+                    errEl.textContent = updated.validationError || "";
+                    errEl.style.display = updated.validationError ? "block" : "none";
+                }
+                saveFileManifest(manifest);
+                updateCardSummaryStrip(card, updated);
+                updateGlobalOrderSummary(manifest);
+                if (idx === window.activePreviewFileIndex) updatePrintDetailsAndPreview();
+            }
+        });
+    });
+
+    // Print Side select
+    container.querySelectorAll(".file-side-select").forEach(select => {
+        select.addEventListener("change", () => {
+            const idx = parseInt(select.dataset.idx, 10);
+            const manifest = getStoredFileManifest();
+            if (manifest[idx]) {
+                const val = select.value;
+                if (val === "single") {
+                    manifest[idx].printSide = "single";
+                    manifest[idx].duplex = "single";
+                } else if (val === "double_short") {
+                    manifest[idx].printSide = "double";
+                    manifest[idx].duplexBinding = "short_edge";
+                    manifest[idx].duplex = "duplex_short";
+                } else {
+                    manifest[idx].printSide = "double";
+                    manifest[idx].duplexBinding = "long_edge";
+                    manifest[idx].duplex = "duplex_long";
+                }
+                const updated = computeFileSheetsAndPrice(manifest[idx]);
+                manifest[idx] = updated;
+                saveFileManifest(manifest);
+                const card = container.querySelector(`.file-config-card[data-idx="${idx}"]`);
+                updateCardSummaryStrip(card, updated);
+                updateGlobalOrderSummary(manifest);
+                if (idx === window.activePreviewFileIndex) updatePrintDetailsAndPreview();
+            }
+        });
+    });
+
+    // Copies stepper
+    container.querySelectorAll(".btn-step-copy").forEach(btn => {
+        btn.addEventListener("click", () => {
+            const idx = parseInt(btn.dataset.idx, 10);
+            const card = container.querySelector(`.file-config-card[data-idx="${idx}"]`);
+            const input = card ? card.querySelector(".file-copies-input") : null;
+            if (!input) return;
+            let val = parseInt(input.value || "1", 10);
+            if (btn.classList.contains("step-minus")) {
+                val = Math.max(1, val - 1);
+            } else {
+                val = Math.min(99, val + 1);
+            }
+            input.value = val;
+            const manifest = getStoredFileManifest();
+            if (manifest[idx]) {
+                manifest[idx].copies = val;
+                const updated = computeFileSheetsAndPrice(manifest[idx]);
+                manifest[idx] = updated;
+                saveFileManifest(manifest);
+                updateCardSummaryStrip(card, updated);
+                updateGlobalOrderSummary(manifest);
+            }
+        });
+    });
+
+    container.querySelectorAll(".file-copies-input").forEach(input => {
+        input.addEventListener("input", () => {
+            const idx = parseInt(input.dataset.idx, 10);
+            let val = parseInt(input.value || "1", 10);
+            if (isNaN(val) || val < 1) val = 1;
+            const manifest = getStoredFileManifest();
+            if (manifest[idx]) {
+                manifest[idx].copies = val;
+                const updated = computeFileSheetsAndPrice(manifest[idx]);
+                manifest[idx] = updated;
+                saveFileManifest(manifest);
+                const card = container.querySelector(`.file-config-card[data-idx="${idx}"]`);
+                updateCardSummaryStrip(card, updated);
+                updateGlobalOrderSummary(manifest);
+            }
+        });
+    });
+
+    // Color Mode select
+    container.querySelectorAll(".file-color-select").forEach(select => {
+        select.addEventListener("change", () => {
+            const idx = parseInt(select.dataset.idx, 10);
+            const manifest = getStoredFileManifest();
+            if (manifest[idx]) {
+                manifest[idx].colorMode = select.value;
+                if (select.value === "color") {
+                    manifest[idx].printSide = "single";
+                    manifest[idx].duplex = "single";
+                    const card = container.querySelector(`.file-config-card[data-idx="${idx}"]`);
+                    const sideSel = card ? card.querySelector(".file-side-select") : null;
+                    if (sideSel) sideSel.value = "single";
+                }
+                const updated = computeFileSheetsAndPrice(manifest[idx]);
+                manifest[idx] = updated;
+                saveFileManifest(manifest);
+                const card = container.querySelector(`.file-config-card[data-idx="${idx}"]`);
+                updateCardSummaryStrip(card, updated);
+                updateGlobalOrderSummary(manifest);
+                if (idx === window.activePreviewFileIndex) updatePrintDetailsAndPreview();
+            }
+        });
+    });
+
+    // Orientation select
+    container.querySelectorAll(".file-orientation-select").forEach(select => {
+        select.addEventListener("change", () => {
+            const idx = parseInt(select.dataset.idx, 10);
+            const manifest = getStoredFileManifest();
+            if (manifest[idx]) {
+                manifest[idx].orientation = select.value;
+                saveFileManifest(manifest);
+                if (idx === window.activePreviewFileIndex) updatePrintDetailsAndPreview();
+            }
+        });
+    });
+
+    // Paper Size select
+    container.querySelectorAll(".file-papersize-select").forEach(select => {
+        select.addEventListener("change", () => {
+            const idx = parseInt(select.dataset.idx, 10);
+            const manifest = getStoredFileManifest();
+            if (manifest[idx]) {
+                manifest[idx].paperSize = select.value;
+                saveFileManifest(manifest);
+                if (idx === window.activePreviewFileIndex) updatePrintDetailsAndPreview();
+            }
+        });
+    });
+
+    // Scale / Fit select
+    container.querySelectorAll(".file-scale-select").forEach(select => {
+        select.addEventListener("change", () => {
+            const idx = parseInt(select.dataset.idx, 10);
+            const manifest = getStoredFileManifest();
+            if (manifest[idx]) {
+                manifest[idx].scaleMode = select.value;
+                saveFileManifest(manifest);
+                if (idx === window.activePreviewFileIndex) updatePrintDetailsAndPreview();
+            }
+        });
+    });
+}
+
+// Global page initialization
 const backBtn = document.getElementById("backBtn");
 const paymentBtn = document.getElementById("paymentBtn");
-const copiesBox = document.getElementById("copies");
-const totalPriceBox = document.getElementById("totalPrice");
 const printDetailsFileName = document.getElementById("fileName");
 
-if (printDetailsFileName) {
-    const savedName = localStorage.getItem("fileName");
-    if (savedName) {
-        printDetailsFileName.textContent = savedName;
-    }
-
+if (printDetailsFileName || document.getElementById("fileConfigsContainer")) {
     const prevPageBtn = document.getElementById("prevPageBtn");
     const nextPageBtn = document.getElementById("nextPageBtn");
 
     if (prevPageBtn) {
         prevPageBtn.addEventListener("click", function(e) {
             if (e && e.preventDefault) e.preventDefault();
-            const printModeEl = document.querySelector('input[name="printMode"]:checked');
-            const printMode = printModeEl ? printModeEl.value : "standard";
             const pagesToRender = getEffectivePreviewPages();
             if (!pagesToRender.length) return;
 
-            if (printMode === "micro_xerox") {
-                const pagesPerSheetEl = document.getElementById("pagesPerSheet");
-                const nup = pagesPerSheetEl ? parseInt(pagesPerSheetEl.value, 10) : 2;
-                const currentSheet = Math.floor(livePreviewIndex / nup);
-                if (currentSheet > 0) {
-                    livePreviewIndex = (currentSheet - 1) * nup;
+            const manifest = (window.currentFileManifest && window.currentFileManifest.length) ? window.currentFileManifest : getStoredFileManifest();
+            const activeFile = manifest[window.activePreviewFileIndex || 0] || manifest[0];
+            const isDouble = activeFile && activeFile.printSide === "double";
+
+            if (isDouble) {
+                const currentSpread = Math.floor(livePreviewIndex / 2);
+                if (currentSpread > 0) {
+                    livePreviewIndex = (currentSpread - 1) * 2;
                 }
             } else {
-                const printSideEl = document.querySelector('input[name="printSide"]:checked');
-                const printSide = printSideEl ? printSideEl.value : "single";
-                if (printSide === "double") {
-                    const currentSpread = Math.floor(livePreviewIndex / 2);
-                    if (currentSpread > 0) {
-                        livePreviewIndex = (currentSpread - 1) * 2;
-                    }
-                } else {
-                    if (livePreviewIndex > 0) {
-                        livePreviewIndex--;
-                    }
+                if (livePreviewIndex > 0) {
+                    livePreviewIndex--;
                 }
             }
             renderRealLivePreviewUI();
@@ -1773,32 +2260,22 @@ if (printDetailsFileName) {
     if (nextPageBtn) {
         nextPageBtn.addEventListener("click", function(e) {
             if (e && e.preventDefault) e.preventDefault();
-            const printModeEl = document.querySelector('input[name="printMode"]:checked');
-            const printMode = printModeEl ? printModeEl.value : "standard";
             const pagesToRender = getEffectivePreviewPages();
             if (!pagesToRender.length) return;
 
-            if (printMode === "micro_xerox") {
-                const pagesPerSheetEl = document.getElementById("pagesPerSheet");
-                const nup = pagesPerSheetEl ? parseInt(pagesPerSheetEl.value, 10) : 2;
-                const totalSheets = Math.ceil(pagesToRender.length / nup) || 1;
-                const currentSheet = Math.floor(livePreviewIndex / nup);
-                if (currentSheet < totalSheets - 1) {
-                    livePreviewIndex = (currentSheet + 1) * nup;
+            const manifest = (window.currentFileManifest && window.currentFileManifest.length) ? window.currentFileManifest : getStoredFileManifest();
+            const activeFile = manifest[window.activePreviewFileIndex || 0] || manifest[0];
+            const isDouble = activeFile && activeFile.printSide === "double";
+
+            if (isDouble) {
+                const totalSpreads = Math.ceil(pagesToRender.length / 2) || 1;
+                const currentSpread = Math.floor(livePreviewIndex / 2);
+                if (currentSpread < totalSpreads - 1) {
+                    livePreviewIndex = (currentSpread + 1) * 2;
                 }
             } else {
-                const printSideEl = document.querySelector('input[name="printSide"]:checked');
-                const printSide = printSideEl ? printSideEl.value : "single";
-                if (printSide === "double") {
-                    const totalSpreads = Math.ceil(pagesToRender.length / 2) || 1;
-                    const currentSpread = Math.floor(livePreviewIndex / 2);
-                    if (currentSpread < totalSpreads - 1) {
-                        livePreviewIndex = (currentSpread + 1) * 2;
-                    }
-                } else {
-                    if (livePreviewIndex < pagesToRender.length - 1) {
-                        livePreviewIndex++;
-                    }
+                if (livePreviewIndex < pagesToRender.length - 1) {
+                    livePreviewIndex++;
                 }
             }
             renderRealLivePreviewUI();
@@ -1808,88 +2285,21 @@ if (printDetailsFileName) {
     const notebookRightPage = document.getElementById("notebookRightPage");
     if (notebookRightPage) {
         notebookRightPage.addEventListener("click", function() {
-            const bindingEl = document.querySelector('input[name="duplexBinding"]:checked');
-            const duplexBinding = bindingEl ? bindingEl.value : "long_edge";
-            if (duplexBinding === "short_edge") {
-                notebookRightPage.classList.toggle("unflipped");
-                const flipBadge = document.getElementById("notebookFlipBadge");
-                if (flipBadge) {
-                    flipBadge.textContent = notebookRightPage.classList.contains("unflipped")
-                        ? "👀 Upright"
-                        : "🔄 180° Flip";
-                }
+            notebookRightPage.classList.toggle("unflipped");
+            const flipBadge = document.getElementById("notebookFlipBadge");
+            if (flipBadge) {
+                flipBadge.textContent = notebookRightPage.classList.contains("unflipped")
+                    ? "👀 Upright"
+                    : "🔄 180° Flip";
             }
         });
     }
 
-    prepareRealLivePreviewPages();
-
-    const settingsForm = document.getElementById("printDetailsForm");
-    if (settingsForm) {
-        const savedPageSel = localStorage.getItem("pageSelection");
-        if (savedPageSel) {
-            const selRadio = document.querySelector(`input[name="pageSelection"][value="${savedPageSel}"]`);
-            if (selRadio) selRadio.checked = true;
-        }
-        const savedCustomPages = localStorage.getItem("customPagesInput");
-        const customInputEl = document.getElementById("customPagesInput");
-        if (savedCustomPages && customInputEl) {
-            customInputEl.value = savedCustomPages;
-        }
-        if (customInputEl) {
-            customInputEl.addEventListener("input", updatePrintDetailsAndPreview);
-        }
-
-        const savedScale = localStorage.getItem("scaleMode");
-        if (savedScale) {
-            const scaleVal = (savedScale === "actual") ? "actual" : "fit";
-            const scaleRadio = document.querySelector(`input[name="scaleMode"][value="${scaleVal}"]`);
-            if (scaleRadio) scaleRadio.checked = true;
-        }
-        const savedPaper = localStorage.getItem("paperSize");
-        const paperEl = document.getElementById("paperSize");
-        if (savedPaper && paperEl) paperEl.value = savedPaper;
-
-        const savedOrient = localStorage.getItem("orientation");
-        if (savedOrient) {
-            const orientRadio = document.querySelector(`input[name="orientation"][value="${savedOrient}"]`);
-            if (orientRadio) orientRadio.checked = true;
-        }
-
-        const savedCopies = localStorage.getItem("copies");
-        const copiesEl = document.getElementById("copies");
-        if (savedCopies && copiesEl) copiesEl.value = savedCopies;
-
-        const savedColor = localStorage.getItem("colorMode");
-        if (savedColor) {
-            const colorRadio = document.querySelector(`input[name="colorMode"][value="${savedColor}"]`);
-            if (colorRadio) colorRadio.checked = true;
-        }
-
-        const savedSide = localStorage.getItem("printSide");
-        if (savedSide) {
-            const sideRadio = document.querySelector(`input[name="printSide"][value="${savedSide}"]`);
-            if (sideRadio) sideRadio.checked = true;
-        }
-
-        const savedBinding = localStorage.getItem("duplexBinding") || localStorage.getItem("binding");
-        if (savedBinding) {
-            const bindRadio = document.querySelector(`input[name="duplexBinding"][value="${savedBinding}"]`);
-            if (bindRadio) bindRadio.checked = true;
-        }
-
-        const savedPrintMode = localStorage.getItem("printMode");
-        if (savedPrintMode) {
-            const modeRadio = document.querySelector(`input[name="printMode"][value="${savedPrintMode}"]`);
-            if (modeRadio) modeRadio.checked = true;
-        }
-
-        settingsForm.addEventListener("change", updatePrintDetailsAndPreview);
-        settingsForm.addEventListener("input", updatePrintDetailsAndPreview);
-        window.addEventListener("resize", updatePrintDetailsAndPreview);
-    }
+    prepareRealLivePreviewPages().then(() => {
+        renderPerFileConfigCards();
+    });
     fetchConnectedPrinters();
-    updatePrintDetailsAndPreview();
+    renderPerFileConfigCards();
 }
 
 if (backBtn) {
@@ -1902,8 +2312,9 @@ if (backBtn) {
 if (paymentBtn) {
     paymentBtn.addEventListener("click", function (e) {
         if (e && e.preventDefault) e.preventDefault();
-        updatePrintDetailsAndPreview();
-        // Clear any old completed order state so payment.html initiates a fresh checkout
+        const manifest = getStoredFileManifest();
+        saveFileManifest(manifest);
+        // Clear old checkout state
         localStorage.removeItem("lastOrderId");
         localStorage.removeItem("razorpayOrderId");
         localStorage.removeItem("currentCheckoutPaid");
@@ -1916,63 +2327,91 @@ if (paymentBtn) {
 // PAYMENT PAGE (payment.html) - RAZORPAY INTEGRATION
 // ==========================
 
-const paymentFile = document.getElementById("paymentFile");
-const paymentPages = document.getElementById("paymentPages");
-const paymentCopies = document.getElementById("paymentCopies");
-const paymentColorMode = document.getElementById("paymentColorMode");
+const paymentFileList = document.getElementById("paymentFileList");
+const paymentTotalSheetsBadge = document.getElementById("paymentTotalSheetsBadge");
 const paymentAmount = document.getElementById("paymentAmount");
-const paymentSide = document.getElementById("paymentSide");
-const paymentOrientation = document.getElementById("paymentOrientation");
 const payBtn = document.getElementById("payBtn");
 const paymentBackBtn = document.getElementById("paymentBackBtn");
 
-if (paymentFile && paymentCopies && paymentAmount) {
-    const fileNameVal = localStorage.getItem("fileName") || "No file selected";
-    const copiesVal = localStorage.getItem("copies") || "1";
-    const amountVal = localStorage.getItem("amount") || "2";
-    const colorModeVal = localStorage.getItem("colorMode") || "black_white";
-    const printSideVal = localStorage.getItem("printSide") || "single";
-    const duplexBindingVal = localStorage.getItem("duplexBinding") || localStorage.getItem("binding") || "long_edge";
-    const duplexVal = localStorage.getItem("duplex") || "single";
-    const orientationVal = localStorage.getItem("orientation") || "portrait";
-    const pageRangeVal = localStorage.getItem("pageRange") || "all";
-    const pageSelectionVal = localStorage.getItem("pageSelection") || "all";
-    const selectedCountVal = localStorage.getItem("selectedPagesCount") || localStorage.getItem("pdfPageCount") || "1";
+if (paymentFileList && paymentAmount) {
+    const manifest = getStoredFileManifest();
+    paymentFileList.innerHTML = "";
 
-    paymentFile.textContent = "File: " + fileNameVal;
-    if (paymentPages) {
-        if (pageSelectionVal === "all") {
-            paymentPages.textContent = "Pages: All Pages";
-        } else if (pageSelectionVal === "even") {
-            paymentPages.textContent = `Pages: Even Pages (${selectedCountVal} selected)`;
-        } else if (pageSelectionVal === "odd") {
-            paymentPages.textContent = `Pages: Odd Pages (${selectedCountVal} selected)`;
-        } else {
-            paymentPages.textContent = `Pages: Custom (${pageRangeVal})`;
-        }
-    }
-    paymentCopies.textContent = "Copies: " + copiesVal;
-    paymentAmount.textContent = "Total Amount: ₹" + amountVal;
+    let totalSheetsAll = 0;
+    let totalAmountAll = 0;
 
-    if (paymentColorMode) {
-        paymentColorMode.textContent = "Color Mode: " + (colorModeVal === "color" ? "Color Print 🎨" : "Black & White (B&W)");
-    }
-    if (paymentSide) {
-        if (colorModeVal === "color" || printSideVal === "single" || duplexVal === "single") {
-            paymentSide.textContent = "Print Side: Single Side";
+    manifest.forEach((file, idx) => {
+        totalSheetsAll += file.calculatedSheets;
+        totalAmountAll += file.calculatedPrice;
+
+        const fileCard = document.createElement("div");
+        fileCard.className = "payment-file-item";
+        fileCard.style.cssText = "background: #ffffff; border: 1.5px solid #fed7aa; border-radius: 12px; padding: 12px; margin-bottom: 10px;";
+
+        const isDuplex = (file.duplex !== "single");
+        const sideDesc = isDuplex
+            ? (file.duplexBinding === "short_edge" ? "Double Side • Short Edge (Flip 🗓️)" : "Double Side • Long Edge (Booklet 📖)")
+            : "Single Side (1-sided)";
+        const colorDesc = (file.colorMode === "color") ? "Color 🎨" : "Black & White (B&W)";
+        const orientDesc = (file.orientation === "landscape") ? "Landscape" : "Portrait";
+        const paperDesc = (file.paperSize || "a4").toUpperCase();
+
+        // Sheet breakdown chips
+        let sheetsHtml = "";
+        if (isDuplex) {
+            const numSheets = Math.ceil(file.selectedPagesCount / 2);
+            for (let s = 1; s <= numSheets; s++) {
+                const p1 = file.selectedPages[2 * s - 2];
+                const p2 = file.selectedPages[2 * s - 1];
+                if (p2 !== undefined) {
+                    sheetsHtml += `<span style="background: #ffedd5; color: #7c2d12; font-size: 11px; font-weight: 700; padding: 2px 7px; border-radius: 6px; border: 1px solid #fed7aa;">Sheet ${s}: P.${p1} ↔ P.${p2}</span>`;
+                } else {
+                    sheetsHtml += `<span style="background: #fef2f2; color: #b91c1c; font-size: 11px; font-weight: 700; padding: 2px 7px; border-radius: 6px; border: 1px dashed #fca5a5;">Sheet ${s}: P.${p1} ↔ [BLANK]</span>`;
+                }
+            }
         } else {
-            if (duplexBindingVal === "short_edge" || duplexVal === "duplex_short") {
-                paymentSide.textContent = "Print Side: Double Side (Short Edge - Flip 🗓️)";
-            } else {
-                paymentSide.textContent = "Print Side: Double Side (Long Edge - Booklet 📖)";
+            for (let s = 1; s <= file.selectedPagesCount; s++) {
+                const p1 = file.selectedPages[s - 1];
+                sheetsHtml += `<span style="background: #ffedd5; color: #7c2d12; font-size: 11px; font-weight: 700; padding: 2px 7px; border-radius: 6px; border: 1px solid #fed7aa;">Sheet ${s}: P.${p1}</span>`;
             }
         }
-    }
-    if (paymentOrientation) {
-        paymentOrientation.textContent = "Orientation: " + (orientationVal === "landscape" ? "Landscape" : "Portrait");
+
+        fileCard.innerHTML = `
+            <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px dashed #fed7aa; padding-bottom: 6px; margin-bottom: 8px;">
+                <div style="display: flex; align-items: center; gap: 6px; min-width: 0;">
+                    <span style="background: #fed7aa; color: #7c2d12; font-size: 10px; font-weight: 800; padding: 1px 6px; border-radius: 4px;">#${idx + 1}</span>
+                    <strong style="font-size: 13.5px; color: #1e293b; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 220px;" title="${escapeHtml(file.name)}">${escapeHtml(file.name)}</strong>
+                </div>
+                <strong style="font-size: 14px; color: #ea580c; white-space: nowrap;">₹${file.calculatedPrice.toFixed(2)}</strong>
+            </div>
+            <div style="font-size: 11.5px; color: #475569; display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; font-weight: 600;">
+                <span>📄 Pages: <strong>${file.selectedPagesCount} (${file.pageRange === 'all' ? 'All' : file.pageRange})</strong></span>
+                <span>•</span>
+                <span>📖 ${sideDesc}</span>
+                <span>•</span>
+                <span>🔢 ${file.copies} Cop${file.copies > 1 ? 'ies' : 'y'}</span>
+                <span>•</span>
+                <span>${colorDesc}</span>
+                <span>•</span>
+                <span>${orientDesc} • ${paperDesc}</span>
+            </div>
+            <div style="display: flex; align-items: center; flex-wrap: wrap; gap: 5px; font-size: 11px;">
+                <span style="font-weight: 800; color: #78350f;">Sheet Flow:</span>
+                ${sheetsHtml}
+            </div>
+        `;
+        paymentFileList.appendChild(fileCard);
+    });
+
+    if (paymentTotalSheetsBadge) {
+        paymentTotalSheetsBadge.textContent = `${totalSheetsAll} Physical Sheet${totalSheetsAll > 1 ? 's' : ''}`;
     }
 
-    // Fresh checkout guarantee: Always purge any previous order state so clicking Pay creates a brand new order
+    if (paymentAmount) {
+        paymentAmount.textContent = `₹${totalAmountAll.toFixed(2)}`;
+    }
+
+    // Fresh checkout guarantee
     localStorage.removeItem("newCheckoutPending");
     localStorage.removeItem("lastOrderId");
     localStorage.removeItem("razorpayOrderId");
@@ -2105,55 +2544,23 @@ if (payBtn) {
         const tClick = performance.now();
 
         try {
-            const fileNameVal = localStorage.getItem("fileName") || "document.pdf";
-            const copiesVal = parseInt(localStorage.getItem("copies") || "1", 10);
-            const pageCountVal = parseInt(localStorage.getItem("selectedPagesCount") || localStorage.getItem("pdfPageCount") || "1", 10);
-            const pageRangeVal = localStorage.getItem("pageRange") || "all";
-            const colorModeVal = localStorage.getItem("colorMode") || "black_white";
-            const printSideVal = localStorage.getItem("printSide") || "single";
-            const duplexBindingVal = (colorModeVal === "color" || printSideVal === "single") ? null : (localStorage.getItem("duplexBinding") || localStorage.getItem("binding") || "long_edge");
-            let canonicalDuplex = "single";
-            if (colorModeVal !== "color" && printSideVal === "double") {
-                canonicalDuplex = (duplexBindingVal === "short_edge") ? "duplex_short" : "duplex_long";
-            }
-            const paperSizeVal = localStorage.getItem("paperSize") || "a4";
-            const orientationVal = localStorage.getItem("orientation") || "portrait";
-            const scaleModeVal = localStorage.getItem("scaleMode") || "fit";
-            const marginsVal = localStorage.getItem("margins") || "normal";
-            const printModeVal = localStorage.getItem("printMode") || "standard";
-            const pagesPerSheetVal = (printModeVal === "micro_xerox") ? parseInt(localStorage.getItem("pagesPerSheet") || "1", 10) : 1;
-            const pageOrderVal = localStorage.getItem("pageOrder") || "horizontal";
-            let filesManifest = [];
-            try {
-                const storedDetails = JSON.parse(localStorage.getItem("fileListDetails") || "[]");
-                if (Array.isArray(storedDetails) && storedDetails.length > 0) {
-                    filesManifest = storedDetails
-                        .filter(f => f && (f.path || f.backendPath) && (f.status === "UPLOADED" || !f.status))
-                        .map((f, idx) => ({
-                            name: f.name || `file_${idx + 1}`,
-                            path: f.path || f.backendPath,
-                            pages: parseInt(f.pages || 1, 10),
-                            sequence: typeof f.sequence === "number" ? f.sequence : idx
-                        }));
-                }
-            } catch (parseErr) {
-                console.warn("[PAYMENT] Error parsing fileListDetails:", parseErr);
-            }
+            const manifest = getStoredFileManifest();
+            let totalSelectedPages = 0;
+            let totalAmountVal = 0;
+            manifest.forEach(f => {
+                totalSelectedPages += (f.selectedPagesCount * f.copies);
+                totalAmountVal += f.calculatedPrice;
+            });
 
-            const uploadedPath = localStorage.getItem("backendFilePath") || "";
-            const rawAmount = localStorage.getItem("amount");
-            const amountVal = (rawAmount && !isNaN(parseFloat(rawAmount)))
-                ? parseFloat(rawAmount)
-                : calculatePrice(pageCountVal, copiesVal, colorModeVal, printSideVal, printModeVal, pagesPerSheetVal);
+            const uploadedPath = localStorage.getItem("backendFilePath") || (manifest.length > 0 ? manifest[0].path : "");
+            const effectivePath = (manifest.length > 0 && manifest[0].path) ? manifest[0].path : uploadedPath;
+            const effectiveName = manifest.map(f => f.name).join(", ") || "document.pdf";
 
             const rawMobile = localStorage.getItem("mobileNumber") || localStorage.getItem("customerMobile") || "9876543210";
             const cleanContact = rawMobile.replace(/\D/g, "").slice(-10) || "9876543210";
 
-            const effectivePath = (filesManifest.length > 0 && filesManifest[0].path) ? filesManifest[0].path : uploadedPath;
-            const effectiveName = fileNameVal || (filesManifest.length > 0 ? filesManifest.map(f => f.name).join(", ") : "document.pdf");
-
             // Preflight validation to prevent uncaught runtime errors
-            if (!effectivePath && filesManifest.length === 0) {
+            if (!effectivePath && manifest.length === 0) {
                 isPaymentInFlight = false;
                 payBtn.disabled = false;
                 payBtn.textContent = originalText;
@@ -2161,7 +2568,7 @@ if (payBtn) {
                 return;
             }
 
-            if (isNaN(amountVal) || amountVal <= 0) {
+            if (isNaN(totalAmountVal) || totalAmountVal <= 0) {
                 isPaymentInFlight = false;
                 payBtn.disabled = false;
                 payBtn.textContent = originalText;
@@ -2169,24 +2576,46 @@ if (payBtn) {
                 return;
             }
 
+            const payloadFiles = manifest.map((f, idx) => ({
+                id: f.id,
+                name: f.name,
+                path: f.path,
+                pages: f.pages,
+                sequence: idx,
+                selected_pages_count: f.selectedPagesCount,
+                page_range: f.pageRange,
+                copies: f.copies,
+                color_mode: f.colorMode,
+                duplex: f.duplex,
+                binding: f.duplexBinding,
+                orientation: f.orientation,
+                paper_size: f.paperSize,
+                scale_mode: f.scaleMode,
+                print_mode: f.printMode || "standard",
+                pages_per_sheet: f.pagesPerSheet || 1,
+                calculated_sheets: f.calculatedSheets,
+                calculated_price: f.calculatedPrice
+            }));
+
+            const primaryFile = manifest[0] || {};
             const payload = {
-                amount: amountVal,
-                pages: pageCountVal,
-                page_range: pageRangeVal,
-                copies: copiesVal,
-                color_mode: colorModeVal,
-                duplex: canonicalDuplex,
-                binding: duplexBindingVal,
-                paper_size: paperSizeVal,
-                orientation: orientationVal,
-                scale_mode: scaleModeVal,
-                margins: marginsVal,
-                print_mode: printModeVal,
-                pages_per_sheet: pagesPerSheetVal,
-                page_order: pageOrderVal,
+                amount: totalAmountVal,
+                pages: totalSelectedPages,
+                page_range: "per_file",
+                copies: primaryFile.copies || 1,
+                color_mode: manifest.some(f => f.colorMode === "color") ? "color" : "black_white",
+                duplex: manifest.some(f => f.duplex !== "single") ? "duplex_long" : "single",
+                binding: primaryFile.duplexBinding || "long_edge",
+                paper_size: primaryFile.paperSize || "a4",
+                orientation: primaryFile.orientation || "portrait",
+                scale_mode: primaryFile.scaleMode || "fit",
+                margins: "normal",
+                print_mode: primaryFile.printMode || "standard",
+                pages_per_sheet: primaryFile.pagesPerSheet || 1,
+                page_order: "horizontal",
                 file_name: effectiveName,
                 file_path: effectivePath,
-                files: filesManifest.length > 0 ? filesManifest : undefined,
+                files: payloadFiles,
                 customer_mobile: cleanContact
             };
 

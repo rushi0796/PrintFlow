@@ -602,8 +602,319 @@
         .footer-legal a {
             color: #ea580c;
             text-decoration: none;
+        }
+
+        /* ========================================================
+           PER-FILE PRINT CONFIGURATION CARDS STYLING
+           ======================================================== */
+        .file-configs-container {
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+            margin-top: 12px;
+        }
+
+        .file-config-card {
+            background: #ffffff;
+            border-radius: 16px;
+            border: 2px solid #fed7aa;
+            box-shadow: 0 4px 14px rgba(234, 88, 12, 0.07);
+            padding: 16px;
+            text-align: left;
+            transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+            position: relative;
+        }
+
+        .file-config-card:hover {
+            box-shadow: 0 6px 20px rgba(234, 88, 12, 0.12);
+            border-color: #f97316;
+        }
+
+        .file-config-card.is-active-preview {
+            border-color: #ea580c;
+            box-shadow: 0 0 0 3px rgba(234, 88, 12, 0.2);
+        }
+
+        .file-config-card.is-dragging {
+            opacity: 0.45;
+            border: 2px dashed #ea580c;
+            transform: scale(0.98);
+        }
+
+        .file-config-card.drag-over-top {
+            border-top: 3.5px solid #ea580c !important;
+        }
+
+        .file-config-card.drag-over-bottom {
+            border-bottom: 3.5px solid #ea580c !important;
+        }
+
+        .file-card-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            padding-bottom: 12px;
+            border-bottom: 1.5px solid #fef3c7;
+        }
+
+        .file-card-lead {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            min-width: 0;
+            flex: 1;
+        }
+
+        .file-drag-handle {
+            cursor: grab;
+            font-size: 18px;
+            color: #94a3b8;
+            padding: 4px 6px;
+            border-radius: 6px;
+            user-select: none;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+        }
+
+        .file-drag-handle:active {
+            cursor: grabbing;
+            color: #ea580c;
+            background: #ffedd5;
+        }
+
+        .file-reorder-btns {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+
+        .btn-move-file {
+            background: #f1f5f9;
+            border: 1px solid #cbd5e1;
+            color: #475569;
+            font-size: 9px;
+            line-height: 1;
+            padding: 3px 5px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: 800;
+        }
+
+        .btn-move-file:hover:not(:disabled) {
+            background: #ea580c;
+            color: #ffffff;
+            border-color: #ea580c;
+        }
+
+        .btn-move-file:disabled {
+            opacity: 0.3;
+            cursor: not-allowed;
+        }
+
+        .file-sequence-tag {
+            background: #fff7ed;
+            color: #c2410c;
+            border: 1.5px solid #fdba74;
+            font-weight: 800;
+            font-size: 11px;
+            padding: 2px 7px;
+            border-radius: 6px;
+            white-space: nowrap;
+        }
+
+        .file-info-block {
+            min-width: 0;
+            flex: 1;
+        }
+
+        .file-name-heading {
+            font-size: 14px;
+            font-weight: 800;
+            color: #1e293b;
+            margin: 0;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            display: block;
+        }
+
+        .file-meta-sub {
+            font-size: 11.5px;
+            color: #64748b;
+            margin-top: 2px;
             font-weight: 600;
-            margin: 0 6px;
+        }
+
+        .file-card-actions {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .btn-card-action {
+            background: #fff7ed;
+            border: 1.5px solid #fed7aa;
+            color: #ea580c;
+            padding: 5px 10px;
+            border-radius: 8px;
+            font-size: 11.5px;
+            font-weight: 700;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            transition: all 0.15s ease;
+            white-space: nowrap;
+        }
+
+        .btn-card-action:hover {
+            background: #ea580c;
+            color: #ffffff;
+            border-color: #ea580c;
+        }
+
+        .file-summary-strip {
+            background: #fffbf5;
+            border: 1.5px solid #fed7aa;
+            border-radius: 10px;
+            padding: 9px 12px;
+            margin: 12px 0;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            font-size: 12px;
+        }
+
+        .sheet-flow-indicator {
+            display: flex;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 6px;
+            font-weight: 700;
+            color: #78350f;
+            font-size: 12px;
+        }
+
+        .sheet-badge {
+            background: #fed7aa;
+            color: #7c2d12;
+            padding: 2px 7px;
+            border-radius: 5px;
+            font-size: 11px;
+            font-weight: 800;
+            display: inline-flex;
+            align-items: center;
+            gap: 3px;
+        }
+
+        .file-cost-badge-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-top: 1px dashed #fed7aa;
+            padding-top: 6px;
+            margin-top: 2px;
+        }
+
+        .file-subtotal-badge {
+            font-weight: 900;
+            color: #ea580c;
+            font-size: 13.5px;
+        }
+
+        .file-settings-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+            gap: 12px;
+            margin-top: 10px;
+        }
+
+        .file-input-label {
+            font-size: 11.5px;
+            font-weight: 700;
+            color: #7c2d12;
+            margin-bottom: 4px;
+            display: block;
+        }
+
+        .copies-counter-box {
+            display: flex;
+            align-items: center;
+            width: 100%;
+        }
+
+        .btn-step-copy {
+            background: #f1f5f9;
+            border: 1.5px solid #cbd5e1;
+            color: #334155;
+            font-weight: 800;
+            font-size: 14px;
+            width: 34px;
+            height: 38px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            user-select: none;
+        }
+
+        .btn-step-copy.step-minus {
+            border-radius: 10px 0 0 10px;
+            border-right: none;
+        }
+
+        .btn-step-copy.step-plus {
+            border-radius: 0 10px 10px 0;
+            border-left: none;
+        }
+
+        .btn-step-copy:hover {
+            background: #e2e8f0;
+        }
+
+        .copy-input-num {
+            border-radius: 0 !important;
+            text-align: center;
+            font-weight: 800;
+            height: 38px;
+            padding: 4px 6px !important;
+        }
+
+        .order-summary-card {
+            background: #ffffff;
+            border: 2px solid #fed7aa;
+            border-radius: 16px;
+            padding: 16px 18px;
+            margin-top: 20px;
+            box-shadow: 0 4px 14px rgba(234, 88, 12, 0.08);
+            text-align: left;
+        }
+
+        .order-summary-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 6px 0;
+            font-size: 13.5px;
+            color: #7c2d12;
+            font-weight: 600;
+            border-bottom: 1px dashed #fed7aa;
+        }
+
+        .order-summary-row strong {
+            color: #1e293b;
+        }
+
+        .order-summary-row.total-pay-row {
+            border-bottom: none;
+            padding-top: 12px;
+            margin-top: 4px;
+            font-size: 16px;
+            font-weight: 800;
         }
     </style>
 </head>
@@ -686,174 +997,44 @@
         </div>
     </div>
 
-    <form id="printDetailsForm">
-        <div class="settings-grid">
+    <div class="per-file-section-header" style="margin: 18px 0 10px; display: flex; justify-content: space-between; align-items: center;">
+        <h3 style="font-size: 15px; font-weight: 800; color: #7c2d12; margin: 0; display: flex; align-items: center; gap: 6px;">
+            <span>📑 Document Print Settings</span>
+        </h3>
+        <span id="fileCountBadge" style="background: #ffedd5; color: #ea580c; font-weight: 800; font-size: 12px; padding: 3px 10px; border-radius: 999px; border: 1.5px solid #fed7aa;">
+            1 Document
+        </span>
+    </div>
+    <p style="font-size: 12px; color: #78350f; margin: 4px 0 14px; font-weight: 600; text-align: left;">
+        Each uploaded file has its own independent settings. Drag <strong>⋮⋮</strong> or use <strong>▲ / ▼</strong> to reorder print sequence.
+    </p>
 
-            <!-- Print Mode -->
-            <div class="settings-section">
-                <h3>Print Mode</h3>
-                <div class="radio-option">
-                    <label>
-                        <input type="radio" name="printMode" value="standard" checked>
-                        Standard Print
-                    </label>
-                    <label>
-                        <input type="radio" name="printMode" value="micro_xerox">
-                        Micro Xerox 🔍
-                    </label>
-                </div>
-            </div>
+    <!-- DYNAMIC PER-FILE CONFIGURATION CARDS CONTAINER -->
+    <div id="fileConfigsContainer" class="file-configs-container">
+        <!-- Rendered dynamically by script.js for each file -->
+    </div>
 
-            <!-- Copies -->
-            <div class="settings-section">
-                <h3>No. of Copies</h3>
-                <input type="number" id="copies" class="setting-input" value="1" min="1" max="100">
-            </div>
-
-            <!-- Pages Selection -->
-            <div class="settings-section" id="pagesSection">
-                <h3>Pages</h3>
-                <div class="pages-radio-grid">
-                    <label>
-                        <input type="radio" name="pageSelection" value="all" checked>
-                        All Pages
-                    </label>
-                    <label>
-                        <input type="radio" name="pageSelection" value="custom">
-                        Custom Pages
-                    </label>
-                    <label>
-                        <input type="radio" name="pageSelection" value="even">
-                        Even Pages
-                    </label>
-                    <label>
-                        <input type="radio" name="pageSelection" value="odd">
-                        Odd Pages
-                    </label>
-                </div>
-                <div id="customPagesContainer" style="display: none; margin-top: 8px;">
-                    <label style="display: block; font-size: 12.5px; font-weight: 700; color: #7c2d12; margin-bottom: 4px;">Custom Pages:</label>
-                    <input type="text" id="customPagesInput" class="setting-input" placeholder="e.g. 1,3,5-8,12" style="font-size: 13px; padding: 9px 12px; width: 100%; box-sizing: border-box; border-radius: 8px; border: 1.5px solid #fed7aa; outline: none; background: #ffffff;">
-                    <div id="customPagesError" style="color: #ef4444; font-size: 11px; margin-top: 5px; font-weight: 700; display: none;"></div>
-                </div>
-            </div>
-
-            <!-- Color Mode -->
-            <div class="settings-section">
-                <h3>Color Mode</h3>
-                <div class="radio-option">
-                    <label>
-                        <input type="radio" name="colorMode" value="black_white" checked>
-                        Black & White (B&W)
-                    </label>
-                    <label>
-                        <input type="radio" name="colorMode" value="color">
-                        Color Print 🎨
-                    </label>
-                </div>
-            </div>
-
-            <!-- Print Side (Duplex) -->
-            <div class="settings-section" id="duplexSection">
-                <h3>Print Side</h3>
-                <div class="radio-option">
-                    <label>
-                        <input type="radio" name="printSide" value="single" checked>
-                        Single Side
-                    </label>
-                    <label id="doubleSideLabel">
-                        <input type="radio" name="printSide" id="radioDoubleSide" value="double">
-                        Double Side
-                    </label>
-                </div>
-            </div>
-
-            <!-- Binding / Flip Edge (for Double Side) -->
-            <div class="settings-section" id="bindingSection" style="display: none;">
-                <h3>Binding / Flip Edge</h3>
-                <div class="radio-option">
-                    <label id="bindingLongLabel">
-                        <input type="radio" name="duplexBinding" id="bindingLong" value="long_edge" checked>
-                        Long Edge (Booklet / Standard)
-                    </label>
-                    <label id="bindingShortLabel">
-                        <input type="radio" name="duplexBinding" id="bindingShort" value="short_edge">
-                        Short Edge (Flip / Calendar)
-                    </label>
-                </div>
-            </div>
-
-            <!-- Paper Size -->
-            <div class="settings-section">
-                <h3>Paper Size</h3>
-                <select id="paperSize" class="setting-select">
-                    <option value="a4" selected>A4 (210 x 297 mm)</option>
-                    <option value="letter">Letter (8.5 x 11 in)</option>
-                    <option value="legal">Legal (8.5 x 14 in)</option>
-                </select>
-            </div>
-
-            <!-- Page Orientation -->
-            <div class="settings-section">
-                <h3>Page Orientation</h3>
-                <div class="radio-option">
-                    <label>
-                        <input type="radio" name="orientation" value="portrait" checked>
-                        Portrait
-                    </label>
-                    <label>
-                        <input type="radio" name="orientation" value="landscape">
-                        Landscape
-                    </label>
-                </div>
-            </div>
-
-            <!-- Page Mode -->
-            <div class="settings-section">
-                <h3>Page Mode</h3>
-                <div class="radio-option">
-                    <label>
-                        <input type="radio" name="scaleMode" value="fit" checked>
-                        FULL PAGE
-                    </label>
-                    <label>
-                        <input type="radio" name="scaleMode" value="actual">
-                        ACTUAL SIZE
-                    </label>
-                </div>
-            </div>
-
-            <!-- Micro Xerox Specific Options -->
-            <div class="settings-section" id="microXeroxSection" style="display: none; background: #fff7ed; border-color: #fdba74;">
-                <h3 style="color: #c2410c;">🔍 Micro Xerox Options</h3>
-                <label style="display: block; font-size: 13px; font-weight: 700; margin-bottom: 4px; color: #7c2d12;">Pages Per Sheet (N-Up):</label>
-                <select id="pagesPerSheet" class="setting-select" style="margin-bottom: 10px;">
-                    <option value="2" selected>2 Pages / Sheet (2-Up)</option>
-                    <option value="4">4 Pages / Sheet (4-Up)</option>
-                    <option value="6">6 Pages / Sheet (6-Up)</option>
-                    <option value="9">9 Pages / Sheet (9-Up)</option>
-                    <option value="16">16 Pages / Sheet (16-Up)</option>
-                </select>
-
-                <label style="display: block; font-size: 13px; font-weight: 700; margin-bottom: 4px; color: #7c2d12;">Page Order:</label>
-                <div class="radio-option">
-                    <label>
-                        <input type="radio" name="pageOrder" value="horizontal" checked>
-                        Horizontal
-                    </label>
-                    <label>
-                        <input type="radio" name="pageOrder" value="vertical">
-                        Vertical
-                    </label>
-                </div>
-            </div>
-
+    <!-- GLOBAL ORDER SUMMARY CARD -->
+    <div class="order-summary-card" id="orderSummaryCard">
+        <div class="order-summary-row">
+            <span>Total Uploaded Documents:</span>
+            <strong id="summaryTotalFiles">1</strong>
         </div>
-    </form>
-
-    <h2 id="totalPrice" style="margin-top: 20px; color: #ea580c;">
-        Total: ₹2
-    </h2>
+        <div class="order-summary-row">
+            <span>Total Pages to Print:</span>
+            <strong id="summaryTotalPages">1</strong>
+        </div>
+        <div class="order-summary-row">
+            <span>Total Physical Paper Sheets:</span>
+            <strong id="summaryTotalSheets">1 Sheet</strong>
+        </div>
+        <div class="order-summary-row total-pay-row">
+            <span>Total Payable:</span>
+            <h2 id="totalPrice" style="margin: 0; color: #ea580c; font-size: 24px; font-weight: 900;">
+                ₹2.00
+            </h2>
+        </div>
+    </div>
 
     <div class="button-row" style="margin-top: 18px;">
         <button type="button" id="backBtn" class="secondary-btn">← Back</button>
@@ -878,7 +1059,7 @@
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
-<script src="script.js?v=20260908-fix-payment-v3"></script>
+<script src="script.js?v=20260908-per-file-v1"></script>
 
 </body>
 </html>

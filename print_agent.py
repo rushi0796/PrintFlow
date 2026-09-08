@@ -879,15 +879,25 @@ def compose_manifest_to_pdf(
                     except Exception:
                         pass
 
+        f_orientation = item.get("orientation") or orientation
+        f_paper_size = item.get("paper_size") or paper_size
+        f_scale_mode = item.get("scale_mode") or scale_mode
+        f_page_range = item.get("page_range") or (page_range if len(files_list) == 1 else "all")
+        f_duplex = item.get("duplex") or duplex
+        is_item_duplex = (not is_color) and (f_duplex in (
+            "duplex_long", "duplex_short", "duplexlong", "duplexshort",
+            "long_edge", "short_edge", "double", "duplex", "vertical", "horizontal"
+        ))
+
         # Convert Image to PDF
         if ext in (".jpg", ".jpeg", ".png", ".webp", ".bmp"):
             img_pdf = order_work_dir / f"{clean_item_stem}_img.pdf"
             convert_image_to_pdf_page(
                 local_file,
                 img_pdf,
-                orientation=orientation,
-                paper_size=paper_size,
-                scale_mode=scale_mode,
+                orientation=f_orientation,
+                paper_size=f_paper_size,
+                scale_mode=f_scale_mode,
                 printer_name=target_printer
             )
             local_file = img_pdf
@@ -899,28 +909,45 @@ def compose_manifest_to_pdf(
             convert_text_to_pdf(
                 local_file,
                 txt_pdf,
-                orientation=orientation,
-                paper_size=paper_size
+                orientation=f_orientation,
+                paper_size=f_paper_size
             )
             local_file = txt_pdf
             ext = ".pdf"
 
         if ext == ".pdf":
-            if len(files_list) == 1 and page_range and str(page_range).strip().lower() != "all":
-                local_file = extract_pdf_page_subset(local_file, page_range)
+            if f_page_range and str(f_page_range).strip().lower() != "all":
+                local_file = extract_pdf_page_subset(local_file, f_page_range)
 
             optimized_pdf = optimize_pdf_for_full_page(
                 local_file,
-                paper_size=paper_size,
-                orientation=orientation,
-                scale_mode=scale_mode,
+                paper_size=f_paper_size,
+                orientation=f_orientation,
+                scale_mode=f_scale_mode,
                 printer_name=target_printer
             )
 
             r = pypdf.PdfReader(str(optimized_pdf))
-            print(f"[COMPOSITOR] Adding {len(r.pages)} page(s) from '{f_name}'")
-            for p in r.pages:
+            item_pages = list(r.pages)
+            print(f"[COMPOSITOR] Adding {len(item_pages)} page(s) from '{f_name}'")
+            for p in item_pages:
                 normalized_pdf_pages.append(p)
+
+            # Duplex boundary: if this item is duplex and has an odd number of pages,
+            # and there are subsequent files in this merged stream, append a blank page
+            # so the next file starts on a fresh physical sheet!
+            if is_item_duplex and (len(item_pages) % 2 != 0) and (f_idx < len(files_list) - 1):
+                last_p = item_pages[-1]
+                last_w = float(last_p.mediabox.width)
+                last_h = float(last_p.mediabox.height)
+                boundary_writer = pypdf.PdfWriter()
+                boundary_writer.add_blank_page(width=last_w, height=last_h)
+                boundary_pdf_path = order_work_dir / f"{clean_item_stem}_boundary_blank.pdf"
+                with open(boundary_pdf_path, "wb") as bf:
+                    boundary_writer.write(bf)
+                boundary_reader = pypdf.PdfReader(str(boundary_pdf_path))
+                normalized_pdf_pages.append(boundary_reader.pages[0])
+                print(f"[COMPOSITOR DUPLEX BOUNDARY] Added blank backside page after '{f_name}' ({len(item_pages)} pages) so next file starts on a fresh sheet.")
         else:
             print(f"[COMPOSITOR WARNING] Unsupported file format '{ext}' for file '{f_name}'")
 
@@ -1583,43 +1610,113 @@ def run_agent():
                     # Update status to PRINTING
                     update_order_agent_status(backend_url, agent_token, order_id, "PRINTING", printed_by_printer=target_printer)
 
-                    # Compose manifest into unified print-ready PDF
-                    composed_pdf = compose_manifest_to_pdf(claimed_order, backend_url, agent_token, target_printer)
-                    print(f"[AGENT COMPOSE] Final print-ready document: {composed_pdf.name}")
+                    # Check if multi-file order has heterogeneous duplex, copies, or color settings:
+                    raw_files = claimed_order.get("files") or []
+                    is_heterogeneous = False
+                    if len(raw_files) > 1:
+                        f0 = raw_files[0]
+                        f0_duplex = f0.get("duplex") or duplex
+                        f0_copies = int(f0.get("copies") or copies)
+                        f0_color = f0.get("color_mode") or color_mode
+                        for f_it in raw_files[1:]:
+                            it_duplex = f_it.get("duplex") or duplex
+                            it_copies = int(f_it.get("copies") or copies)
+                            it_color = f_it.get("color_mode") or color_mode
+                            if it_duplex != f0_duplex or it_copies != f0_copies or it_color != f0_color:
+                                is_heterogeneous = True
+                                break
 
-                    # Print silently with spooler capture
-                    spooler_job_id = print_document_silently(
-                        composed_pdf,
-                        target_printer,
-                        copies=copies,
-                        orientation=orientation,
-                        color_mode=color_mode,
-                        duplex=duplex,
-                        paper_size=paper_size,
-                        scale_mode=scale_mode,
-                        pages_per_sheet=pages_per_sheet,
-                        page_order=page_order,
-                        page_range=page_range,
-                        print_mode=print_mode,
-                        already_composed=True
-                    )
+                    if is_heterogeneous:
+                        print(f"[AGENT SEGMENTATION] Order {order_id} has {len(raw_files)} heterogeneous files. Dispatching sequential spooler segments...")
+                        for s_idx, f_seg in enumerate(raw_files):
+                            s_copies = int(f_seg.get("copies") or 1)
+                            s_duplex = f_seg.get("duplex") or duplex
+                            s_color = f_seg.get("color_mode") or color_mode
+                            s_orient = f_seg.get("orientation") or orientation
+                            s_paper = f_seg.get("paper_size") or paper_size
+                            s_scale = f_seg.get("scale_mode") or scale_mode
+                            s_range = f_seg.get("page_range") or "all"
 
-                    if spooler_job_id > 0:
-                        update_order_agent_status(
-                            backend_url, agent_token, order_id,
-                            "SUBMITTED_TO_SPOOLER",
-                            spooler_job_id=spooler_job_id,
-                            printed_by_printer=target_printer
-                        )
-                        monitor_spooler_job(backend_url, agent_token, order_id, target_printer, spooler_job_id)
-                    else:
+                            seg_claim = dict(claimed_order)
+                            seg_claim["files"] = [f_seg]
+                            seg_claim["file_name"] = f_seg.get("name", file_name)
+                            seg_claim["file_path"] = f_seg.get("path", "")
+                            seg_claim["copies"] = s_copies
+                            seg_claim["duplex"] = s_duplex
+                            seg_claim["color_mode"] = s_color
+                            seg_claim["orientation"] = s_orient
+                            seg_claim["paper_size"] = s_paper
+                            seg_claim["scale_mode"] = s_scale
+                            seg_claim["page_range"] = s_range
+
+                            print(f"[AGENT SEGMENT {s_idx+1}/{len(raw_files)}] Processing '{f_seg.get('name')}' (copies={s_copies}, duplex={s_duplex}, orient={s_orient})...")
+                            seg_pdf = compose_manifest_to_pdf(seg_claim, backend_url, agent_token, target_printer)
+                            seg_job_id = print_document_silently(
+                                seg_pdf,
+                                target_printer,
+                                copies=s_copies,
+                                orientation=s_orient,
+                                color_mode=s_color,
+                                duplex=s_duplex,
+                                paper_size=s_paper,
+                                scale_mode=s_scale,
+                                pages_per_sheet=1,
+                                page_order="horizontal",
+                                page_range=s_range,
+                                print_mode="standard",
+                                already_composed=True
+                            )
+                            if seg_job_id > 0:
+                                print(f"[AGENT SEGMENT {s_idx+1}] Spooled as Job #{seg_job_id}. Monitoring...")
+                                monitor_spooler_job(backend_url, agent_token, order_id, target_printer, seg_job_id)
+                            else:
+                                time.sleep(1)
+
                         update_order_agent_status(
                             backend_url, agent_token, order_id,
                             "COMPLETED",
                             spooler_job_id=0,
                             printed_by_printer=target_printer
                         )
-                        print(f"[PRINT COMPLETED] {order_id}")
+                        print(f"[PRINT COMPLETED] {order_id} (all {len(raw_files)} segments)")
+                    else:
+                        # Homogenous order or single file
+                        composed_pdf = compose_manifest_to_pdf(claimed_order, backend_url, agent_token, target_printer)
+                        print(f"[AGENT COMPOSE] Final print-ready document: {composed_pdf.name}")
+
+                        # Print silently with spooler capture
+                        spooler_job_id = print_document_silently(
+                            composed_pdf,
+                            target_printer,
+                            copies=copies,
+                            orientation=orientation,
+                            color_mode=color_mode,
+                            duplex=duplex,
+                            paper_size=paper_size,
+                            scale_mode=scale_mode,
+                            pages_per_sheet=pages_per_sheet,
+                            page_order=page_order,
+                            page_range=page_range,
+                            print_mode=print_mode,
+                            already_composed=True
+                        )
+
+                        if spooler_job_id > 0:
+                            update_order_agent_status(
+                                backend_url, agent_token, order_id,
+                                "SUBMITTED_TO_SPOOLER",
+                                spooler_job_id=spooler_job_id,
+                                printed_by_printer=target_printer
+                            )
+                            monitor_spooler_job(backend_url, agent_token, order_id, target_printer, spooler_job_id)
+                        else:
+                            update_order_agent_status(
+                                backend_url, agent_token, order_id,
+                                "COMPLETED",
+                                spooler_job_id=0,
+                                printed_by_printer=target_printer
+                            )
+                            print(f"[PRINT COMPLETED] {order_id}")
 
                     # Privacy cleanup
                     try:

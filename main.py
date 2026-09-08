@@ -590,26 +590,42 @@ def create_razorpay_order_endpoint(request: RazorpayOrderRequest):
 
     files_manifest = request.files or []
     if files_manifest:
-        manifest_pages = sum(int(f.get("pages", 1) or 1) for f in files_manifest)
-        if not request.pages or request.pages <= 0:
-            request.pages = max(1, manifest_pages)
+        expected_rupees = 0.0
+        total_selected_pages = 0
+        total_copies = 0
+        for f in files_manifest:
+            f_pages = int(f.get("selected_pages_count") or f.get("pages") or 1)
+            f_copies = int(f.get("copies") or 1)
+            f_color = f.get("color_mode", "black_white")
+            f_duplex = f.get("duplex", "single")
+            f_print_mode = f.get("print_mode", "standard")
+            f_nup = int(f.get("pages_per_sheet") or 1)
+            f_price = calculate_order_amount(f_pages, f_copies, f_color, f_duplex, f_print_mode, f_nup)
+            expected_rupees += f_price
+            total_selected_pages += f_pages * f_copies
+            total_copies += f_copies
+
+        request.pages = max(1, total_selected_pages)
         if not request.file_name or request.file_name == "document.pdf":
             request.file_name = ", ".join(f.get("name", "document") for f in files_manifest)
         if not request.file_path and files_manifest:
             request.file_path = files_manifest[0].get("path", "")
+    else:
+        if request.pages and request.copies and request.pages > 0 and request.copies > 0:
+            expected_rupees = calculate_order_amount(
+                request.pages, request.copies, request.color_mode, request.duplex, request.print_mode, request.pages_per_sheet
+            )
+        else:
+            expected_rupees = 2.0
 
     if request.amount >= 100:
         amount_in_paise = int(round(request.amount))
     else:
         amount_in_paise = int(round(request.amount * 100))
 
-    if request.pages and request.copies and request.pages > 0 and request.copies > 0:
-        expected_rupees = calculate_order_amount(
-            request.pages, request.copies, request.color_mode, request.duplex, request.print_mode, request.pages_per_sheet
-        )
-        expected_paise = int(round(expected_rupees * 100))
-        if amount_in_paise < expected_paise:
-            amount_in_paise = expected_paise
+    expected_paise = int(round(expected_rupees * 100))
+    if amount_in_paise < expected_paise:
+        amount_in_paise = expected_paise
 
     receipt_id = f"rcpt_{uuid4().hex[:12]}"
     try:
