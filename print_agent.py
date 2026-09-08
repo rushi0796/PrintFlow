@@ -536,47 +536,52 @@ def optimize_pdf_for_full_page(
         if num_pages == 0:
             raise RuntimeError(f"FULL_PAGE_EMPTY_INPUT: Input PDF '{input_pdf_path.name}' has 0 pages")
 
-        caps = get_printer_hardware_caps(printer_name, orientation, paper_size)
-        sheet_w = caps["paper_w_pt"]
-        sheet_h = caps["paper_h_pt"]
-        printable_w = caps["printable_w_pt"]
-        printable_h = caps["printable_h_pt"]
-        left_margin_pt = caps["left_margin_pt"]
-        bottom_margin_pt = caps["bottom_margin_pt"]
-        is_landscape = (str(orientation).lower() == "landscape")
-
+        target_orient = str(orientation).strip().lower()
         writer = pypdf.PdfWriter()
 
         for page in reader.pages:
             orig_w = float(page.mediabox.width)
             orig_h = float(page.mediabox.height)
 
-            # ROTATE CONTENT TO MATCH TARGET ORIENTATION
-            if is_landscape and orig_w < orig_h:
-                # Portrait page -> rotate 90 degrees into landscape
-                page.rotate(90)
-                page.transfer_rotation_to_content()
-            elif not is_landscape and orig_w > orig_h:
-                # Landscape page -> rotate 90 degrees into portrait
-                page.rotate(90)
-                page.transfer_rotation_to_content()
+            if target_orient == "landscape":
+                page_is_landscape = True
+                if orig_w < orig_h:
+                    page.rotate(90)
+                    page.transfer_rotation_to_content()
+                    orig_w, orig_h = orig_h, orig_w
+            elif target_orient == "portrait":
+                page_is_landscape = False
+                if orig_w > orig_h:
+                    page.rotate(90)
+                    page.transfer_rotation_to_content()
+                    orig_w, orig_h = orig_h, orig_w
+            else:
+                page_is_landscape = (orig_w >= orig_h)
+
+            page_caps = get_printer_hardware_caps(printer_name, "landscape" if page_is_landscape else "portrait", paper_size)
+            p_sheet_w = page_caps["paper_w_pt"]
+            p_sheet_h = page_caps["paper_h_pt"]
+            p_printable_w = page_caps["printable_w_pt"]
+            p_printable_h = page_caps["printable_h_pt"]
+            p_left_m = page_caps["left_margin_pt"]
+            p_bottom_m = page_caps["bottom_margin_pt"]
+
             llx = float(page.mediabox.lower_left[0])
             lly = float(page.mediabox.lower_left[1])
 
-            # Proportionally scale to fill 100% of the REAL printable rectangle
             if orig_w <= 0 or orig_h <= 0:
                 scale = 1.0
             elif scale_mode in ("actual", "actual_size"):
-                scale = min(1.0, printable_w / orig_w, printable_h / orig_h)
+                scale = min(1.0, p_printable_w / orig_w, p_printable_h / orig_h)
             else:
-                scale = min(printable_w / orig_w, printable_h / orig_h)
+                scale = min(p_printable_w / orig_w, p_printable_h / orig_h)
 
             scaled_w = orig_w * scale
             scaled_h = orig_h * scale
-            offset_x = left_margin_pt + (printable_w - scaled_w) / 2.0
-            offset_y = bottom_margin_pt + (printable_h - scaled_h) / 2.0
+            offset_x = p_left_m + (p_printable_w - scaled_w) / 2.0
+            offset_y = p_bottom_m + (p_printable_h - scaled_h) / 2.0
 
-            new_page = writer.add_blank_page(width=sheet_w, height=sheet_h)
+            new_page = writer.add_blank_page(width=p_sheet_w, height=p_sheet_h)
             op = Transformation().translate(-llx, -lly).scale(scale, scale).translate(offset_x, offset_y)
             new_page.merge_transformed_page(page, op)
 
@@ -804,7 +809,7 @@ def compose_manifest_to_pdf(
     files_list = claimed_order.get("files") or []
     default_path = claimed_order.get("file_path", "")
     default_name = claimed_order.get("file_name", "document.pdf")
-    orientation = claimed_order.get("orientation", "portrait")
+    orientation = claimed_order.get("orientation") or "mixed"
     paper_size = claimed_order.get("paper_size", "a4")
     scale_mode = claimed_order.get("scale_mode", "fit")
     print_mode = claimed_order.get("print_mode", "standard")
