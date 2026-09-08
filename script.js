@@ -1163,15 +1163,15 @@ function getDefaultContainerDimensions(isNotebook, paperSize, isLandscape) {
 function applyMathematicalPreviewLayout(imgEl, pageData, containerEl) {
     if (!imgEl || !containerEl) return;
 
-    const paperSizeEl = document.getElementById("paperSize");
-    const paperSize = (paperSizeEl ? paperSizeEl.value : (localStorage.getItem("paperSize") || "a4")).toLowerCase();
+    const manifest = (window.currentFileManifest && window.currentFileManifest.length)
+        ? window.currentFileManifest
+        : (typeof getStoredFileManifest === "function" ? getStoredFileManifest() : []);
+    const activeFile = manifest[window.activePreviewFileIndex || 0] || manifest[0] || {};
 
-    const orientationEl = document.querySelector('input[name="orientation"]:checked');
-    const orientation = (orientationEl ? orientationEl.value : (localStorage.getItem("orientation") || "portrait")).toLowerCase();
+    const paperSize = (activeFile.paperSize || (document.getElementById("paperSize") ? document.getElementById("paperSize").value : (localStorage.getItem("paperSize") || "a4"))).toLowerCase();
+    const orientation = (activeFile.orientation || (document.querySelector('input[name="orientation"]:checked') ? document.querySelector('input[name="orientation"]:checked').value : (localStorage.getItem("orientation") || "portrait"))).toLowerCase();
     const isLandscape = (orientation === "landscape");
-
-    const scaleModeEl = document.querySelector('input[name="scaleMode"]:checked');
-    const scaleMode = (scaleModeEl ? scaleModeEl.value : (localStorage.getItem("scaleMode") || "fit")).toLowerCase();
+    const scaleMode = (activeFile.scaleMode || (document.querySelector('input[name="scaleMode"]:checked') ? document.querySelector('input[name="scaleMode"]:checked').value : (localStorage.getItem("scaleMode") || "fit"))).toLowerCase();
 
     // Kyocera ECOSYS M2040dn KX real hardware device caps
     let paperW_mm = 210.02;
@@ -1293,8 +1293,20 @@ function renderRealLivePreviewUI() {
     const prevBtn = document.getElementById("prevPageBtn");
     const nextBtn = document.getElementById("nextPageBtn");
 
+    const manifest = (window.currentFileManifest && window.currentFileManifest.length)
+        ? window.currentFileManifest
+        : (typeof getStoredFileManifest === "function" ? getStoredFileManifest() : []);
+    const activeFile = manifest[window.activePreviewFileIndex || 0] || manifest[0] || {};
+
+    const printSide = activeFile.printSide || "single";
+    const duplexBinding = activeFile.duplexBinding || "long_edge";
+    const orientation = activeFile.orientation || "portrait";
+    const paperSize = activeFile.paperSize || "a4";
+    const scaleMode = activeFile.scaleMode || "fit";
+    const colorMode = activeFile.colorMode || "black_white";
+
     const printModeEl = document.querySelector('input[name="printMode"]:checked');
-    const printMode = printModeEl ? printModeEl.value : "standard";
+    const printMode = printModeEl ? printModeEl.value : (activeFile.printMode || "standard");
     const pagesPerSheetEl = document.getElementById("pagesPerSheet");
     const pagesPerSheet = (printMode === "micro_xerox") ? (pagesPerSheetEl ? parseInt(pagesPerSheetEl.value, 10) : 2) : 1;
     const pageOrderEl = document.querySelector('input[name="pageOrder"]:checked');
@@ -1317,8 +1329,6 @@ function renderRealLivePreviewUI() {
         if (standardContent) standardContent.style.display = "none";
         if (nupGrid) {
             nupGrid.style.display = "grid";
-            const orientationEl = document.querySelector('input[name="orientation"]:checked');
-            const orientation = orientationEl ? orientationEl.value : "portrait";
 
             let cols = 1, rows = 1;
             if (pagesPerSheet === 2) {
@@ -1386,8 +1396,6 @@ function renderRealLivePreviewUI() {
                         rangeStr = ` (Pages ${minPageInSheet}–${maxPageInSheet})`;
                     }
                 }
-                const printSideEl = document.querySelector('input[name="printSide"]:checked');
-                const printSide = printSideEl ? printSideEl.value : "single";
                 let sideStr = "";
                 if (printSide === "double") {
                     sideStr = (currentSheet % 2 === 0) ? " • Front" : " • Back";
@@ -1401,11 +1409,6 @@ function renderRealLivePreviewUI() {
             if (nextBtn) nextBtn.disabled = (currentSheet >= totalSheets - 1);
         }
     } else {
-        const printSideEl = document.querySelector('input[name="printSide"]:checked');
-        const printSide = printSideEl ? printSideEl.value : "single";
-        const bindingEl = document.querySelector('input[name="duplexBinding"]:checked');
-        const duplexBinding = bindingEl ? bindingEl.value : "long_edge";
-
         const notebookSpread = document.getElementById("notebookSpreadPreview");
         const notebookLeftImg = document.getElementById("notebookLeftImg");
         const notebookLeftBlank = document.getElementById("notebookLeftBlank");
@@ -1597,7 +1600,7 @@ function ensureFileConfigDefaults(file, idx) {
     f.pageRange = f.pageRange || "all";
     f.selectedPagesCount = typeof f.selectedPagesCount === "number" ? f.selectedPagesCount : f.pages;
 
-    f.printSide = f.printSide || "single";
+    f.printSide = f.printSide || (f.pages >= 2 ? "double" : "single");
     f.duplexBinding = f.duplexBinding || "long_edge";
     f.duplex = f.duplex || (f.printSide === "double" ? (f.duplexBinding === "short_edge" ? "duplex_short" : "duplex_long") : "single");
 
@@ -1624,10 +1627,10 @@ function computeFileSheetsAndPrice(file) {
     f.pageRange = validation.isValid ? validation.canonicalString : "all";
 
     // Duplex resolution
-    if (f.colorMode === "color" || f.printSide === "single") {
-        f.duplex = "single";
-    } else {
+    if (f.printSide === "double") {
         f.duplex = (f.duplexBinding === "short_edge") ? "duplex_short" : "duplex_long";
+    } else {
+        f.duplex = "single";
     }
 
     const copies = Math.max(1, parseInt(f.copies || 1, 10));
@@ -1854,14 +1857,41 @@ function renderPerFileConfigCards() {
                     </div>
                 </div>
 
-                <!-- 2. Print Side (Duplex) -->
-                <div class="file-setting-item">
-                    <label class="file-input-label">📖 Print Side</label>
-                    <select class="setting-select file-side-select" data-idx="${idx}">
-                        <option value="single" ${file.printSide === 'single' ? 'selected' : ''}>Single Side (₹2/pg)</option>
-                        <option value="double_long" ${(file.printSide === 'double' && file.duplexBinding !== 'short_edge') ? 'selected' : ''}>Double Side • Long Edge (Booklet 📖 - ₹1/pg)</option>
-                        <option value="double_short" ${(file.printSide === 'double' && file.duplexBinding === 'short_edge') ? 'selected' : ''}>Double Side • Short Edge (Flip 🗓️ - ₹1/pg)</option>
-                    </select>
+                <!-- 2. Print Side (Single vs Double) -->
+                <div class="file-setting-item" style="grid-column: 1 / -1;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                        <label class="file-input-label" style="margin-bottom: 0;">📖 Print Side</label>
+                        <span class="side-status-tag" style="font-size: 11px; color: #ea580c; font-weight: 700;">
+                            ${file.printSide === 'double' ? 'Double Side Active (₹1/pg)' : 'Single Side Active (₹2/pg)'}
+                        </span>
+                    </div>
+                    <div class="file-radio-grid side-radio-grid">
+                        <label class="file-radio-pill side-pill ${file.printSide === 'single' ? 'is-selected' : ''}">
+                            <input type="radio" name="printSide_${idx}" value="single" ${file.printSide === 'single' ? 'checked' : ''}>
+                            <span>📄 Single Side (₹2/pg)</span>
+                        </label>
+                        <label class="file-radio-pill side-pill ${file.printSide === 'double' ? 'is-selected' : ''} ${file.colorMode === 'color' ? 'is-disabled' : ''}" title="${file.colorMode === 'color' ? 'Color print is single-sided only' : ''}">
+                            <input type="radio" name="printSide_${idx}" value="double" ${file.printSide === 'double' ? 'checked' : ''} ${file.colorMode === 'color' ? 'disabled' : ''}>
+                            <span>📖 Double Side (₹1/pg)</span>
+                        </label>
+                    </div>
+
+                    <!-- Duplex Flip Direction / Binding Edge -->
+                    <div class="file-binding-container" style="display: ${file.printSide === 'double' ? 'block' : 'none'}; margin-top: 8px; padding: 8px 12px; background: #fff7ed; border-radius: 8px; border: 1.5px dashed #fdba74;">
+                        <label style="font-size: 11px; font-weight: 800; color: #9a3412; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; display: block;">
+                            🔄 Duplex Flip Direction / Binding Edge:
+                        </label>
+                        <div class="file-radio-grid" style="grid-template-columns: 1fr 1fr;">
+                            <label class="file-radio-pill binding-pill ${file.duplexBinding !== 'short_edge' ? 'is-selected' : ''}">
+                                <input type="radio" name="duplexBinding_${idx}" value="long_edge" ${file.duplexBinding !== 'short_edge' ? 'checked' : ''}>
+                                <span>📖 Long Edge (Booklet)</span>
+                            </label>
+                            <label class="file-radio-pill binding-pill ${file.duplexBinding === 'short_edge' ? 'is-selected' : ''}">
+                                <input type="radio" name="duplexBinding_${idx}" value="short_edge" ${file.duplexBinding === 'short_edge' ? 'checked' : ''}>
+                                <span>🗓️ Short Edge (Flip)</span>
+                            </label>
+                        </div>
+                    </div>
                 </div>
 
                 <!-- 3. Copies -->
@@ -2085,30 +2115,66 @@ function attachCardEventListeners() {
         });
     });
 
-    // Print Side select
-    container.querySelectorAll(".file-side-select").forEach(select => {
-        select.addEventListener("change", () => {
-            const idx = parseInt(select.dataset.idx, 10);
+    // Print Side Radios (Single vs Double)
+    container.querySelectorAll(".side-radio-grid input[type='radio']").forEach(radio => {
+        radio.addEventListener("change", () => {
+            const idx = parseInt(radio.name.split("_")[1], 10);
             const manifest = getStoredFileManifest();
             if (manifest[idx]) {
-                const val = select.value;
-                if (val === "single") {
-                    manifest[idx].printSide = "single";
-                    manifest[idx].duplex = "single";
-                } else if (val === "double_short") {
-                    manifest[idx].printSide = "double";
-                    manifest[idx].duplexBinding = "short_edge";
-                    manifest[idx].duplex = "duplex_short";
+                const isDouble = (radio.value === "double");
+                manifest[idx].printSide = isDouble ? "double" : "single";
+                if (isDouble) {
+                    manifest[idx].duplexBinding = manifest[idx].duplexBinding || "long_edge";
+                    manifest[idx].duplex = (manifest[idx].duplexBinding === "short_edge") ? "duplex_short" : "duplex_long";
                 } else {
-                    manifest[idx].printSide = "double";
-                    manifest[idx].duplexBinding = "long_edge";
-                    manifest[idx].duplex = "duplex_long";
+                    manifest[idx].duplex = "single";
                 }
                 const updated = computeFileSheetsAndPrice(manifest[idx]);
                 manifest[idx] = updated;
                 saveFileManifest(manifest);
+
                 const card = container.querySelector(`.file-config-card[data-idx="${idx}"]`);
-                updateCardSummaryStrip(card, updated);
+                if (card) {
+                    card.querySelectorAll(".side-pill").forEach(p => {
+                        const r = p.querySelector("input[type='radio']");
+                        p.classList.toggle("is-selected", r && r.value === radio.value);
+                    });
+                    const bindingContainer = card.querySelector(".file-binding-container");
+                    if (bindingContainer) {
+                        bindingContainer.style.display = isDouble ? "block" : "none";
+                    }
+                    const statusTag = card.querySelector(".side-status-tag");
+                    if (statusTag) {
+                        statusTag.textContent = isDouble ? "Double Side Active (₹1/pg)" : "Single Side Active (₹2/pg)";
+                    }
+                    updateCardSummaryStrip(card, updated);
+                }
+                updateGlobalOrderSummary(manifest);
+                if (idx === window.activePreviewFileIndex) updatePrintDetailsAndPreview();
+            }
+        });
+    });
+
+    // Duplex Flip / Binding Radios (Long Edge vs Short Edge)
+    container.querySelectorAll(".file-binding-container input[type='radio']").forEach(radio => {
+        radio.addEventListener("change", () => {
+            const idx = parseInt(radio.name.split("_")[1], 10);
+            const manifest = getStoredFileManifest();
+            if (manifest[idx]) {
+                manifest[idx].duplexBinding = radio.value;
+                manifest[idx].duplex = (radio.value === "short_edge") ? "duplex_short" : "duplex_long";
+                const updated = computeFileSheetsAndPrice(manifest[idx]);
+                manifest[idx] = updated;
+                saveFileManifest(manifest);
+
+                const card = container.querySelector(`.file-config-card[data-idx="${idx}"]`);
+                if (card) {
+                    card.querySelectorAll(".binding-pill").forEach(p => {
+                        const r = p.querySelector("input[type='radio']");
+                        p.classList.toggle("is-selected", r && r.value === radio.value);
+                    });
+                    updateCardSummaryStrip(card, updated);
+                }
                 updateGlobalOrderSummary(manifest);
                 if (idx === window.activePreviewFileIndex) updatePrintDetailsAndPreview();
             }
@@ -2166,18 +2232,46 @@ function attachCardEventListeners() {
             const manifest = getStoredFileManifest();
             if (manifest[idx]) {
                 manifest[idx].colorMode = select.value;
+                const card = container.querySelector(`.file-config-card[data-idx="${idx}"]`);
                 if (select.value === "color") {
                     manifest[idx].printSide = "single";
                     manifest[idx].duplex = "single";
-                    const card = container.querySelector(`.file-config-card[data-idx="${idx}"]`);
-                    const sideSel = card ? card.querySelector(".file-side-select") : null;
-                    if (sideSel) sideSel.value = "single";
+                    if (card) {
+                        const singleRadio = card.querySelector(`input[name="printSide_${idx}"][value="single"]`);
+                        if (singleRadio) singleRadio.checked = true;
+                        card.querySelectorAll(".side-pill").forEach(p => {
+                            const r = p.querySelector("input[type='radio']");
+                            p.classList.toggle("is-selected", r && r.value === "single");
+                        });
+                        const doublePill = card.querySelectorAll(".side-pill")[1];
+                        if (doublePill) {
+                            doublePill.classList.add("is-disabled");
+                            const dRadio = doublePill.querySelector("input[type='radio']");
+                            if (dRadio) dRadio.disabled = true;
+                        }
+                        const bindingContainer = card.querySelector(".file-binding-container");
+                        if (bindingContainer) bindingContainer.style.display = "none";
+                        const statusTag = card.querySelector(".side-status-tag");
+                        if (statusTag) statusTag.textContent = "Color Print (₹6/pg) • Single Side";
+                    }
+                } else {
+                    if (card) {
+                        const doublePill = card.querySelectorAll(".side-pill")[1];
+                        if (doublePill) {
+                            doublePill.classList.remove("is-disabled");
+                            const dRadio = doublePill.querySelector("input[type='radio']");
+                            if (dRadio) dRadio.disabled = false;
+                        }
+                        const statusTag = card.querySelector(".side-status-tag");
+                        if (statusTag) {
+                            statusTag.textContent = (manifest[idx].printSide === "double") ? "Double Side Active (₹1/pg)" : "Single Side Active (₹2/pg)";
+                        }
+                    }
                 }
                 const updated = computeFileSheetsAndPrice(manifest[idx]);
                 manifest[idx] = updated;
                 saveFileManifest(manifest);
-                const card = container.querySelector(`.file-config-card[data-idx="${idx}"]`);
-                updateCardSummaryStrip(card, updated);
+                if (card) updateCardSummaryStrip(card, updated);
                 updateGlobalOrderSummary(manifest);
                 if (idx === window.activePreviewFileIndex) updatePrintDetailsAndPreview();
             }

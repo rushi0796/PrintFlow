@@ -916,6 +916,66 @@
             font-size: 16px;
             font-weight: 800;
         }
+
+        /* PER-FILE RADIO GRIDS & PILLS */
+        .file-radio-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 8px;
+            margin-top: 4px;
+        }
+
+        .file-radio-pill {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            padding: 10px 12px;
+            background: #fffbf5;
+            border: 1.5px solid #fed7aa;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 12.5px;
+            font-weight: 700;
+            color: #7c2d12;
+            transition: all 0.2s ease;
+            user-select: none;
+            text-align: center;
+        }
+
+        .file-radio-pill:hover {
+            border-color: #fb923c;
+            background: #fff7ed;
+        }
+
+        .file-radio-pill.is-selected {
+            background: #ffedd5;
+            border-color: #ea580c;
+            color: #c2410c;
+            box-shadow: 0 0 0 1.5px #ea580c;
+        }
+
+        .file-radio-pill input[type="radio"] {
+            display: none;
+        }
+
+        .file-radio-pill.is-disabled {
+            opacity: 0.45;
+            cursor: not-allowed;
+            pointer-events: none;
+            background: #f1f5f9;
+            border-color: #cbd5e1;
+            color: #94a3b8;
+        }
+
+        .file-binding-container {
+            animation: fadeInBinding 0.2s ease-in-out;
+        }
+
+        @keyframes fadeInBinding {
+            from { opacity: 0; transform: translateY(-4px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
     </style>
 </head>
 <body>
@@ -1059,7 +1119,7 @@
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
-<script src="script.js?v=20260908-per-file-v1"></script>
+<script src="script.js?v=20260908-duplex-pills-v2"></script>
 
 </body>
 </html>
