@@ -55,6 +55,15 @@ def load_agent_config():
 def get_installed_windows_printers():
     printers = []
     if sys.platform == "win32":
+        enum_list = []
+        try:
+            import win32print
+            flags = win32print.PRINTER_ENUM_LOCAL | win32print.PRINTER_ENUM_CONNECTIONS
+            enum_list = win32print.EnumPrinters(flags)
+        except Exception as e:
+            print("[AGENT WIN32PRINT ENUM WARNING]:", e)
+
+        ps_info = {}
         try:
             ps_cmd = 'Get-Printer | Select-Object Name, DriverName, PrinterStatus, IsDefault | ConvertTo-Json'
             res = subprocess.run(["powershell", "-Command", ps_cmd], capture_output=True, text=True, timeout=10)
@@ -63,21 +72,88 @@ def get_installed_windows_printers():
                 if isinstance(data, dict):
                     data = [data]
                 for p in data:
-                    printers.append({
-                        "name": p.get("Name", ""),
-                        "driver": p.get("DriverName", ""),
-                        "status": "Normal" if p.get("PrinterStatus") in (0, "Normal", None) else str(p.get("PrinterStatus")),
-                        "is_default": bool(p.get("IsDefault"))
-                    })
+                    pname = p.get("Name", "")
+                    if pname:
+                        ps_info[pname] = p
         except Exception as e:
-            print("[AGENT PRINTER DISCOVERY WARNING]:", e)
+            print("[AGENT POWERSHELL PRINTER WARNING]:", e)
+
+        # Iterate over discovered printers
+        printer_names = [p[2] for p in enum_list] if enum_list else list(ps_info.keys())
+        for name in printer_names:
+            p_ps = ps_info.get(name, {})
+            driver_name = p_ps.get("DriverName", "")
+            is_default = bool(p_ps.get("IsDefault", False))
+
+            duplex_sup = False
+            color_sup = False
+            paper_sizes = []
+            is_online = True
+            status_str = "Normal"
+
+            try:
+                import win32print
+                d_val = win32print.DeviceCapabilities(name, "", 7)  # DC_DUPLEX
+                duplex_sup = bool(d_val == 1)
+            except Exception:
+                pass
+
+            try:
+                import win32print
+                c_val = win32print.DeviceCapabilities(name, "", 32)  # DC_COLORDEVICE
+                color_sup = bool(c_val == 1)
+            except Exception:
+                pass
+
+            try:
+                import win32print
+                p_vals = win32print.DeviceCapabilities(name, "", 2)   # DC_PAPERS
+                paper_map = {1: "Letter", 5: "Legal", 9: "A4"}
+                for code, pname in paper_map.items():
+                    if code in p_vals:
+                        paper_sizes.append(pname)
+            except Exception:
+                pass
+
+            try:
+                import win32print
+                h = win32print.OpenPrinter(name)
+                try:
+                    info = win32print.GetPrinter(h, 2)
+                    attr = info.get("Attributes", 0)
+                    st = info.get("Status", 0)
+                    if bool(attr & 0x00000400) or bool(st & 0x00000080):
+                        is_online = False
+                        status_str = "Offline"
+                finally:
+                    win32print.ClosePrinter(h)
+            except Exception:
+                pass
+
+            if not paper_sizes:
+                paper_sizes = ["A4", "Letter"]
+
+            printers.append({
+                "name": name,
+                "driver": driver_name,
+                "status": status_str,
+                "is_default": is_default,
+                "duplex_supported": duplex_sup,
+                "color_supported": color_sup,
+                "paper_sizes": paper_sizes,
+                "online": is_online
+            })
 
     if not printers:
         printers.append({
             "name": "Microsoft Print to PDF",
             "driver": "Virtual",
             "status": "Normal",
-            "is_default": True
+            "is_default": True,
+            "duplex_supported": False,
+            "color_supported": True,
+            "paper_sizes": ["A4", "Letter", "Legal"],
+            "online": True
         })
     return printers
 
@@ -112,15 +188,25 @@ def get_printer_hardware_caps(printer_name: str = "", orientation: str = "portra
     paper_map = {"a4": 9, "letter": 1, "legal": 5}
     paper_kind = paper_map.get(str(paper_size).lower(), 9)
 
+    paper_dots_map = {
+        "a4": (4961, 7016),
+        "letter": (5100, 6600),
+        "legal": (5100, 8400)
+    }
+    pw_dots, ph_dots = paper_dots_map.get(str(paper_size).lower(), (4961, 7016))
+    if is_landscape:
+        pw_dots, ph_dots = ph_dots, pw_dots
+
+    margin_dots = 99
     res = {
-        "HORZRES": 6814 if is_landscape else 4760,
-        "VERTRES": 4760 if is_landscape else 6814,
+        "HORZRES": pw_dots - (margin_dots * 2),
+        "VERTRES": ph_dots - (margin_dots * 2),
         "LOGPIXELSX": 600,
         "LOGPIXELSY": 600,
-        "PHYSICALWIDTH": 7016 if is_landscape else 4961,
-        "PHYSICALHEIGHT": 4961 if is_landscape else 7016,
-        "PHYSICALOFFSETX": 99,
-        "PHYSICALOFFSETY": 99,
+        "PHYSICALWIDTH": pw_dots,
+        "PHYSICALHEIGHT": ph_dots,
+        "PHYSICALOFFSETX": margin_dots,
+        "PHYSICALOFFSETY": margin_dots,
     }
 
     if sys.platform == "win32" and printer_name:
@@ -502,147 +588,380 @@ def optimize_pdf_for_full_page(
         print(f"[FULL PAGE SCALE ERROR]: {opt_err}")
         raise RuntimeError(f"FULL_PAGE_OPTIMIZATION_FAILED: {opt_err}") from opt_err
 
-def print_document_silently(
-    file_path: Path,
-    printer_name: str,
-    copies: int = 1,
+def update_order_agent_status(
+    backend_url: str,
+    agent_token: str,
+    order_id: str,
+    status: str,
+    spooler_job_id: int = 0,
+    error: str = "",
+    printed_by_printer: str = ""
+):
+    url = f"{backend_url}/api/agent/complete/{order_id}"
+    payload = {
+        "status": status,
+        "spooler_job_id": spooler_job_id,
+        "printed_by_printer": printed_by_printer
+    }
+    if error:
+        payload["error"] = error
+    req = urllib.request.Request(
+        url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Content-Type": "application/json",
+            "X-Print-Agent-Token": agent_token,
+            "User-Agent": "PrintFlowAgent/1.0"
+        },
+        method="POST"
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except Exception as e:
+        print(f"[AGENT STATUS UPDATE ERROR] Failed to send status '{status}' for order '{order_id}':", e)
+        return None
+
+def monitor_spooler_job(backend_url: str, agent_token: str, order_id: str, printer_name: str, spooler_job_id: int):
+    print(f"[SPOOLER MONITOR] Monitoring Job #{spooler_job_id} on '{printer_name}'...")
+    if sys.platform != "win32":
+        update_order_agent_status(backend_url, agent_token, order_id, "COMPLETED", spooler_job_id, printed_by_printer=printer_name)
+        return
+
+    start_t = time.time()
+    max_wait = 180.0
+    seen_printing = False
+
+    while (time.time() - start_t) < max_wait:
+        try:
+            import win32print
+            h = win32print.OpenPrinter(printer_name)
+            try:
+                jobs = win32print.EnumJobs(h, 0, 999, 2)
+            finally:
+                win32print.ClosePrinter(h)
+
+            matching = next((j for j in jobs if j.get("JobId") == spooler_job_id), None)
+            if not matching:
+                print(f"[SPOOLER MONITOR] Job #{spooler_job_id} cleared from spooler. Marking COMPLETED.")
+                update_order_agent_status(backend_url, agent_token, order_id, "COMPLETED", spooler_job_id, printed_by_printer=printer_name)
+                return
+
+            st = matching.get("Status", 0)
+            if bool(st & 0x00000002) or bool(st & 0x00000200):  # ERROR or BLOCKED_DEVQ
+                err_msg = f"Printer spooler reported error for Job #{spooler_job_id} on '{printer_name}'"
+                print(f"[SPOOLER MONITOR ERROR] {err_msg}")
+                update_order_agent_status(backend_url, agent_token, order_id, "FAILED", spooler_job_id, error=err_msg, printed_by_printer=printer_name)
+                return
+
+            if (bool(st & 0x00000010) or bool(st & 0x00000001)) and not seen_printing:  # PRINTING or PAUSED
+                seen_printing = True
+                print(f"[SPOOLER MONITOR] Job #{spooler_job_id} is actively printing in Windows spooler.")
+                update_order_agent_status(backend_url, agent_token, order_id, "PRINTING", spooler_job_id, printed_by_printer=printer_name)
+
+            time.sleep(1.0)
+        except Exception as mon_err:
+            print(f"[SPOOLER MONITOR WARNING] {mon_err}")
+            break
+
+    update_order_agent_status(backend_url, agent_token, order_id, "COMPLETED", spooler_job_id, printed_by_printer=printer_name)
+
+def convert_image_to_pdf_page(
+    image_path: Path,
+    out_pdf_path: Path,
     orientation: str = "portrait",
-    color_mode: str = "black_white",
-    duplex: str = "single",
     paper_size: str = "a4",
     scale_mode: str = "fit",
-    pages_per_sheet: int = 1,
-    page_order: str = "horizontal",
-    page_range: str = "all",
-    print_mode: str = "standard"
-):
-    ext = file_path.suffix.lower()
-    target_print_file = file_path
-    is_image = ext in (".jpg", ".jpeg", ".png", ".webp", ".bmp")
+    printer_name: str = ""
+) -> Path:
+    from PIL import Image
+    from reportlab.pdfgen import canvas
+    from reportlab.lib.utils import ImageReader
 
-    raw_color = str(color_mode).lower()
-    is_color = raw_color in ("color", "colour")
-    if is_color:
-        duplex = "single"
-        color_mode = "color"
-    else:
-        color_mode = "black_white"
+    paper_map = {
+        "a4": (595.276, 841.890),
+        "letter": (612.0, 792.0),
+        "legal": (612.0, 1008.0)
+    }
+    std_w, std_h = paper_map.get(paper_size.lower(), (595.276, 841.890))
+    is_landscape = (str(orientation).lower() == "landscape")
+    canvas_w = max(std_w, std_h) if is_landscape else min(std_w, std_h)
+    canvas_h = min(std_w, std_h) if is_landscape else max(std_w, std_h)
 
-    # Color safety check: Micro Xerox is strictly B&W
-    if str(print_mode).lower() == "micro_xerox" and is_color:
-        is_color = False
-        color_mode = "black_white"
+    caps = get_printer_hardware_caps(printer_name, orientation, paper_size)
+    l_m = float(caps.get("left_margin_pt", 12.0) or 12.0)
+    r_m = float(caps.get("right_margin_pt", 12.0) or 12.0)
+    t_m = float(caps.get("top_margin_pt", 12.0) or 12.0)
+    b_m = float(caps.get("bottom_margin_pt", 12.0) or 12.0)
 
-    # Convert DOC / DOCX to PDF via Word COM if available
-    if ext in (".doc", ".docx"):
-        word = None
-        try:
-            import win32com.client
-            word = win32com.client.DispatchEx("Word.Application")
-            word.Visible = False
-            word.DisplayAlerts = 0
-            doc = word.Documents.Open(str(file_path.resolve()), ReadOnly=True, ConfirmConversions=False)
+    avail_w = max(10.0, canvas_w - (l_m + r_m))
+    avail_h = max(10.0, canvas_h - (t_m + b_m))
+
+    img = Image.open(str(image_path))
+    if img.mode in ("RGBA", "LA") or (img.mode == "P" and "transparency" in img.info):
+        bg = Image.new("RGB", img.size, (255, 255, 255))
+        if img.mode == "P":
+            img = img.convert("RGBA")
+        bg.paste(img, mask=img.split()[3])
+        img = bg
+    elif img.mode != "RGB":
+        img = img.convert("RGB")
+
+    # Rotate image content to align with requested orientation
+    if is_landscape and img.height > img.width:
+        img = img.rotate(270, expand=True)
+    elif not is_landscape and img.width > img.height:
+        img = img.rotate(270, expand=True)
+
+    img_w, img_h = img.size
+    is_fill = (str(scale_mode).lower() in ("fill", "cover"))
+
+    if is_fill:
+        s = max(avail_w / max(1, img_w), avail_h / max(1, img_h))
+    else:  # fit
+        s = min(avail_w / max(1, img_w), avail_h / max(1, img_h))
+
+    draw_w = img_w * s
+    draw_h = img_h * s
+    draw_x = l_m + (avail_w - draw_w) / 2.0
+    draw_y = b_m + (avail_h - draw_h) / 2.0
+
+    temp_rgb_path = out_pdf_path.parent / f"tmp_rgb_{out_pdf_path.stem}.jpg"
+    img.save(temp_rgb_path, "JPEG", quality=95)
+
+    try:
+        c = canvas.Canvas(str(out_pdf_path), pagesize=(canvas_w, canvas_h))
+        if is_fill:
+            c.saveState()
+            clip_path = c.beginPath()
+            clip_path.rect(l_m, b_m, avail_w, avail_h)
+            c.clipPath(clip_path, stroke=0)
+            c.drawImage(ImageReader(str(temp_rgb_path)), draw_x, draw_y, width=draw_w, height=draw_h)
+            c.restoreState()
+        else:
+            c.drawImage(ImageReader(str(temp_rgb_path)), draw_x, draw_y, width=draw_w, height=draw_h)
+        c.showPage()
+        c.save()
+    finally:
+        if temp_rgb_path.exists():
             try:
-                pdf_path = file_path.parent / f"{file_path.stem}.pdf"
-                doc.SaveAs(str(pdf_path.resolve()), FileFormat=17)
-            finally:
-                doc.Close(False)
-            if pdf_path.exists():
-                target_print_file = pdf_path
-                ext = ".pdf"
-        except Exception as word_err:
-            print("[AGENT WORD COM EXPORT WARNING]:", word_err)
-        finally:
-            if word is not None:
+                temp_rgb_path.unlink()
+            except Exception:
+                pass
+
+    return out_pdf_path
+
+def convert_text_to_pdf(
+    txt_path: Path,
+    out_pdf_path: Path,
+    orientation: str = "portrait",
+    paper_size: str = "a4"
+) -> Path:
+    from reportlab.pdfgen import canvas
+
+    paper_map = {
+        "a4": (595.276, 841.890),
+        "letter": (612.0, 792.0),
+        "legal": (612.0, 1008.0)
+    }
+    std_w, std_h = paper_map.get(paper_size.lower(), (595.276, 841.890))
+    is_landscape = (str(orientation).lower() == "landscape")
+    canvas_w = max(std_w, std_h) if is_landscape else min(std_w, std_h)
+    canvas_h = min(std_w, std_h) if is_landscape else max(std_w, std_h)
+
+    margin = 36.0
+    font_name = "Helvetica"
+    font_size = 10
+    line_height = 14
+
+    lines = txt_path.read_text(encoding="utf-8", errors="replace").splitlines()
+
+    c = canvas.Canvas(str(out_pdf_path), pagesize=(canvas_w, canvas_h))
+    y = canvas_h - margin - font_size
+    c.setFont(font_name, font_size)
+
+    for line in lines:
+        if y < margin + font_size:
+            c.showPage()
+            c.setFont(font_name, font_size)
+            y = canvas_h - margin - font_size
+        c.drawString(margin, y, line[:120])
+        y -= line_height
+
+    c.showPage()
+    c.save()
+    return out_pdf_path
+
+def compose_manifest_to_pdf(
+    claimed_order: dict,
+    backend_url: str,
+    agent_token: str,
+    target_printer: str
+) -> Path:
+    import pypdf
+
+    order_id = claimed_order.get("order_id", "order")
+    files_list = claimed_order.get("files") or []
+    default_path = claimed_order.get("file_path", "")
+    default_name = claimed_order.get("file_name", "document.pdf")
+    orientation = claimed_order.get("orientation", "portrait")
+    paper_size = claimed_order.get("paper_size", "a4")
+    scale_mode = claimed_order.get("scale_mode", "fit")
+    print_mode = claimed_order.get("print_mode", "standard")
+    pages_per_sheet = int(claimed_order.get("pages_per_sheet", 1))
+    page_order = claimed_order.get("page_order", "horizontal")
+    page_range = claimed_order.get("page_range", "all") or "all"
+    duplex = claimed_order.get("duplex", "single")
+    color_mode = claimed_order.get("color_mode", "black_white")
+    is_color = str(color_mode).lower() in ("color", "colour")
+
+    if not files_list:
+        if default_path:
+            files_list = [{"name": default_name, "path": default_path, "pages": claimed_order.get("pages", 1), "sequence": 0}]
+        else:
+            raise ValueError(f"Order {order_id} has no files or file_path")
+
+    files_list = sorted(files_list, key=lambda f: f.get("sequence", 0))
+
+    normalized_pdf_pages = []
+    base_stem = re.sub(r'[^a-zA-Z0-9_\-]+', '_', order_id).strip('_') or 'job'
+    order_work_dir = TEMP_DOWNLOAD_DIR / f"work_{base_stem}"
+    order_work_dir.mkdir(parents=True, exist_ok=True)
+
+    print(f"[COMPOSITOR] Processing order {order_id} with {len(files_list)} file(s)...")
+
+    for f_idx, item in enumerate(files_list):
+        f_name = item.get("name") or f"file_{f_idx+1}"
+        f_path_rel = item.get("path") or item.get("file_path") or ""
+        if not f_path_rel:
+            continue
+
+        print(f"[COMPOSITOR] [{f_idx+1}/{len(files_list)}] Downloading '{f_name}' ({f_path_rel})...")
+        local_file = download_file(backend_url, f_path_rel, agent_token, f_name)
+        ext = local_file.suffix.lower()
+
+        clean_item_stem = f"{f_idx:02d}_" + re.sub(r'[^a-zA-Z0-9_\-]+', '_', local_file.stem).strip('_')
+
+        # Convert DOC/DOCX to PDF
+        if ext in (".doc", ".docx"):
+            word = None
+            try:
+                import win32com.client
+                word = win32com.client.DispatchEx("Word.Application")
+                word.Visible = False
+                word.DisplayAlerts = 0
+                doc = word.Documents.Open(str(local_file.resolve()), ReadOnly=True, ConfirmConversions=False)
+                pdf_target = order_work_dir / f"{clean_item_stem}_word.pdf"
                 try:
-                    word.Quit()
-                except Exception:
-                    pass
+                    doc.SaveAs(str(pdf_target.resolve()), FileFormat=17)
+                finally:
+                    doc.Close(False)
+                if pdf_target.exists():
+                    local_file = pdf_target
+                    ext = ".pdf"
+            except Exception as w_err:
+                print(f"[COMPOSITOR WORD COM WARNING]: {w_err}")
+            finally:
+                if word is not None:
+                    try:
+                        word.Quit()
+                    except Exception:
+                        pass
 
-    # Universal Image-to-PDF Conversion for Rock-Solid Printing (Single page & Micro Xerox)
-    if is_image:
-        try:
-            from PIL import Image
-            img = Image.open(target_print_file)
-            # Handle transparency (RGBA, LA, or P with transparency)
-            if img.mode in ("RGBA", "LA") or (img.mode == "P" and "transparency" in img.info):
-                bg = Image.new("RGB", img.size, (255, 255, 255))
-                if img.mode == "P":
-                    img = img.convert("RGBA")
-                bg.paste(img, mask=img.split()[3])
-                img = bg
-            elif img.mode != "RGB":
-                img = img.convert("RGB")
+        # Convert Image to PDF
+        if ext in (".jpg", ".jpeg", ".png", ".webp", ".bmp"):
+            img_pdf = order_work_dir / f"{clean_item_stem}_img.pdf"
+            convert_image_to_pdf_page(
+                local_file,
+                img_pdf,
+                orientation=orientation,
+                paper_size=paper_size,
+                scale_mode=scale_mode,
+                printer_name=target_printer
+            )
+            local_file = img_pdf
+            ext = ".pdf"
 
-            # Rotate image to match requested orientation
-            is_land = (str(orientation).lower() == "landscape")
-            if is_land and img.height > img.width:
-                img = img.rotate(270, expand=True)
-            elif not is_land and img.width > img.height:
-                img = img.rotate(270, expand=True)
+        # Convert TXT to PDF
+        if ext == ".txt":
+            txt_pdf = order_work_dir / f"{clean_item_stem}_txt.pdf"
+            convert_text_to_pdf(
+                local_file,
+                txt_pdf,
+                orientation=orientation,
+                paper_size=paper_size
+            )
+            local_file = txt_pdf
+            ext = ".pdf"
 
-            clean_stem = re.sub(r'[^a-zA-Z0-9_\-]+', '_', target_print_file.stem).strip('_') or 'image'
-            pdf_path = target_print_file.parent / f"{clean_stem}_img.pdf"
-            img.save(pdf_path, "PDF", resolution=300.0)
-            if pdf_path.exists():
-                target_print_file = pdf_path
-                ext = ".pdf"
-        except Exception as img_conv_err:
-            print("[AGENT IMAGE CONVERT TO PDF WARNING]:", img_conv_err)
+        if ext == ".pdf":
+            if len(files_list) == 1 and page_range and str(page_range).strip().lower() != "all":
+                local_file = extract_pdf_page_subset(local_file, page_range)
 
-    # Filter PDF to requested page subset (All, Custom e.g. 1,3,5-8,12, Even, Odd)
-    if ext == ".pdf" and page_range and str(page_range).strip().lower() != "all":
-        target_print_file = extract_pdf_page_subset(target_print_file, page_range)
+            optimized_pdf = optimize_pdf_for_full_page(
+                local_file,
+                paper_size=paper_size,
+                orientation=orientation,
+                scale_mode=scale_mode,
+                printer_name=target_printer
+            )
 
-    # Process Micro Xerox layout or Full Page layout for PDF
-    if ext == ".pdf" and (str(print_mode).lower() == "micro_xerox" or pages_per_sheet > 1):
+            r = pypdf.PdfReader(str(optimized_pdf))
+            print(f"[COMPOSITOR] Adding {len(r.pages)} page(s) from '{f_name}'")
+            for p in r.pages:
+                normalized_pdf_pages.append(p)
+        else:
+            print(f"[COMPOSITOR WARNING] Unsupported file format '{ext}' for file '{f_name}'")
+
+    if not normalized_pdf_pages:
+        raise RuntimeError(f"No printable pages generated from manifest for order {order_id}")
+
+    inter_pdf = order_work_dir / "intermediate_merged.pdf"
+    writer = pypdf.PdfWriter()
+    for page in normalized_pdf_pages:
+        writer.add_page(page)
+    with open(inter_pdf, "wb") as f_out:
+        writer.write(f_out)
+
+    target_composed_file = inter_pdf
+
+    if str(print_mode).lower() == "micro_xerox" or pages_per_sheet > 1:
         target_nup = pages_per_sheet if pages_per_sheet > 1 else 2
-        target_print_file = create_n_up_pdf(
-            target_print_file,
+        nup_pdf = create_n_up_pdf(
+            target_composed_file,
             target_nup,
             page_order,
             paper_size=paper_size,
             orientation=orientation,
-            printer_name=printer_name
+            printer_name=target_printer
         )
-    elif ext == ".pdf":
-        target_print_file = optimize_pdf_for_full_page(
-            target_print_file,
-            paper_size=paper_size,
-            orientation=orientation,
-            scale_mode=scale_mode,
-            printer_name=printer_name
-        )
+        target_composed_file = nup_pdf
 
-    # B&W Duplex odd-page trailing blank page handling
-    # Only applies to standard B&W duplex printing (never single-side, color, or Micro Xerox)
     is_micro_xerox = (str(print_mode).lower() == "micro_xerox" or pages_per_sheet > 1)
     is_duplex_job = (not is_color) and (duplex in (
         "duplex_long", "duplex_short", "duplexlong", "duplexshort",
         "long_edge", "short_edge", "double", "duplex", "vertical", "horizontal"
     ))
 
-    if ext == ".pdf" and not is_color and not is_micro_xerox and is_duplex_job:
-        import pypdf
-        reader = pypdf.PdfReader(str(target_print_file))
+    if not is_color and not is_micro_xerox and is_duplex_job:
+        reader = pypdf.PdfReader(str(target_composed_file))
         source_pages = len(reader.pages)
         canonical_duplex_log = "duplex_short" if duplex in ("duplex_short", "duplexshort", "short_edge", "short", "horizontal") else "duplex_long"
 
         if source_pages % 2 != 0:
-            writer = pypdf.PdfWriter()
+            d_writer = pypdf.PdfWriter()
             for p in reader.pages:
-                writer.add_page(p)
-            last_page = reader.pages[-1]
-            last_w = float(last_page.mediabox.width)
-            last_h = float(last_page.mediabox.height)
-            writer.add_blank_page(width=last_w, height=last_h)
+                d_writer.add_page(p)
+            last_p = reader.pages[-1]
+            last_w = float(last_p.mediabox.width)
+            last_h = float(last_p.mediabox.height)
+            d_writer.add_blank_page(width=last_w, height=last_h)
 
-            clean_stem = re.sub(r'[^a-zA-Z0-9_\-]+', '_', target_print_file.stem).strip('_')
-            duplex_pdf_path = target_print_file.parent / f"{clean_stem}_duplex_even.pdf"
-            with open(duplex_pdf_path, "wb") as f_out:
-                writer.write(f_out)
+            padded_pdf = order_work_dir / "composed_duplex_even.pdf"
+            with open(padded_pdf, "wb") as f_out:
+                d_writer.write(f_out)
 
-            target_print_file = duplex_pdf_path
+            target_composed_file = padded_pdf
             final_pages = source_pages + 1
 
             print("")
@@ -660,6 +979,153 @@ def print_document_silently(
             print(f"duplex={canonical_duplex_log}")
             print("trailing_blank_page=false")
             print("")
+
+    final_dest = TEMP_DOWNLOAD_DIR / f"final_printready_{base_stem}.pdf"
+    shutil.copy2(target_composed_file, final_dest)
+    return final_dest
+
+def print_document_silently(
+    file_path: Path,
+    printer_name: str,
+    copies: int = 1,
+    orientation: str = "portrait",
+    color_mode: str = "black_white",
+    duplex: str = "single",
+    paper_size: str = "a4",
+    scale_mode: str = "fit",
+    pages_per_sheet: int = 1,
+    page_order: str = "horizontal",
+    page_range: str = "all",
+    print_mode: str = "standard",
+    already_composed: bool = False
+) -> int:
+    ext = file_path.suffix.lower()
+    target_print_file = file_path
+    is_image = ext in (".jpg", ".jpeg", ".png", ".webp", ".bmp")
+
+    raw_color = str(color_mode).lower()
+    is_color = raw_color in ("color", "colour")
+    if is_color:
+        duplex = "single"
+        color_mode = "color"
+    else:
+        color_mode = "black_white"
+
+    if str(print_mode).lower() == "micro_xerox" and is_color:
+        is_color = False
+        color_mode = "black_white"
+
+    if not already_composed:
+        # Convert DOC / DOCX to PDF via Word COM if available
+        if ext in (".doc", ".docx"):
+            word = None
+            try:
+                import win32com.client
+                word = win32com.client.DispatchEx("Word.Application")
+                word.Visible = False
+                word.DisplayAlerts = 0
+                doc = word.Documents.Open(str(file_path.resolve()), ReadOnly=True, ConfirmConversions=False)
+                try:
+                    pdf_path = file_path.parent / f"{file_path.stem}.pdf"
+                    doc.SaveAs(str(pdf_path.resolve()), FileFormat=17)
+                finally:
+                    doc.Close(False)
+                if pdf_path.exists():
+                    target_print_file = pdf_path
+                    ext = ".pdf"
+            except Exception as word_err:
+                print("[AGENT WORD COM EXPORT WARNING]:", word_err)
+            finally:
+                if word is not None:
+                    try:
+                        word.Quit()
+                    except Exception:
+                        pass
+
+        # Universal Image-to-PDF Conversion
+        if is_image:
+            try:
+                img_pdf = target_print_file.parent / f"{target_print_file.stem}_img.pdf"
+                convert_image_to_pdf_page(
+                    target_print_file,
+                    img_pdf,
+                    orientation=orientation,
+                    paper_size=paper_size,
+                    scale_mode=scale_mode,
+                    printer_name=printer_name
+                )
+                if img_pdf.exists():
+                    target_print_file = img_pdf
+                    ext = ".pdf"
+            except Exception as img_conv_err:
+                print("[AGENT IMAGE CONVERT TO PDF WARNING]:", img_conv_err)
+
+        if ext == ".pdf" and page_range and str(page_range).strip().lower() != "all":
+            target_print_file = extract_pdf_page_subset(target_print_file, page_range)
+
+        if ext == ".pdf" and (str(print_mode).lower() == "micro_xerox" or pages_per_sheet > 1):
+            target_nup = pages_per_sheet if pages_per_sheet > 1 else 2
+            target_print_file = create_n_up_pdf(
+                target_print_file,
+                target_nup,
+                page_order,
+                paper_size=paper_size,
+                orientation=orientation,
+                printer_name=printer_name
+            )
+        elif ext == ".pdf":
+            target_print_file = optimize_pdf_for_full_page(
+                target_print_file,
+                paper_size=paper_size,
+                orientation=orientation,
+                scale_mode=scale_mode,
+                printer_name=printer_name
+            )
+
+        is_micro_xerox = (str(print_mode).lower() == "micro_xerox" or pages_per_sheet > 1)
+        is_duplex_job = (not is_color) and (duplex in (
+            "duplex_long", "duplex_short", "duplexlong", "duplexshort",
+            "long_edge", "short_edge", "double", "duplex", "vertical", "horizontal"
+        ))
+
+        if ext == ".pdf" and not is_color and not is_micro_xerox and is_duplex_job:
+            import pypdf
+            reader = pypdf.PdfReader(str(target_print_file))
+            source_pages = len(reader.pages)
+            canonical_duplex_log = "duplex_short" if duplex in ("duplex_short", "duplexshort", "short_edge", "short", "horizontal") else "duplex_long"
+
+            if source_pages % 2 != 0:
+                writer = pypdf.PdfWriter()
+                for p in reader.pages:
+                    writer.add_page(p)
+                last_page = reader.pages[-1]
+                last_w = float(last_page.mediabox.width)
+                last_h = float(last_page.mediabox.height)
+                writer.add_blank_page(width=last_w, height=last_h)
+
+                clean_stem = re.sub(r'[^a-zA-Z0-9_\-]+', '_', target_print_file.stem).strip('_')
+                duplex_pdf_path = target_print_file.parent / f"{clean_stem}_duplex_even.pdf"
+                with open(duplex_pdf_path, "wb") as f_out:
+                    writer.write(f_out)
+
+                target_print_file = duplex_pdf_path
+                final_pages = source_pages + 1
+
+                print("")
+                print("[FINAL DUPLEX DOCUMENT]")
+                print(f"source_pages={source_pages}")
+                print(f"final_pages={final_pages}")
+                print(f"duplex={canonical_duplex_log}")
+                print("trailing_blank_page=true")
+                print("")
+            else:
+                print("")
+                print("[FINAL DUPLEX DOCUMENT]")
+                print(f"source_pages={source_pages}")
+                print(f"final_pages={source_pages}")
+                print(f"duplex={canonical_duplex_log}")
+                print("trailing_blank_page=false")
+                print("")
 
     # Diagnostic Logs before physical printing
     paper_str = "A4" if paper_size.lower() == "a4" else paper_size.upper()
@@ -704,16 +1170,13 @@ def print_document_silently(
         if lp:
             cmd = [lp, "-d", printer_name, "-n", str(copies), str(target_print_file)]
             subprocess.run(cmd, check=True, timeout=15)
-            return True
-        return True
+            return 0
+        return 0
 
     # Windows PDF silent execution with SumatraPDF
     sumatra = find_sumatra_executable()
     if ext == ".pdf" and sumatra:
-        settings_parts = []
-        # Final pre-composed PDF already matches physical sheet dimensions and hardware margin offsets
-        # Use 'noscale' to prevent secondary scaling/shifting by SumatraPDF!
-        settings_parts.append("noscale")
+        settings_parts = ["noscale"]
 
         # Duplex
         if is_color or duplex == "single":
@@ -725,7 +1188,7 @@ def print_document_silently(
         else:
             settings_parts.append("noduplex")
 
-        # Orientation in SumatraPDF print settings
+        # Orientation
         if orientation.lower() == "landscape":
             settings_parts.append("landscape")
         else:
@@ -746,9 +1209,45 @@ def print_document_silently(
 
         cmd = [sumatra, "-print-to", printer_name, "-print-settings", settings_str, "-silent", str(target_print_file.resolve())]
         print(f"[SUMATRA COMMAND] {' '.join(cmd)}")
+
+        before_job_ids = set()
+        if sys.platform == "win32":
+            try:
+                import win32print
+                hprinter = win32print.OpenPrinter(printer_name)
+                try:
+                    jobs = win32print.EnumJobs(hprinter, 0, 999, 2)
+                    before_job_ids = {j["JobId"] for j in jobs}
+                finally:
+                    win32print.ClosePrinter(hprinter)
+            except Exception as e:
+                print(f"[SPOOLER PRE-ENUM WARNING]: {e}")
+
         subprocess.run(cmd, check=True, timeout=45)
-        time.sleep(2.0)
-        return True
+
+        spooler_job_id = 0
+        if sys.platform == "win32":
+            try:
+                import win32print
+                hprinter = win32print.OpenPrinter(printer_name)
+                try:
+                    for _ in range(12):
+                        current_jobs = win32print.EnumJobs(hprinter, 0, 999, 2)
+                        new_jobs = [j for j in current_jobs if j["JobId"] not in before_job_ids]
+                        if new_jobs:
+                            spooler_job_id = new_jobs[0]["JobId"]
+                            break
+                        time.sleep(0.3)
+                finally:
+                    win32print.ClosePrinter(hprinter)
+            except Exception as e:
+                print(f"[SPOOLER DETECTION WARNING]: {e}")
+
+        if spooler_job_id > 0:
+            print(f"[SPOOLER TRACKING] Detected Spooler Job ID: {spooler_job_id} on '{printer_name}'")
+
+        time.sleep(1.0)
+        return spooler_job_id
 
     # Direct Windows GDI printing for Images (JPG, PNG, BMP, WEBP)
     if ext in (".jpg", ".jpeg", ".png", ".webp", ".bmp"):
@@ -935,15 +1434,13 @@ def run_agent():
                 if not order_id:
                     continue
 
-                if not file_rel_path:
-                    print(f"[AGENT POLL WARNING] Order {order_id} has empty file_path. Marking failed.")
-                    try:
-                        comp_url = f"{backend_url}/api/agent/complete/{order_id}"
-                        req_data = json.dumps({"status": "FAILED", "error": "Empty file path"}).encode("utf-8")
-                        c_req = urllib.request.Request(comp_url, data=req_data, headers={"Content-Type": "application/json", "X-Print-Agent-Token": agent_token}, method="POST")
-                        urllib.request.urlopen(c_req, timeout=5)
-                    except Exception:
-                        pass
+                files_manifest = job.get("files") or []
+                if not file_rel_path and files_manifest:
+                    file_rel_path = files_manifest[0].get("path") or files_manifest[0].get("file_path") or ""
+
+                if not file_rel_path and not files_manifest:
+                    print(f"[AGENT POLL WARNING] Order {order_id} has empty file path and manifest. Marking failed.")
+                    update_order_agent_status(backend_url, agent_token, order_id, "FAILED", error="Empty file path")
                     continue
 
                 claim_url = f"{backend_url}/api/agent/claim/{order_id}"
@@ -956,6 +1453,7 @@ def run_agent():
                     method="POST"
                 )
 
+                claimed_order = job
                 try:
                     with urllib.request.urlopen(claim_req, timeout=10) as claim_resp:
                         claim_res = json.loads(claim_resp.read().decode("utf-8"))
@@ -964,33 +1462,6 @@ def run_agent():
                             continue
                         if claim_res.get("order"):
                             claimed_order = claim_res["order"]
-                            raw_color = str(claimed_order.get("color_mode", color_mode)).lower()
-                            is_color = raw_color in ("color", "colour")
-                            color_mode = "color" if is_color else "black_white"
-                            if is_color:
-                                duplex = "single"
-                                binding = ""
-                            else:
-                                duplex = str(claimed_order.get("duplex", duplex)).lower()
-                                binding = str(claimed_order.get("binding", "")).lower()
-                                if duplex in ("double", "duplex"):
-                                    duplex = "duplex_short" if binding == "short_edge" else "duplex_long"
-
-                            copies = int(claimed_order.get("copies", copies))
-                            paper_size = claimed_order.get("paper_size", paper_size)
-                            orientation = claimed_order.get("orientation", orientation)
-                            scale_mode = claimed_order.get("scale_mode", scale_mode)
-                            print_mode = claimed_order.get("print_mode", print_mode)
-                            pages_per_sheet = int(claimed_order.get("pages_per_sheet", pages_per_sheet))
-                            if str(print_mode).lower() != "micro_xerox":
-                                pages_per_sheet = 1
-                            page_order = claimed_order.get("page_order", page_order)
-                            page_range = claimed_order.get("page_range", page_range) or "all"
-                            amount = float(claimed_order.get("amount", amount) or amount)
-                            if str(print_mode).lower() == "micro_xerox":
-                                is_color = False
-                                color_mode = "black_white"
-                            file_name = claimed_order.get("file_name", file_name)
                 except urllib.error.HTTPError as http_err:
                     if http_err.code == 409:
                         print(f"[AGENT CLAIM REJECTED] Order {order_id} already claimed by another worker.")
@@ -1001,9 +1472,58 @@ def run_agent():
                     print(f"[AGENT CLAIM ERROR] Skipping order {order_id}:", claim_err)
                     continue
 
+                raw_color = str(claimed_order.get("color_mode", color_mode)).lower()
+                is_color = raw_color in ("color", "colour")
+                color_mode = "color" if is_color else "black_white"
+                if is_color:
+                    duplex = "single"
+                    binding = ""
+                else:
+                    duplex = str(claimed_order.get("duplex", duplex)).lower()
+                    binding = str(claimed_order.get("binding", "")).lower()
+                    if duplex in ("double", "duplex"):
+                        duplex = "duplex_short" if binding == "short_edge" else "duplex_long"
+
+                copies = int(claimed_order.get("copies", copies))
+                paper_size = claimed_order.get("paper_size", paper_size)
+                orientation = claimed_order.get("orientation", orientation)
+                scale_mode = claimed_order.get("scale_mode", scale_mode)
+                print_mode = claimed_order.get("print_mode", print_mode)
+                pages_per_sheet = int(claimed_order.get("pages_per_sheet", pages_per_sheet))
+                if str(print_mode).lower() != "micro_xerox":
+                    pages_per_sheet = 1
+                page_order = claimed_order.get("page_order", page_order)
+                page_range = claimed_order.get("page_range", page_range) or "all"
+                amount = float(claimed_order.get("amount", amount) or amount)
+                if str(print_mode).lower() == "micro_xerox":
+                    is_color = False
+                    color_mode = "black_white"
+                file_name = claimed_order.get("file_name", file_name)
+
                 target_printer = select_target_printer(color_mode, config, installed_printers)
+                p_info = next((p for p in installed_printers if p["name"] == target_printer), None)
+
+                # Preflight Check 1: Target printer online
+                if p_info and not p_info.get("online", True):
+                    err_msg = f"Target printer '{target_printer}' is offline. Job will remain queued."
+                    print(f"[PREFLIGHT FAILED] {err_msg}")
+                    update_order_agent_status(backend_url, agent_token, order_id, "FAILED", error=err_msg, printed_by_printer=target_printer)
+                    continue
+
+                # Preflight Check 2: Hardware duplex support (REJECT, NO SILENT FALLBACK)
+                is_duplex_job = (not is_color) and (duplex in (
+                    "duplex_long", "duplex_short", "duplexlong", "duplexshort",
+                    "long_edge", "short_edge", "double", "duplex", "vertical", "horizontal"
+                ))
+                if is_duplex_job and p_info and p_info.get("duplex_supported") is False:
+                    err_msg = f"Duplex printing is not supported by the selected printer '{target_printer}'."
+                    print(f"[PREFLIGHT FAILED] {err_msg}")
+                    update_order_agent_status(backend_url, agent_token, order_id, "FAILED", error=err_msg, printed_by_printer=target_printer)
+                    continue
+
                 print(f"[AGENT CLAIMED] {order_id}, {target_printer}")
                 print(f"[PRINT CONFIG] orientation={str(orientation).lower()}")
+
                 try:
                     # Format Print Job Details Banner
                     if str(print_mode).lower() == "micro_xerox" and pages_per_sheet > 1:
@@ -1049,14 +1569,16 @@ def run_agent():
                     print("==================================================")
                     print("")
 
-                    print("[AGENT] Job claimed")
-                    local_file = download_file(backend_url, file_rel_path, agent_token, file_name)
-                    print("[AGENT] Document downloaded")
-                    print("[AGENT] Printer selected")
+                    # Update status to PRINTING
+                    update_order_agent_status(backend_url, agent_token, order_id, "PRINTING", printed_by_printer=target_printer)
 
-                    print(f"[PRINTING] {order_id}, {file_name}")
-                    print_document_silently(
-                        local_file,
+                    # Compose manifest into unified print-ready PDF
+                    composed_pdf = compose_manifest_to_pdf(claimed_order, backend_url, agent_token, target_printer)
+                    print(f"[AGENT COMPOSE] Final print-ready document: {composed_pdf.name}")
+
+                    # Print silently with spooler capture
+                    spooler_job_id = print_document_silently(
+                        composed_pdf,
                         target_printer,
                         copies=copies,
                         orientation=orientation,
@@ -1067,37 +1589,39 @@ def run_agent():
                         pages_per_sheet=pages_per_sheet,
                         page_order=page_order,
                         page_range=page_range,
-                        print_mode=print_mode
+                        print_mode=print_mode,
+                        already_composed=True
                     )
-                    print("[AGENT] Print dispatched")
 
-                    complete_url = f"{backend_url}/api/agent/complete/{order_id}"
-                    comp_data = json.dumps({
-                        "status": "COMPLETED",
-                        "printed_by_printer": target_printer
-                    }).encode("utf-8")
-
-                    comp_req = urllib.request.Request(
-                        complete_url,
-                        data=comp_data,
-                        headers={
-                            "Content-Type": "application/json",
-                            "X-Print-Agent-Token": agent_token,
-                            "User-Agent": "PrintFlowAgent/1.0"
-                        },
-                        method="POST"
-                    )
-                    with urllib.request.urlopen(comp_req, timeout=10) as comp_resp:
+                    if spooler_job_id > 0:
+                        update_order_agent_status(
+                            backend_url, agent_token, order_id,
+                            "SUBMITTED_TO_SPOOLER",
+                            spooler_job_id=spooler_job_id,
+                            printed_by_printer=target_printer
+                        )
+                        monitor_spooler_job(backend_url, agent_token, order_id, target_printer, spooler_job_id)
+                    else:
+                        update_order_agent_status(
+                            backend_url, agent_token, order_id,
+                            "COMPLETED",
+                            spooler_job_id=0,
+                            printed_by_printer=target_printer
+                        )
                         print(f"[PRINT COMPLETED] {order_id}")
-                        print("[AGENT] Print completed")
 
+                    # Privacy cleanup
                     try:
                         now_ts = time.time()
                         for tmp_f in TEMP_DOWNLOAD_DIR.glob("*"):
                             if tmp_f.is_file() and (now_ts - tmp_f.stat().st_mtime > 180):
                                 try:
                                     tmp_f.unlink()
-                                    print(f"[AGENT LOCAL PRIVACY CLEANUP] Expired temp file '{tmp_f.name}' deleted.")
+                                except Exception:
+                                    pass
+                            elif tmp_f.is_dir() and (now_ts - tmp_f.stat().st_mtime > 180):
+                                try:
+                                    shutil.rmtree(tmp_f, ignore_errors=True)
                                 except Exception:
                                     pass
                     except Exception as c_err:
@@ -1105,28 +1629,12 @@ def run_agent():
 
                 except Exception as print_err:
                     print(f"[AGENT PRINT ERROR] Order {order_id} printing failed: {print_err}")
-                    fail_url = f"{backend_url}/api/agent/complete/{order_id}"
-                    fail_data = json.dumps({
-                        "status": "FAILED",
-                        "error": str(print_err),
-                        "printed_by_printer": target_printer
-                    }).encode("utf-8")
-
-                    fail_req = urllib.request.Request(
-                        fail_url,
-                        data=fail_data,
-                        headers={
-                            "Content-Type": "application/json",
-                            "X-Print-Agent-Token": agent_token,
-                            "User-Agent": "PrintFlowAgent/1.0"
-                        },
-                        method="POST"
+                    update_order_agent_status(
+                        backend_url, agent_token, order_id,
+                        "FAILED",
+                        error=str(print_err),
+                        printed_by_printer=target_printer
                     )
-                    try:
-                        with urllib.request.urlopen(fail_req, timeout=10):
-                            pass
-                    except Exception:
-                        pass
 
         except Exception:
             pass

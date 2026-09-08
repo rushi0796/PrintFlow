@@ -1602,10 +1602,23 @@ function updatePrintDetailsAndPreview() {
     const bindingEl = document.querySelector('input[name="duplexBinding"]:checked');
     let duplexBinding = bindingEl ? bindingEl.value : "long_edge";
 
+    let duplexCapable = true;
     if (colorMode === "color") {
+        duplexCapable = false;
+    } else if (window.discoveredPrinters && window.discoveredPrinters.length > 0) {
+        const cfg = window.agentConfig || {};
+        const targetBw = cfg.bw_printer || (window.discoveredPrinters.find(p => p.is_default) || window.discoveredPrinters[0] || {}).name;
+        const pObj = window.discoveredPrinters.find(p => p.name === targetBw);
+        if (pObj && pObj.duplex_supported === false) {
+            duplexCapable = false;
+        }
+    }
+
+    if (!duplexCapable) {
         if (doubleSideLabel) {
-            doubleSideLabel.style.display = "none";
+            doubleSideLabel.style.display = (colorMode === "color") ? "none" : "flex";
             doubleSideLabel.style.opacity = "0.5";
+            doubleSideLabel.title = "Double-sided printing is not supported by the selected printer";
         }
         if (radioDoubleSide) {
             radioDoubleSide.disabled = true;
@@ -1621,6 +1634,7 @@ function updatePrintDetailsAndPreview() {
         if (doubleSideLabel) {
             doubleSideLabel.style.display = "flex";
             doubleSideLabel.style.opacity = "1";
+            doubleSideLabel.title = "";
         }
         if (radioDoubleSide) radioDoubleSide.disabled = false;
         if (printSide === "double") {
@@ -1636,7 +1650,7 @@ function updatePrintDetailsAndPreview() {
     }
 
     let canonicalDuplex = "single";
-    if (colorMode !== "color" && printSide === "double") {
+    if (duplexCapable && colorMode !== "color" && printSide === "double") {
         canonicalDuplex = (duplexBinding === "short_edge") ? "duplex_short" : "duplex_long";
     }
 
@@ -1874,6 +1888,7 @@ if (printDetailsFileName) {
         settingsForm.addEventListener("input", updatePrintDetailsAndPreview);
         window.addEventListener("resize", updatePrintDetailsAndPreview);
     }
+    fetchConnectedPrinters();
     updatePrintDetailsAndPreview();
 }
 
@@ -2108,10 +2123,25 @@ if (payBtn) {
             const printModeVal = localStorage.getItem("printMode") || "standard";
             const pagesPerSheetVal = (printModeVal === "micro_xerox") ? parseInt(localStorage.getItem("pagesPerSheet") || "1", 10) : 1;
             const pageOrderVal = localStorage.getItem("pageOrder") || "horizontal";
-            const amountVal = parseFloat(localStorage.getItem("amount") || "2");
-            const uploadedPath = localStorage.getItem("backendFilePath") || "";
-            const rawMobile = localStorage.getItem("mobileNumber") || "9876543210";
-            const cleanContact = rawMobile.replace(/\D/g, "").slice(-10) || "9876543210";
+            let filesManifest = [];
+            try {
+                const storedDetails = JSON.parse(localStorage.getItem("fileListDetails") || "[]");
+                if (Array.isArray(storedDetails) && storedDetails.length > 0) {
+                    filesManifest = storedDetails
+                        .filter(f => f && (f.path || f.backendPath) && (f.status === "UPLOADED" || !f.status))
+                        .map((f, idx) => ({
+                            name: f.name || `file_${idx + 1}`,
+                            path: f.path || f.backendPath,
+                            pages: parseInt(f.pages || 1, 10),
+                            sequence: typeof f.sequence === "number" ? f.sequence : idx
+                        }));
+                }
+            } catch (parseErr) {
+                console.warn("[PAYMENT] Error parsing fileListDetails:", parseErr);
+            }
+
+            const effectivePath = uploadedPath || (filesManifest.length > 0 ? filesManifest[0].path : "");
+            const effectiveName = fileNameVal || (filesManifest.length > 0 ? filesManifest.map(f => f.name).join(", ") : "");
 
             const payload = {
                 amount: amountVal,
@@ -2128,8 +2158,9 @@ if (payBtn) {
                 print_mode: printModeVal,
                 pages_per_sheet: pagesPerSheetVal,
                 page_order: pageOrderVal,
-                file_name: fileNameVal,
-                file_path: uploadedPath,
+                file_name: effectiveName,
+                file_path: effectivePath,
+                files: filesManifest.length > 0 ? filesManifest : undefined,
                 customer_mobile: cleanContact
             };
 
@@ -2569,12 +2600,14 @@ const colorPrinterName = document.getElementById("colorPrinterName");
 const refreshPrintersBtn = document.getElementById("refreshPrintersBtn");
 
 async function fetchConnectedPrinters() {
-    if (!bwPrinterName && !colorPrinterName && !agentStatusBadge) return;
     try {
         const res = await fetch(apiUrl("/api/agent/status", "/api/agent/status"));
         const data = await res.json();
         if (data && data.status === "success") {
             const isOnline = data.agent_online;
+            window.discoveredPrinters = data.discovered_printers || [];
+            window.agentConfig = data.config || {};
+
             if (agentStatusBadge) {
                 agentStatusBadge.textContent = isOnline ? "● Agent Online" : "● Agent Offline";
                 agentStatusBadge.style.background = isOnline ? "#dcfce7" : "#fee2e2";
@@ -2589,6 +2622,10 @@ async function fetchConnectedPrinters() {
             
             if (bwPrinterName) bwPrinterName.textContent = bwTarget;
             if (colorPrinterName) colorPrinterName.textContent = colorTarget;
+
+            if (typeof renderPrintSettings === "function") {
+                renderPrintSettings();
+            }
         }
     } catch (err) {
         console.warn("Agent status fetch error:", err);

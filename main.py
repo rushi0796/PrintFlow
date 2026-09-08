@@ -148,6 +148,7 @@ class PrintOrder(BaseModel):
     customer_mobile: str = "Guest"
     amount: float = 2.0
     file_path: str = ""
+    files: Optional[List[Dict[str, Any]]] = None
 
 class RazorpayOrderRequest(BaseModel):
     amount: float
@@ -170,6 +171,7 @@ class RazorpayOrderRequest(BaseModel):
     order_id: Optional[str] = None
     customer_id: Optional[str] = "CUST_001"
     currency: Optional[str] = "INR"
+    files: Optional[List[Dict[str, Any]]] = None
 
 @app.get("/api/orders")
 def get_all_orders(
@@ -408,6 +410,9 @@ def agent_complete_job_endpoint(order_id: str, req: dict, x_print_agent_token: O
 
     new_status = req.get("status", "COMPLETED")
     order["status"] = new_status
+    if "spooler_job_id" in req:
+        order["spooler_job_id"] = req["spooler_job_id"]
+
     if new_status == "COMPLETED":
         order["document_status"] = "PRINTED"
         order["printed_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -415,6 +420,11 @@ def agent_complete_job_endpoint(order_id: str, req: dict, x_print_agent_token: O
         order["completed_at"] = datetime.utcnow().isoformat()
         save_order(order)
         schedule_secure_document_cleanup(order_id, 2.5)
+    elif new_status in ("SUBMITTED_TO_SPOOLER", "PRINTING"):
+        order["document_status"] = "PRINTING"
+        if req.get("printed_by_printer"):
+            order["printed_by_printer"] = req.get("printed_by_printer")
+        save_order(order)
     else:
         order["document_status"] = "UPLOADED"
         order["print_error"] = req.get("error", "Print execution failed")
@@ -508,6 +518,7 @@ def logout_endpoint(
     }
 
 @app.get("/api/agent/status")
+@app.get("/api/printers")
 def agent_status_endpoint():
     is_online = (time.time() - AGENT_STATE["last_seen"]) < 12
     return {
@@ -549,6 +560,16 @@ def create_razorpay_order_endpoint(request: RazorpayOrderRequest):
                 "currency": request.currency or "INR",
                 "order": existing_order
             }
+
+    files_manifest = request.files or []
+    if files_manifest:
+        manifest_pages = sum(int(f.get("pages", 1) or 1) for f in files_manifest)
+        if not request.pages or request.pages <= 0:
+            request.pages = max(1, manifest_pages)
+        if not request.file_name or request.file_name == "document.pdf":
+            request.file_name = ", ".join(f.get("name", "document") for f in files_manifest)
+        if not request.file_path and files_manifest:
+            request.file_path = files_manifest[0].get("path", "")
 
     if request.amount >= 100:
         amount_in_paise = int(round(request.amount))
@@ -606,6 +627,7 @@ def create_razorpay_order_endpoint(request: RazorpayOrderRequest):
             "razorpay_order_id": final_order_id,
             "file_name": request.file_name or "document.pdf",
             "file_path": request.file_path or "",
+            "files": files_manifest,
             "copies": request.copies or 1,
             "pages": request.pages or 1,
             "page_range": request.page_range or "all",

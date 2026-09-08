@@ -167,7 +167,9 @@ def init_storage():
                     "pages_per_sheet": "INTEGER DEFAULT 1",
                     "page_order": "TEXT DEFAULT 'horizontal'",
                     "customer_mobile": "TEXT DEFAULT 'Guest'",
-                    "binding": "TEXT DEFAULT ''"
+                    "binding": "TEXT DEFAULT ''",
+                    "files": "TEXT DEFAULT '[]'",
+                    "spooler_job_id": "INTEGER DEFAULT 0"
                 }
                 batch_alter = ", ".join(f"ADD COLUMN IF NOT EXISTS {col} {definition}" for col, definition in migration_cols.items())
                 cursor.execute(f"ALTER TABLE printflow_orders {batch_alter}")
@@ -211,7 +213,9 @@ def init_storage():
                 "pages_per_sheet": "INTEGER DEFAULT 1",
                 "page_order": "TEXT DEFAULT 'horizontal'",
                 "customer_mobile": "TEXT DEFAULT 'Guest'",
-                "binding": "TEXT DEFAULT ''"
+                "binding": "TEXT DEFAULT ''",
+                "files": "TEXT DEFAULT '[]'",
+                "spooler_job_id": "INTEGER DEFAULT 0"
             }
             for column, definition in migration_columns.items():
                 if column not in existing_columns:
@@ -229,6 +233,18 @@ def _row_to_dict(row: Any) -> Optional[dict]:
         item = dict(row)
     if "paid" in item:
         item["paid"] = bool(item["paid"])
+    if "files" in item and item["files"]:
+        try:
+            if isinstance(item["files"], str):
+                item["files"] = json.loads(item["files"])
+        except Exception:
+            pass
+    elif "files" not in item:
+        item["files"] = []
+    if "print_error" in item and "error" not in item:
+        item["error"] = item["print_error"]
+    elif "error" in item and "print_error" not in item:
+        item["print_error"] = item["error"]
     return item
 
 
@@ -262,6 +278,7 @@ def save_order(order: dict) -> dict:
     init_storage()
     order.setdefault("razorpay_order_id", None)
     order.setdefault("razorpay_payment_id", None)
+    order.setdefault("file_name", "document.pdf")
     order.setdefault("file_path", "")
     order.setdefault("pages", 1)
     order.setdefault("copies", 1)
@@ -294,6 +311,15 @@ def save_order(order: dict) -> dict:
     order.setdefault("page_order", "horizontal")
     order.setdefault("customer_mobile", "Guest")
     order.setdefault("binding", "")
+    order.setdefault("spooler_job_id", 0)
+
+    # Serialize files manifest if given as list/dict
+    raw_files = order.get("files")
+    if isinstance(raw_files, (list, dict)):
+        order["files"] = json.dumps(raw_files)
+    elif not raw_files:
+        order["files"] = "[]"
+
     # Clean claimed_at to ensure it matches DOUBLE PRECISION schema
     raw_claimed = order.get("claimed_at")
     if raw_claimed is not None and not isinstance(raw_claimed, (int, float)):
@@ -304,7 +330,16 @@ def save_order(order: dict) -> dict:
                 order["claimed_at"] = datetime.strptime(str(raw_claimed), "%Y-%m-%d %H:%M:%S").timestamp()
             except Exception:
                 order["claimed_at"] = None
-    columns = ["order_id", "razorpay_order_id", "razorpay_payment_id", "file_name", "file_path", "file_size", "pages", "copies", "paper_size", "page_range", "color_mode", "duplex", "binding", "orientation", "print_quality", "dpi", "scaling", "custom_scale", "margins", "amount", "paid", "status", "document_status", "timestamp", "created_at", "completed_at", "print_error", "claimed_at", "printed_by_printer", "backup_printer", "retry_count", "scale_mode", "print_mode", "pages_per_sheet", "page_order", "customer_mobile"]
+
+    columns = [
+        "order_id", "razorpay_order_id", "razorpay_payment_id", "file_name", "file_path",
+        "file_size", "pages", "copies", "paper_size", "page_range", "color_mode", "duplex",
+        "binding", "orientation", "print_quality", "dpi", "scaling", "custom_scale", "margins",
+        "amount", "paid", "status", "document_status", "timestamp", "created_at", "completed_at",
+        "print_error", "claimed_at", "printed_by_printer", "backup_printer", "retry_count",
+        "scale_mode", "print_mode", "pages_per_sheet", "page_order", "customer_mobile",
+        "files", "spooler_job_id"
+    ]
     values = [order.get(column) for column in columns]
     placeholders = ", ".join(["%s"] * len(columns)) if DATABASE_URL else ", ".join(["?"] * len(columns))
     updates = ", ".join(f"{column}=excluded.{column}" for column in columns if column != "order_id")
@@ -381,14 +416,17 @@ def claim_order(order_id: str) -> Optional[dict]:
         return get_order(order_id) if cursor.rowcount == 1 else None
 
 
-def complete_order(order_id: str, status: str, error: str = "", printer: str = "") -> Optional[dict]:
+def complete_order(order_id: str, status: str, error: str = "", printer: str = "", spooler_job_id: int = 0, **kwargs) -> Optional[dict]:
     order = get_order(order_id)
     if not order:
         return None
     order["status"] = status
     order["document_status"] = "PRINTED" if status == "COMPLETED" else "UPLOADED"
     order["print_error"] = error or None
-    order["printed_by_printer"] = printer or order.get("printed_by_printer")
+    effective_printer = printer or kwargs.get("printer_name") or order.get("printed_by_printer")
+    order["printed_by_printer"] = effective_printer
+    if spooler_job_id:
+        order["spooler_job_id"] = spooler_job_id
     if status == "COMPLETED":
         order["completed_at"] = datetime.utcnow().isoformat()
     return save_order(order)
