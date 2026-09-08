@@ -1,0 +1,7 @@
+agent_temp/
+tests/
+scratch/
+*.sqlite3
+*.pdf
+__pycache__/
+*.pyc
