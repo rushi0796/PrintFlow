@@ -408,11 +408,20 @@ def dispatch_print_job(order_data: dict) -> dict:
                     try:
                         pinfo = win32print.GetPrinter(hprinter, 2)
                         pdm = pinfo["pDevMode"]
+                        pdm.Color = 2 if is_color else 1
+                        pdm.Fields |= win32con.DM_COLOR
                         pdm.Orientation = 2 if orientation.lower() == "landscape" else 1
                         pdm.Fields |= win32con.DM_ORIENTATION
                         paper_map_dm = {"a4": 9, "letter": 1, "legal": 5}
                         pdm.PaperSize = paper_map_dm.get(paper_size.lower(), 9)
                         pdm.Fields |= win32con.DM_PAPERSIZE
+                        if is_color or duplex == "single":
+                            pdm.Duplex = 1
+                        elif duplex in ("duplex_short", "duplexshort", "short_edge", "short", "horizontal"):
+                            pdm.Duplex = 3
+                        elif duplex in ("duplex_long", "duplexlong", "long_edge", "double", "duplex", "vertical"):
+                            pdm.Duplex = 2
+                        pdm.Fields |= win32con.DM_DUPLEX
                         win32print.SetPrinter(hprinter, 2, pinfo, 0)
                     finally:
                         win32print.ClosePrinter(hprinter)
@@ -426,13 +435,13 @@ def dispatch_print_job(order_data: dict) -> dict:
                     settings_parts.append("fit")
                 
                 if is_color or duplex == "single":
-                    settings_parts.append("noduplex")
+                    settings_parts.append("simplex")
                 elif duplex in ("duplex_short", "duplexshort", "short_edge", "short", "horizontal"):
                     settings_parts.append("duplexshort")
                 elif duplex in ("duplex_long", "duplexlong", "long_edge", "double", "duplex", "vertical"):
                     settings_parts.append("duplexlong")
                 else:
-                    settings_parts.append("noduplex")
+                    settings_parts.append("simplex")
 
                 if orientation.lower() == "landscape":
                     settings_parts.append("landscape")
@@ -447,9 +456,7 @@ def dispatch_print_job(order_data: dict) -> dict:
 
                 settings_parts.append(f"{max(1, copies)}x")
 
-                if color_mode.lower() in ("color", "colour"):
-                    settings_parts.append("color")
-                else:
+                if not is_color:
                     settings_parts.append("monochrome")
 
                 settings_str = ",".join(settings_parts)

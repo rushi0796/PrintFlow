@@ -166,14 +166,46 @@ def select_target_printer(color_mode: str, config: dict, installed_printers: lis
     is_color = color_mode.lower() in ("color", "colour")
     if is_color:
         configured_color = config.get("color_printer", "").strip()
-        target = configured_color if configured_color in printer_names else next((n for n in printer_names if any(k in n.lower() for k in ("color", "epson", "l3210", "inkjet"))), "")
-        if not target or target not in printer_names:
-            raise RuntimeError(f"Configured Color printer '{configured_color or 'Color'}' is unavailable or offline. Job will remain queued.")
-        return target
+        # 1. Check if configured color printer is present and online
+        if configured_color and configured_color in printer_names:
+            p_obj = next((p for p in installed_printers if p["name"] == configured_color), None)
+            if p_obj and p_obj.get("online", True):
+                return configured_color
+        # 2. Look for any online color-capable printer (color_supported == True or matches color/epson/inkjet)
+        online_color = [
+            p["name"] for p in installed_printers
+            if p.get("online", True) and (p.get("color_supported") is True or any(k in p["name"].lower() for k in ("color", "epson", "inkjet", "l3210", "l3110")))
+        ]
+        if online_color:
+            # Prefer L3210 or explicitly named color
+            pref = next((n for n in online_color if "l3210" in n.lower()), online_color[0])
+            return pref
+        # 3. Fallback to configured color even if reported offline (spooler will queue)
+        if configured_color and configured_color in printer_names:
+            return configured_color
+        # 4. Fallback to any color printer by name
+        fallback_color = next((n for n in printer_names if any(k in n.lower() for k in ("color", "epson", "l3210", "l3110", "inkjet"))), "")
+        if fallback_color:
+            return fallback_color
+        raise RuntimeError(f"Configured Color printer '{configured_color or 'Color'}' is unavailable or offline. Job will remain queued.")
     else:
         configured_bw = config.get("bw_printer", "").strip()
-        target = configured_bw if configured_bw in printer_names else next((n for n in printer_names if any(k in n.lower() for k in ("kyocera", "m2040", "3212", "b&w", "mono", "black", "laser"))), "")
-        if not target or target not in printer_names:
+        # 1. Check if configured B&W printer is present and online
+        if configured_bw and configured_bw in printer_names:
+            p_obj = next((p for p in installed_printers if p["name"] == configured_bw), None)
+            if p_obj and p_obj.get("online", True):
+                return configured_bw
+        # 2. Look for any online B&W / laser printer
+        online_bw = [
+            p["name"] for p in installed_printers
+            if p.get("online", True) and any(k in p["name"].lower() for k in ("kyocera", "m2040", "3212", "b&w", "mono", "black", "laser"))
+        ]
+        if online_bw:
+            return online_bw[0]
+        if configured_bw and configured_bw in printer_names:
+            return configured_bw
+        target = next((n for n in printer_names if any(k in n.lower() for k in ("kyocera", "m2040", "3212", "b&w", "mono", "black", "laser"))), "")
+        if not target:
             target = default_printer
         return target
 
@@ -737,28 +769,52 @@ def convert_image_to_pdf_page(
         draw_x = (canvas_w - draw_w) / 2.0
         draw_y = (canvas_h - draw_h) / 2.0
 
-    temp_rgb_path = out_pdf_path.parent / f"tmp_rgb_{out_pdf_path.stem}.jpg"
-    img.save(temp_rgb_path, "JPEG", quality=95)
-
+    has_reportlab = False
     try:
-        c = canvas.Canvas(str(out_pdf_path), pagesize=(canvas_w, canvas_h))
-        if is_fill:
-            c.saveState()
-            clip_path = c.beginPath()
-            clip_path.rect(l_m, b_m, avail_w, avail_h)
-            c.clipPath(clip_path, stroke=0)
-            c.drawImage(ImageReader(str(temp_rgb_path)), draw_x, draw_y, width=draw_w, height=draw_h)
-            c.restoreState()
-        else:
-            c.drawImage(ImageReader(str(temp_rgb_path)), draw_x, draw_y, width=draw_w, height=draw_h)
-        c.showPage()
-        c.save()
-    finally:
-        if temp_rgb_path.exists():
-            try:
-                temp_rgb_path.unlink()
-            except Exception:
-                pass
+        from reportlab.pdfgen import canvas
+        from reportlab.lib.utils import ImageReader
+        has_reportlab = True
+    except Exception as rl_err:
+        print(f"[IMAGE TO PDF REPORTLAB WARNING]: {rl_err}. Falling back to native PIL PDF rendering.")
+
+    if has_reportlab:
+        temp_rgb_path = out_pdf_path.parent / f"tmp_rgb_{out_pdf_path.stem}.jpg"
+        img.save(temp_rgb_path, "JPEG", quality=95)
+
+        try:
+            c = canvas.Canvas(str(out_pdf_path), pagesize=(canvas_w, canvas_h))
+            if is_fill:
+                c.saveState()
+                clip_path = c.beginPath()
+                clip_path.rect(l_m, b_m, avail_w, avail_h)
+                c.clipPath(clip_path, stroke=0)
+                c.drawImage(ImageReader(str(temp_rgb_path)), draw_x, draw_y, width=draw_w, height=draw_h)
+                c.restoreState()
+            else:
+                c.drawImage(ImageReader(str(temp_rgb_path)), draw_x, draw_y, width=draw_w, height=draw_h)
+            c.showPage()
+            c.save()
+        finally:
+            if temp_rgb_path.exists():
+                try:
+                    temp_rgb_path.unlink()
+                except Exception:
+                    pass
+    else:
+        # High-fidelity native PIL direct PDF export (zero external dependency required)
+        dpi = 300
+        canvas_px_w = int(canvas_w / 72.0 * dpi)
+        canvas_px_h = int(canvas_h / 72.0 * dpi)
+        draw_px_w = max(1, int(draw_w / 72.0 * dpi))
+        draw_px_h = max(1, int(draw_h / 72.0 * dpi))
+        # Note: PIL image coordinates are top-left origin, PDF coordinates are bottom-left
+        draw_px_x = int(draw_x / 72.0 * dpi)
+        draw_px_y = int((canvas_h - (draw_y + draw_h)) / 72.0 * dpi)
+
+        base_sheet = Image.new("RGB", (canvas_px_w, canvas_px_h), (255, 255, 255))
+        resized_img = img.resize((draw_px_w, draw_px_h), Image.Resampling.LANCZOS)
+        base_sheet.paste(resized_img, (draw_px_x, draw_px_y))
+        base_sheet.save(str(out_pdf_path), "PDF", resolution=float(dpi))
 
     return out_pdf_path
 
@@ -1214,17 +1270,48 @@ def print_document_silently(
     # Windows PDF silent execution with SumatraPDF
     sumatra = find_sumatra_executable()
     if ext == ".pdf" and sumatra:
+        # Pre-configure Windows Printer DEVMODE (ensures hardware driver is initialized for Color or Monochrome)
+        if sys.platform == "win32":
+            try:
+                import win32print, win32con
+                hprinter = win32print.OpenPrinter(printer_name, {"DesiredAccess": win32print.PRINTER_ALL_ACCESS})
+                try:
+                    pinfo = win32print.GetPrinter(hprinter, 2)
+                    devmode = pinfo.get("pDevMode")
+                    if devmode:
+                        # 1 = MONOCHROME, 2 = COLOR
+                        devmode.Color = 2 if is_color else 1
+                        devmode.Fields |= win32con.DM_COLOR
+                        devmode.Orientation = 2 if orientation.lower() == "landscape" else 1
+                        devmode.Fields |= win32con.DM_ORIENTATION
+                        paper_map_dm = {"a4": 9, "letter": 1, "legal": 5}
+                        devmode.PaperSize = paper_map_dm.get(paper_size.lower(), 9)
+                        devmode.Fields |= win32con.DM_PAPERSIZE
+                        if is_color or duplex == "single":
+                            devmode.Duplex = 1
+                        elif duplex in ("duplex_short", "duplexshort", "short_edge", "short", "horizontal"):
+                            devmode.Duplex = 3
+                        elif duplex in ("duplex_long", "duplexlong", "long_edge", "double", "duplex", "vertical"):
+                            devmode.Duplex = 2
+                        devmode.Fields |= win32con.DM_DUPLEX
+                        win32print.SetPrinter(hprinter, 2, pinfo, 0)
+                        print(f"[DEVMODE CONFIG] Set {printer_name} -> dmColor={'2 (COLOR)' if is_color else '1 (MONO)'}, dmDuplex={devmode.Duplex}")
+                finally:
+                    win32print.ClosePrinter(hprinter)
+            except Exception as dm_err:
+                print(f"[PRINTER DEVMODE CONFIG WARNING]: {dm_err}")
+
         settings_parts = ["noscale"]
 
-        # Duplex
+        # Duplex (Sumatra keyword is "simplex", "duplexshort", or "duplexlong")
         if is_color or duplex == "single":
-            settings_parts.append("noduplex")
+            settings_parts.append("simplex")
         elif duplex in ("duplex_short", "duplexshort", "short_edge", "short", "horizontal"):
             settings_parts.append("duplexshort")
         elif duplex in ("duplex_long", "duplexlong", "long_edge", "double", "duplex", "vertical"):
             settings_parts.append("duplexlong")
         else:
-            settings_parts.append("noduplex")
+            settings_parts.append("simplex")
 
         # Orientation
         if orientation.lower() == "landscape":
@@ -1238,9 +1325,10 @@ def print_document_silently(
         settings_parts.append(f"paper={pname}")
         settings_parts.append(f"{max(1, copies)}x")
 
-        if color_mode.lower() in ("color", "colour"):
-            settings_parts.append("color")
-        else:
+        # Color mode:
+        # SumatraPDF natively supports "monochrome". When printing Color, omit "monochrome"
+        # and allow the Windows DEVMODE (dmColor = 2) to render in full vibrant color.
+        if not is_color:
             settings_parts.append("monochrome")
 
         settings_str = ",".join(settings_parts)
@@ -1269,13 +1357,13 @@ def print_document_silently(
                 import win32print
                 hprinter = win32print.OpenPrinter(printer_name)
                 try:
-                    for _ in range(12):
+                    for _ in range(15):
                         current_jobs = win32print.EnumJobs(hprinter, 0, 999, 2)
                         new_jobs = [j for j in current_jobs if j["JobId"] not in before_job_ids]
                         if new_jobs:
                             spooler_job_id = new_jobs[0]["JobId"]
                             break
-                        time.sleep(0.3)
+                        time.sleep(0.2)
                 finally:
                     win32print.ClosePrinter(hprinter)
             except Exception as e:
@@ -1283,6 +1371,8 @@ def print_document_silently(
 
         if spooler_job_id > 0:
             print(f"[SPOOLER TRACKING] Detected Spooler Job ID: {spooler_job_id} on '{printer_name}'")
+        else:
+            print(f"[SPOOLER TRACKING] Job submitted to '{printer_name}' (completed spooling or processed directly)")
 
         time.sleep(1.0)
         return spooler_job_id
@@ -1664,11 +1754,12 @@ def run_agent():
                             seg_claim["pages_per_sheet"] = s_nup
                             seg_claim["page_order"] = s_order
 
-                            print(f"[AGENT SEGMENT {s_idx+1}/{len(raw_files)}] Processing '{f_seg.get('name')}' (copies={s_copies}, duplex={s_duplex}, orient={s_orient}, mode={s_print_mode}, nup={s_nup})...")
-                            seg_pdf = compose_manifest_to_pdf(seg_claim, backend_url, agent_token, target_printer)
+                            seg_target_printer = select_target_printer(s_color, config, installed_printers)
+                            print(f"[AGENT SEGMENT {s_idx+1}/{len(raw_files)}] Processing '{f_seg.get('name')}' on '{seg_target_printer}' (copies={s_copies}, duplex={s_duplex}, color={s_color}, orient={s_orient}, mode={s_print_mode}, nup={s_nup})...")
+                            seg_pdf = compose_manifest_to_pdf(seg_claim, backend_url, agent_token, seg_target_printer)
                             seg_job_id = print_document_silently(
                                 seg_pdf,
-                                target_printer,
+                                seg_target_printer,
                                 copies=s_copies,
                                 orientation=s_orient,
                                 color_mode=s_color,
@@ -1682,8 +1773,8 @@ def run_agent():
                                 already_composed=True
                             )
                             if seg_job_id > 0:
-                                print(f"[AGENT SEGMENT {s_idx+1}] Spooled as Job #{seg_job_id}. Monitoring...")
-                                monitor_spooler_job(backend_url, agent_token, order_id, target_printer, seg_job_id)
+                                print(f"[AGENT SEGMENT {s_idx+1}] Spooled as Job #{seg_job_id} on '{seg_target_printer}'. Monitoring...")
+                                monitor_spooler_job(backend_url, agent_token, order_id, seg_target_printer, seg_job_id)
                             else:
                                 time.sleep(1)
 
