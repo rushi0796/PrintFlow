@@ -347,8 +347,12 @@ function saveUploadStateToLocalStorage() {
     if (activeItems.length === 0) {
         localStorage.removeItem("fileName");
         localStorage.removeItem("pdfPageCount");
+        localStorage.removeItem("selectedPagesCount");
+        localStorage.removeItem("amount");
         localStorage.removeItem("backendFilePath");
         localStorage.removeItem("fileListDetails");
+        localStorage.removeItem("printflowFileConfigs");
+        localStorage.removeItem("printflow_session_files");
         return;
     }
 
@@ -356,24 +360,76 @@ function saveUploadStateToLocalStorage() {
     let totalPages = 0;
     activeItems.forEach(i => { totalPages += (i.pages || 1); });
 
-    const uploadedItems = activeItems.filter(i => i.status === "UPLOADED");
-    const primaryPath = uploadedItems.length > 0 ? uploadedItems[0].backendPath : "";
+    const uploadedItems = activeItems.filter(i => i.status === "UPLOADED" && i.backendPath);
+    const primaryPath = uploadedItems.length > 0 ? uploadedItems[0].backendPath : (activeItems[0].backendPath || "");
 
-    const detailsList = activeItems.map(i => ({
+    // Load any existing per-file configurations so user edits are preserved on back-navigation
+    let existingConfigsMap = {};
+    try {
+        const rawConfigs = localStorage.getItem("printflow_session_files") || localStorage.getItem("printflowFileConfigs");
+        if (rawConfigs) {
+            const parsed = JSON.parse(rawConfigs);
+            if (Array.isArray(parsed)) {
+                parsed.forEach(f => {
+                    if (f && f.id) existingConfigsMap[f.id] = f;
+                    if (f && f.name) existingConfigsMap[f.name] = f;
+                });
+            }
+        }
+    } catch(e) {}
+
+    const sessionList = activeItems.map((item, idx) => {
+        const prev = existingConfigsMap[item.id] || existingConfigsMap[item.name] || item.settings || {};
+        const base = {
+            id: item.id || `file_${idx}_${Date.now()}`,
+            name: item.name,
+            size: item.size || 0,
+            pages: Math.max(1, parseInt(item.pages || 1, 10)),
+            path: item.backendPath || prev.path || "",
+            sequence: typeof item.sequence === "number" ? item.sequence : idx,
+            pageSelection: prev.pageSelection || "all",
+            customPagesInput: prev.customPagesInput || "",
+            printSide: prev.printSide || (Math.max(1, parseInt(item.pages || 1, 10)) >= 2 ? "double" : "single"),
+            duplexBinding: prev.duplexBinding || "long_edge",
+            copies: prev.copies || 1,
+            colorMode: prev.colorMode || "black_white",
+            orientation: prev.orientation || "portrait",
+            paperSize: prev.paperSize || "a4",
+            scaleMode: prev.scaleMode || "fit",
+            printMode: prev.printMode || "standard",
+            pagesPerSheet: prev.pagesPerSheet || (prev.printMode === "micro_xerox" ? 2 : 1),
+            pageOrder: prev.pageOrder || "horizontal"
+        };
+        const ensured = (typeof ensureFileConfigDefaults === "function") ? ensureFileConfigDefaults(base, idx) : base;
+        return (typeof computeFileSheetsAndPrice === "function") ? computeFileSheetsAndPrice(ensured) : ensured;
+    });
+
+    const totalSelectedPages = sessionList.reduce((acc, f) => acc + ((f.selectedPagesCount || f.pages || 1) * (f.copies || 1)), 0);
+    const totalAmount = sessionList.reduce((acc, f) => acc + (f.calculatedPrice || 0), 0);
+
+    const detailsList = activeItems.map((i, idx) => ({
+        id: i.id || (sessionList[idx] ? sessionList[idx].id : `file_${idx}`),
         name: i.name,
         size: i.size,
         pages: i.pages,
-        path: i.backendPath,
+        path: i.backendPath || (sessionList[idx] ? sessionList[idx].path : ""),
         status: i.status,
         sequence: i.sequence
     }));
 
     localStorage.setItem("fileName", fileNamesStr);
-    localStorage.setItem("pdfPageCount", String(totalPages));
+    localStorage.setItem("pdfPageCount", String(totalSelectedPages || totalPages));
+    localStorage.setItem("selectedPagesCount", String(totalSelectedPages || totalPages));
+    if (totalAmount > 0) {
+        localStorage.setItem("amount", totalAmount.toFixed(2));
+    }
     if (primaryPath) {
         localStorage.setItem("backendFilePath", primaryPath);
     }
+    localStorage.setItem("printflow_session_files", JSON.stringify(sessionList));
+    localStorage.setItem("printflowFileConfigs", JSON.stringify(sessionList));
     localStorage.setItem("fileListDetails", JSON.stringify(detailsList));
+
     localStorage.removeItem("lastOrderId");
     localStorage.removeItem("razorpayOrderId");
     localStorage.removeItem("currentCheckoutPaid");
@@ -650,7 +706,10 @@ function removeFileFromQueue(fileId) {
     }
 
     isQueueProcessing = false;
+    calculateAndUpdateTotalPages();
+    saveUploadStateToLocalStorage();
     updateOverallUploadSummary();
+    updateContinueButtonState();
     processUploadQueue();
 }
 window.removeFileFromQueue = removeFileFromQueue;
@@ -674,6 +733,7 @@ function clearAllFilesFromQueue() {
         if (item.xhr) {
             try { item.xhr.abort(); } catch(e) {}
         }
+        item.status = "CANCELED";
     });
 
     fileQueue = [];
@@ -681,9 +741,79 @@ function clearAllFilesFromQueue() {
     const listContainer = document.getElementById("fileQueueList");
     if (listContainer) listContainer.innerHTML = "";
 
+    calculateAndUpdateTotalPages();
+    saveUploadStateToLocalStorage();
     updateOverallUploadSummary();
+    updateContinueButtonState();
 }
 window.clearAllFilesFromQueue = clearAllFilesFromQueue;
+
+function restoreUploadSessionIfAvailable() {
+    const listContainer = document.getElementById("fileQueueList");
+    if (!listContainer) return;
+
+    if (fileQueue && fileQueue.length > 0) return;
+
+    let savedFiles = [];
+    try {
+        const raw = localStorage.getItem("printflow_session_files") || localStorage.getItem("printflowFileConfigs");
+        if (raw) {
+            const parsed = JSON.parse(raw);
+            if (Array.isArray(parsed) && parsed.length > 0) {
+                savedFiles = parsed.filter(f => f && f.name && f.status !== "CANCELED");
+            }
+        }
+    } catch (e) {}
+
+    if (!savedFiles.length) {
+        try {
+            const rawDetails = localStorage.getItem("fileListDetails");
+            if (rawDetails) {
+                const parsedDetails = JSON.parse(rawDetails);
+                if (Array.isArray(parsedDetails) && parsedDetails.length > 0) {
+                    savedFiles = parsedDetails.filter(f => f && f.name && f.status !== "CANCELED");
+                }
+            }
+        } catch (e) {}
+    }
+
+    if (!savedFiles.length) {
+        updateOverallUploadSummary();
+        updateContinueButtonState();
+        return;
+    }
+
+    listContainer.innerHTML = "";
+    savedFiles.forEach((f, idx) => {
+        if (!f || !f.name) return;
+        const fileId = f.id || `file_${idx}_${Date.now()}`;
+        const typeInfo = getFileTypeDetails({ name: f.name });
+        const item = {
+            id: fileId,
+            file: null,
+            name: f.name,
+            size: f.size || 0,
+            typeCategory: typeInfo.category,
+            typeIcon: typeInfo.icon,
+            status: (f.path || f.backendPath) ? "UPLOADED" : "WAITING",
+            progress: 100,
+            pages: Math.max(1, parseInt(f.pages || 1, 10)),
+            isDetectingPages: false,
+            backendPath: f.path || f.backendPath || "",
+            xhr: null,
+            error: null,
+            sequence: typeof f.sequence === "number" ? f.sequence : (idx + 1),
+            settings: f
+        };
+        fileQueue.push(item);
+        renderFileRowUI(item);
+    });
+
+    calculateAndUpdateTotalPages();
+    updateOverallUploadSummary();
+    updateContinueButtonState();
+}
+window.restoreUploadSessionIfAvailable = restoreUploadSessionIfAvailable;
 
 // Attach Upload UI Event Listeners
 document.addEventListener("DOMContentLoaded", function() {
@@ -700,6 +830,9 @@ document.addEventListener("DOMContentLoaded", function() {
     const clearAllBtn = document.getElementById("clearAllBtn");
     const toggleQueueBtn = document.getElementById("toggleQueueBtn");
     const continueBtn = document.getElementById("continueBtn");
+
+    // Restore any active upload session when returning from Print Details (Back button)
+    restoreUploadSessionIfAvailable();
 
     if (choosePdfBtn && fileInput) {
         choosePdfBtn.addEventListener("click", function(e) {
@@ -773,7 +906,7 @@ document.addEventListener("DOMContentLoaded", function() {
                 if (isExpanded) {
                     queueList.classList.remove("is-expanded");
                     queueList.classList.add("is-collapsed");
-                    if (toggleText) toggleText.textContent = "▴ Details";
+                    if (toggleText) toggleText.textContent = "▾ Details";
                     toggleQueueBtn.setAttribute("aria-expanded", "false");
                 } else {
                     queueList.classList.remove("is-collapsed");
@@ -808,6 +941,8 @@ document.addEventListener("DOMContentLoaded", function() {
                 }
                 return;
             }
+
+            saveUploadStateToLocalStorage();
 
             localStorage.removeItem("lastOrderId");
             localStorage.removeItem("razorpayOrderId");
@@ -1305,12 +1440,9 @@ function renderRealLivePreviewUI() {
     const scaleMode = activeFile.scaleMode || "fit";
     const colorMode = activeFile.colorMode || "black_white";
 
-    const printModeEl = document.querySelector('input[name="printMode"]:checked');
-    const printMode = printModeEl ? printModeEl.value : (activeFile.printMode || "standard");
-    const pagesPerSheetEl = document.getElementById("pagesPerSheet");
-    const pagesPerSheet = (printMode === "micro_xerox") ? (pagesPerSheetEl ? parseInt(pagesPerSheetEl.value, 10) : 2) : 1;
-    const pageOrderEl = document.querySelector('input[name="pageOrder"]:checked');
-    const pageOrder = pageOrderEl ? pageOrderEl.value : "horizontal";
+    const printMode = activeFile.printMode || "standard";
+    const pagesPerSheet = (printMode === "micro_xerox") ? Math.max(2, parseInt(activeFile.pagesPerSheet || 2, 10)) : 1;
+    const pageOrder = activeFile.pageOrder || "horizontal";
 
     const pagesToRender = getEffectivePreviewPages();
 
@@ -1531,15 +1663,29 @@ window.activePreviewFileIndex = 0;
 function getStoredFileManifest() {
     let manifest = [];
     try {
-        const storedConfigs = localStorage.getItem("printflowFileConfigs");
-        if (storedConfigs) {
-            const parsed = JSON.parse(storedConfigs);
+        const storedSession = localStorage.getItem("printflow_session_files");
+        if (storedSession) {
+            const parsed = JSON.parse(storedSession);
             if (Array.isArray(parsed) && parsed.length > 0) {
-                manifest = parsed;
+                manifest = parsed.filter(f => f && f.name && f.status !== "CANCELED");
             }
         }
     } catch (e) {
-        console.warn("getStoredFileManifest config parse note:", e);
+        console.warn("getStoredFileManifest session parse note:", e);
+    }
+
+    if (!manifest.length) {
+        try {
+            const storedConfigs = localStorage.getItem("printflowFileConfigs");
+            if (storedConfigs) {
+                const parsed = JSON.parse(storedConfigs);
+                if (Array.isArray(parsed) && parsed.length > 0) {
+                    manifest = parsed.filter(f => f && f.name && f.status !== "CANCELED");
+                }
+            }
+        } catch (e) {
+            console.warn("getStoredFileManifest config parse note:", e);
+        }
     }
 
     if (!manifest.length) {
@@ -1548,7 +1694,7 @@ function getStoredFileManifest() {
             if (storedDetails) {
                 const parsed = JSON.parse(storedDetails);
                 if (Array.isArray(parsed) && parsed.length > 0) {
-                    manifest = parsed.map((item, idx) => ({
+                    manifest = parsed.filter(f => f && f.name && f.status !== "CANCELED").map((item, idx) => ({
                         id: item.id || `file_${idx}_${Date.now()}`,
                         name: item.name || `Document ${idx + 1}.pdf`,
                         path: item.path || item.backendPath || "",
@@ -1563,18 +1709,27 @@ function getStoredFileManifest() {
         }
     }
 
+    // Only create a single-file fallback if a real uploaded file path or non-default name exists
     if (!manifest.length) {
-        const singleName = localStorage.getItem("fileName") || "document.pdf";
-        const singlePath = localStorage.getItem("backendFilePath") || "";
-        const singlePages = parseInt(localStorage.getItem("pdfPageCount") || "1", 10);
-        manifest.push({
-            id: `file_0_${Date.now()}`,
-            name: singleName,
-            path: singlePath,
-            size: parseInt(localStorage.getItem("fileSize") || "0", 10),
-            pages: singlePages,
-            sequence: 0
-        });
+        const singleName = (localStorage.getItem("fileName") || "").trim();
+        const singlePath = (localStorage.getItem("backendFilePath") || "").trim();
+        const singlePages = parseInt(localStorage.getItem("pdfPageCount") || "0", 10);
+        if (singlePath || (singleName && singleName !== "No File Selected" && singleName !== "document.pdf")) {
+            manifest.push({
+                id: `file_0_${Date.now()}`,
+                name: singleName || "Document 1.pdf",
+                path: singlePath,
+                size: parseInt(localStorage.getItem("fileSize") || "0", 10),
+                pages: Math.max(1, singlePages),
+                sequence: 0
+            });
+        }
+    }
+
+    // Ensure single-file path resolution
+    const globalBackendPath = localStorage.getItem("backendFilePath") || "";
+    if (manifest.length === 1 && !manifest[0].path && globalBackendPath) {
+        manifest[0].path = globalBackendPath;
     }
 
     // Ensure defaults and compute sheets & price
@@ -1591,7 +1746,7 @@ function ensureFileConfigDefaults(file, idx) {
     const f = { ...file };
     f.id = f.id || `file_${idx}_${Date.now()}`;
     f.name = f.name || `Document ${idx + 1}.pdf`;
-    f.path = f.path || f.backendPath || localStorage.getItem("backendFilePath") || "";
+    f.path = f.path || f.backendPath || (idx === 0 ? (localStorage.getItem("backendFilePath") || "") : "");
     f.pages = Math.max(1, parseInt(f.pages || 1, 10));
     f.sequence = typeof f.sequence === "number" ? f.sequence : idx;
 
@@ -1610,7 +1765,8 @@ function ensureFileConfigDefaults(file, idx) {
     f.paperSize = f.paperSize || "a4";
     f.scaleMode = f.scaleMode || "fit";
     f.printMode = f.printMode || "standard";
-    f.pagesPerSheet = parseInt(f.pagesPerSheet || 1, 10);
+    f.pagesPerSheet = parseInt(f.pagesPerSheet || (f.printMode === "micro_xerox" ? 2 : 1), 10);
+    f.pageOrder = f.pageOrder || "horizontal";
 
     return f;
 }
@@ -1636,8 +1792,10 @@ function computeFileSheetsAndPrice(file) {
     const copies = Math.max(1, parseInt(f.copies || 1, 10));
 
     // Pricing & sheet calculation:
-    if (f.printMode === "micro_xerox" && f.pagesPerSheet > 1) {
-        const sheetsPerCopy = Math.ceil(f.selectedPagesCount / f.pagesPerSheet);
+    if (f.printMode === "micro_xerox") {
+        const nup = Math.max(2, parseInt(f.pagesPerSheet || 2, 10));
+        f.pagesPerSheet = nup;
+        const sheetsPerCopy = Math.ceil(f.selectedPagesCount / nup);
         f.calculatedSheets = sheetsPerCopy * copies;
         f.calculatedPrice = parseFloat((sheetsPerCopy * copies * PRICING.micro_xerox_sheet).toFixed(2));
     } else if (f.colorMode === "color") {
@@ -1658,6 +1816,7 @@ function computeFileSheetsAndPrice(file) {
 
 function saveFileManifest(manifest) {
     window.currentFileManifest = manifest;
+    localStorage.setItem("printflow_session_files", JSON.stringify(manifest));
     localStorage.setItem("printflowFileConfigs", JSON.stringify(manifest));
 
     // Keep legacy localStorage keys updated
@@ -1692,6 +1851,7 @@ function saveFileManifest(manifest) {
         scale_mode: f.scaleMode,
         print_mode: f.printMode,
         pages_per_sheet: f.pagesPerSheet,
+        page_order: f.pageOrder,
         calculated_sheets: f.calculatedSheets,
         calculated_price: f.calculatedPrice
     }));
@@ -1774,12 +1934,18 @@ function updatePrintDetailsAndPreview() {
     const colorMode = activeFile.colorMode || "black_white";
     const printSide = activeFile.printSide || "single";
     const duplexBinding = activeFile.duplexBinding || "long_edge";
+    const printMode = activeFile.printMode || "standard";
+    const pagesPerSheet = activeFile.pagesPerSheet || 2;
 
     const colorClass = (colorMode === "color") ? "color-mode" : "bw-mode";
     const edgeClass = (duplexBinding === "short_edge") ? "short-edge" : "long-edge";
 
     if (paperSheetPreview && notebookSpreadPreview) {
-        if (printSide === "double") {
+        if (printMode === "micro_xerox") {
+            notebookSpreadPreview.style.display = "none";
+            paperSheetPreview.style.display = "flex";
+            paperSheetPreview.className = `paper-sheet size-${paperSize} ${orientation} ${scaleMode} ${colorClass}`;
+        } else if (printSide === "double") {
             paperSheetPreview.style.display = "none";
             notebookSpreadPreview.style.display = "flex";
             notebookSpreadPreview.className = `notebook-spread-container size-${paperSize} ${orientation} ${scaleMode} ${colorClass} ${edgeClass}`;
@@ -1791,7 +1957,9 @@ function updatePrintDetailsAndPreview() {
     }
 
     if (previewLabelBadge) {
-        if (printSide === "double") {
+        if (printMode === "micro_xerox") {
+            previewLabelBadge.textContent = `Micro Xerox (${pagesPerSheet}-Up @ ₹3/sheet)`;
+        } else if (printSide === "double") {
             previewLabelBadge.textContent = (duplexBinding === "short_edge")
                 ? "Double Side • Short Edge (Flip 🗓️)"
                 : "Double Side • Long Edge (Booklet 📖)";
@@ -1801,6 +1969,35 @@ function updatePrintDetailsAndPreview() {
     }
 
     renderRealLivePreviewUI();
+}
+
+function updateCardSummaryStrip(card, file) {
+    if (!card || !file) return;
+    const strip = card.querySelector(".file-summary-strip");
+    if (!strip) return;
+
+    const isOddDuplex = (file.duplex !== "single" && (file.selectedPagesCount % 2 !== 0));
+    const blankSheetNote = isOddDuplex
+        ? `<span style="font-size:11px; color:#c2410c; font-weight:700; background:#ffedd5; padding:2px 6px; border-radius:4px; border:1px solid #fdba74;">Sheet ${Math.ceil(file.selectedPagesCount / 2)} Back is Blank</span>`
+        : "";
+
+    const modeBadge = (file.printMode === "micro_xerox")
+        ? `<span style="font-size:11px; color:#7c2d12; font-weight:700; background:#ffedd5; padding:2px 6px; border-radius:4px; border:1px solid #fed7aa;">🔍 Micro Xerox (${file.pagesPerSheet}-Up @ ₹3/sheet)</span>`
+        : "";
+
+    strip.innerHTML = `
+        <div class="sheet-flow-indicator" style="display: flex; flex-wrap: wrap; align-items: center; gap: 6px;">
+            <span>📄 Selected: <strong>${file.selectedPagesCount} Page${file.selectedPagesCount > 1 ? 's' : ''}</strong></span>
+            <span>•</span>
+            <span>📑 Physical Sheets: <strong class="sheet-badge">${file.calculatedSheets} Sheet${file.calculatedSheets > 1 ? 's' : ''}</strong></span>
+            ${blankSheetNote}
+            ${modeBadge}
+        </div>
+        <div class="file-cost-badge-row">
+            <span style="color:#78350f; font-weight:700; font-size:12px;">File Subtotal:</span>
+            <span class="file-subtotal-badge">₹${file.calculatedPrice.toFixed(2)}</span>
+        </div>
+    `;
 }
 
 function renderPerFileConfigCards() {
@@ -1822,6 +2019,10 @@ function renderPerFileConfigCards() {
             ? `<span style="font-size:11px; color:#c2410c; font-weight:700; background:#ffedd5; padding:2px 6px; border-radius:4px; border:1px solid #fdba74;">Sheet ${Math.ceil(file.selectedPagesCount / 2)} Back is Blank</span>`
             : "";
 
+        const modeBadge = (file.printMode === "micro_xerox")
+            ? `<span style="font-size:11px; color:#7c2d12; font-weight:700; background:#ffedd5; padding:2px 6px; border-radius:4px; border:1px solid #fed7aa;">🔍 Micro Xerox (${file.pagesPerSheet}-Up @ ₹3/sheet)</span>`
+            : "";
+
         const sizeStr = file.size ? (file.size > 1048576 ? (file.size / 1048576).toFixed(1) + " MB" : (file.size / 1024).toFixed(0) + " KB") : "";
 
         card.innerHTML = `
@@ -1838,6 +2039,7 @@ function renderPerFileConfigCards() {
                         <div class="file-meta-sub">${file.pages} Page${file.pages > 1 ? 's' : ''}${sizeStr ? ' • ' + sizeStr : ''}</div>
                     </div>
                 </div>
+                <button type="button" class="btn-remove-card" data-file-id="${file.id}" data-idx="${idx}" title="Remove this file">✕</button>
             </div>
 
             <div class="file-settings-grid">
@@ -1845,19 +2047,65 @@ function renderPerFileConfigCards() {
                 <div class="file-setting-item" style="grid-column: 1 / -1;">
                     <label class="file-input-label">📄 Pages to Print</label>
                     <div class="pages-radio-grid">
-                        <label><input type="radio" name="pageSel_${idx}" value="all" ${file.pageSelection === 'all' ? 'checked' : ''}> All (${file.pages})</label>
-                        <label><input type="radio" name="pageSel_${idx}" value="odd" ${file.pageSelection === 'odd' ? 'checked' : ''}> Odd Pages</label>
-                        <label><input type="radio" name="pageSel_${idx}" value="even" ${file.pageSelection === 'even' ? 'checked' : ''}> Even Pages</label>
-                        <label><input type="radio" name="pageSel_${idx}" value="custom" ${file.pageSelection === 'custom' ? 'checked' : ''}> Custom Range</label>
+                        <label><input type="radio" name="pageSel_${file.id}" value="all" ${file.pageSelection === 'all' ? 'checked' : ''}> All (${file.pages})</label>
+                        <label><input type="radio" name="pageSel_${file.id}" value="odd" ${file.pageSelection === 'odd' ? 'checked' : ''}> Odd Pages</label>
+                        <label><input type="radio" name="pageSel_${file.id}" value="even" ${file.pageSelection === 'even' ? 'checked' : ''}> Even Pages</label>
+                        <label><input type="radio" name="pageSel_${file.id}" value="custom" ${file.pageSelection === 'custom' ? 'checked' : ''}> Custom Range</label>
                     </div>
                     <div class="custom-range-container" style="display: ${file.pageSelection === 'custom' ? 'block' : 'none'}; margin-top: 6px;">
-                        <input type="text" class="setting-input custom-page-range-input" data-idx="${idx}" placeholder="e.g. 1-3, 5" value="${escapeHtml(file.customPagesInput || '')}">
+                        <input type="text" class="setting-input custom-page-range-input" data-idx="${idx}" data-file-id="${file.id}" placeholder="e.g. 1-3, 5" value="${escapeHtml(file.customPagesInput || '')}">
                         <div class="custom-range-hint" style="font-size: 11px; color: #78350f; margin-top: 2px;">Enter page numbers or ranges (e.g. 1, 3, 5-8)</div>
                         <div class="custom-range-error" style="color: #dc2626; font-size: 11px; font-weight: 700; display: ${file.validationError ? 'block' : 'none'}; margin-top: 2px;">${escapeHtml(file.validationError || '')}</div>
                     </div>
                 </div>
 
-                <!-- 2. Print Side (Single vs Double) -->
+                <!-- 2. Print Mode: Standard vs Micro Xerox -->
+                <div class="file-setting-item" style="grid-column: 1 / -1;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                        <label class="file-input-label" style="margin-bottom: 0;">⚙️ Print Mode</label>
+                        <span class="mode-status-tag" style="font-size: 11px; color: #ea580c; font-weight: 700;">
+                            ${file.printMode === 'micro_xerox' ? 'Micro Xerox Active (₹3/sheet)' : 'Standard Print Active'}
+                        </span>
+                    </div>
+                    <div class="file-radio-grid mode-radio-grid">
+                        <label class="file-radio-pill mode-pill ${file.printMode !== 'micro_xerox' ? 'is-selected' : ''}">
+                            <input type="radio" name="printMode_${file.id}" value="standard" ${file.printMode !== 'micro_xerox' ? 'checked' : ''}>
+                            <span>📄 Standard Print</span>
+                        </label>
+                        <label class="file-radio-pill mode-pill ${file.printMode === 'micro_xerox' ? 'is-selected' : ''}">
+                            <input type="radio" name="printMode_${file.id}" value="micro_xerox" ${file.printMode === 'micro_xerox' ? 'checked' : ''}>
+                            <span>🔍 Micro Xerox (₹3/sheet)</span>
+                        </label>
+                    </div>
+
+                    <!-- Micro Xerox Options Container -->
+                    <div class="file-micro-container" style="display: ${file.printMode === 'micro_xerox' ? 'block' : 'none'}; margin-top: 8px; padding: 10px 12px; background: #fff7ed; border-radius: 8px; border: 1.5px dashed #fdba74;">
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+                            <div>
+                                <label style="font-size: 11px; font-weight: 800; color: #9a3412; text-transform: uppercase; margin-bottom: 4px; display: block;">Pages Per Sheet:</label>
+                                <select class="setting-select file-nup-select" data-idx="${idx}" data-file-id="${file.id}">
+                                    <option value="2" ${file.pagesPerSheet == 2 ? 'selected' : ''}>2-Up (2 in 1)</option>
+                                    <option value="4" ${file.pagesPerSheet == 4 ? 'selected' : ''}>4-Up (4 in 1)</option>
+                                    <option value="6" ${file.pagesPerSheet == 6 ? 'selected' : ''}>6-Up (6 in 1)</option>
+                                    <option value="9" ${file.pagesPerSheet == 9 ? 'selected' : ''}>9-Up (9 in 1)</option>
+                                    <option value="16" ${file.pagesPerSheet == 16 ? 'selected' : ''}>16-Up (16 in 1)</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label style="font-size: 11px; font-weight: 800; color: #9a3412; text-transform: uppercase; margin-bottom: 4px; display: block;">Page Order:</label>
+                                <select class="setting-select file-pageorder-select" data-idx="${idx}" data-file-id="${file.id}">
+                                    <option value="horizontal" ${file.pageOrder !== 'vertical' ? 'selected' : ''}>Horizontal (Left-Right)</option>
+                                    <option value="vertical" ${file.pageOrder === 'vertical' ? 'selected' : ''}>Vertical (Top-Bottom)</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div style="font-size: 11px; color: #7c2d12; font-weight: 700; margin-top: 6px;">
+                            💡 Canonical Micro Xerox Rate: ₹3.00 per physical sheet (${file.calculatedSheets} sheet${file.calculatedSheets > 1 ? 's' : ''} = ₹${file.calculatedPrice.toFixed(2)})
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 3. Print Side (Single vs Double) -->
                 <div class="file-setting-item" style="grid-column: 1 / -1;">
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
                         <label class="file-input-label" style="margin-bottom: 0;">📖 Print Side</label>
@@ -1867,11 +2115,11 @@ function renderPerFileConfigCards() {
                     </div>
                     <div class="file-radio-grid side-radio-grid">
                         <label class="file-radio-pill side-pill ${file.printSide === 'single' ? 'is-selected' : ''}">
-                            <input type="radio" name="printSide_${idx}" value="single" ${file.printSide === 'single' ? 'checked' : ''}>
+                            <input type="radio" name="printSide_${file.id}" value="single" ${file.printSide === 'single' ? 'checked' : ''}>
                             <span>📄 Single Side (₹2/pg)</span>
                         </label>
                         <label class="file-radio-pill side-pill ${file.printSide === 'double' ? 'is-selected' : ''} ${file.colorMode === 'color' ? 'is-disabled' : ''}" title="${file.colorMode === 'color' ? 'Color print is single-sided only' : ''}">
-                            <input type="radio" name="printSide_${idx}" value="double" ${file.printSide === 'double' ? 'checked' : ''} ${file.colorMode === 'color' ? 'disabled' : ''}>
+                            <input type="radio" name="printSide_${file.id}" value="double" ${file.printSide === 'double' ? 'checked' : ''} ${file.colorMode === 'color' ? 'disabled' : ''}>
                             <span>📖 Double Side (₹1/pg)</span>
                         </label>
                     </div>
@@ -1883,59 +2131,59 @@ function renderPerFileConfigCards() {
                         </label>
                         <div class="file-radio-grid" style="grid-template-columns: 1fr 1fr;">
                             <label class="file-radio-pill binding-pill ${file.duplexBinding !== 'short_edge' ? 'is-selected' : ''}">
-                                <input type="radio" name="duplexBinding_${idx}" value="long_edge" ${file.duplexBinding !== 'short_edge' ? 'checked' : ''}>
+                                <input type="radio" name="duplexBinding_${file.id}" value="long_edge" ${file.duplexBinding !== 'short_edge' ? 'checked' : ''}>
                                 <span>📖 Long Edge (Booklet)</span>
                             </label>
                             <label class="file-radio-pill binding-pill ${file.duplexBinding === 'short_edge' ? 'is-selected' : ''}">
-                                <input type="radio" name="duplexBinding_${idx}" value="short_edge" ${file.duplexBinding === 'short_edge' ? 'checked' : ''}>
+                                <input type="radio" name="duplexBinding_${file.id}" value="short_edge" ${file.duplexBinding === 'short_edge' ? 'checked' : ''}>
                                 <span>🗓️ Short Edge (Flip)</span>
                             </label>
                         </div>
                     </div>
                 </div>
 
-                <!-- 3. Copies -->
+                <!-- 4. Copies -->
                 <div class="file-setting-item">
                     <label class="file-input-label">🔢 Copies</label>
                     <div class="copies-counter-box">
-                        <button type="button" class="btn-step-copy step-minus" data-idx="${idx}">-</button>
-                        <input type="number" class="setting-input copy-input-num file-copies-input" data-idx="${idx}" min="1" max="99" value="${file.copies || 1}">
-                        <button type="button" class="btn-step-copy step-plus" data-idx="${idx}">+</button>
+                        <button type="button" class="btn-step-copy step-minus" data-idx="${idx}" data-file-id="${file.id}">-</button>
+                        <input type="number" class="setting-input copy-input-num file-copies-input" data-idx="${idx}" data-file-id="${file.id}" min="1" max="99" value="${file.copies || 1}">
+                        <button type="button" class="btn-step-copy step-plus" data-idx="${idx}" data-file-id="${file.id}">+</button>
                     </div>
                 </div>
 
-                <!-- 4. Color Mode -->
+                <!-- 5. Color Mode -->
                 <div class="file-setting-item">
                     <label class="file-input-label">🎨 Color Mode</label>
-                    <select class="setting-select file-color-select" data-idx="${idx}">
+                    <select class="setting-select file-color-select" data-idx="${idx}" data-file-id="${file.id}">
                         <option value="black_white" ${file.colorMode === 'black_white' ? 'selected' : ''}>Black & White (B&W)</option>
-                        <option value="color" ${file.colorMode === 'color' ? 'selected' : ''}>Color Print (₹6/pg)</option>
+                        <option value="color" ${file.colorMode === 'color' ? 'selected' : ''} ${file.printMode === 'micro_xerox' ? 'disabled' : ''}>Color Print (₹6/pg)</option>
                     </select>
                 </div>
 
-                <!-- 5. Orientation -->
+                <!-- 6. Orientation -->
                 <div class="file-setting-item">
                     <label class="file-input-label">🔄 Orientation</label>
-                    <select class="setting-select file-orientation-select" data-idx="${idx}">
+                    <select class="setting-select file-orientation-select" data-idx="${idx}" data-file-id="${file.id}">
                         <option value="portrait" ${file.orientation === 'portrait' ? 'selected' : ''}>Portrait (Vertical)</option>
                         <option value="landscape" ${file.orientation === 'landscape' ? 'selected' : ''}>Landscape (Horizontal)</option>
                     </select>
                 </div>
 
-                <!-- 6. Paper Size -->
+                <!-- 7. Paper Size -->
                 <div class="file-setting-item">
                     <label class="file-input-label">📏 Paper Size</label>
-                    <select class="setting-select file-papersize-select" data-idx="${idx}">
+                    <select class="setting-select file-papersize-select" data-idx="${idx}" data-file-id="${file.id}">
                         <option value="a4" ${file.paperSize === 'a4' ? 'selected' : ''}>A4</option>
                         <option value="letter" ${file.paperSize === 'letter' ? 'selected' : ''}>Letter</option>
                         <option value="legal" ${file.paperSize === 'legal' ? 'selected' : ''}>Legal</option>
                     </select>
                 </div>
 
-                <!-- 7. Fit / Scale -->
+                <!-- 8. Fit / Scale -->
                 <div class="file-setting-item">
                     <label class="file-input-label">📐 Fit / Scale</label>
-                    <select class="setting-select file-scale-select" data-idx="${idx}">
+                    <select class="setting-select file-scale-select" data-idx="${idx}" data-file-id="${file.id}">
                         <option value="fit" ${file.scaleMode === 'fit' ? 'selected' : ''}>Fit to Printable Area</option>
                         <option value="actual" ${file.scaleMode === 'actual' ? 'selected' : ''}>Actual Size (100%)</option>
                     </select>
@@ -1944,11 +2192,12 @@ function renderPerFileConfigCards() {
 
             <!-- File Summary Strip -->
             <div class="file-summary-strip">
-                <div class="sheet-flow-indicator">
+                <div class="sheet-flow-indicator" style="display: flex; flex-wrap: wrap; align-items: center; gap: 6px;">
                     <span>📄 Selected: <strong>${file.selectedPagesCount} Page${file.selectedPagesCount > 1 ? 's' : ''}</strong></span>
                     <span>•</span>
                     <span>📑 Physical Sheets: <strong class="sheet-badge">${file.calculatedSheets} Sheet${file.calculatedSheets > 1 ? 's' : ''}</strong></span>
                     ${blankSheetNote}
+                    ${modeBadge}
                 </div>
                 <div class="file-cost-badge-row">
                     <span style="color:#78350f; font-weight:700; font-size:12px;">File Subtotal:</span>
@@ -1980,6 +2229,28 @@ function attachCardEventListeners() {
                     c.classList.toggle("is-active-preview", i === window.activePreviewFileIndex);
                 });
                 updatePrintDetailsAndPreview();
+            }
+        });
+    });
+
+    // Remove file directly from card
+    container.querySelectorAll(".btn-remove-card").forEach(btn => {
+        btn.addEventListener("click", (e) => {
+            e.stopPropagation();
+            const fileId = btn.dataset.fileId;
+            let manifest = getStoredFileManifest();
+            const removeIdx = manifest.findIndex(f => f.id === fileId);
+            if (removeIdx !== -1) {
+                manifest.splice(removeIdx, 1);
+                if (manifest.length === 0) {
+                    clearUserDocumentSession();
+                    window.location.href = "home.html";
+                    return;
+                }
+                manifest.forEach((f, i) => { f.sequence = i; });
+                window.activePreviewFileIndex = Math.min(window.activePreviewFileIndex, manifest.length - 1);
+                saveFileManifest(manifest);
+                renderPerFileConfigCards();
             }
         });
     });
@@ -2073,21 +2344,22 @@ function attachCardEventListeners() {
     // Page selection radios
     container.querySelectorAll(".pages-radio-grid input[type='radio']").forEach(radio => {
         radio.addEventListener("change", () => {
-            const idx = parseInt(radio.name.split("_")[1], 10);
+            const card = radio.closest(".file-config-card");
+            const fileId = card ? card.dataset.fileId : null;
             const manifest = getStoredFileManifest();
-            if (manifest[idx]) {
-                manifest[idx].pageSelection = radio.value;
-                const card = container.querySelector(`.file-config-card[data-idx="${idx}"]`);
+            const file = manifest.find(f => f.id === fileId);
+            if (file) {
+                file.pageSelection = radio.value;
                 const customContainer = card ? card.querySelector(".custom-range-container") : null;
                 if (customContainer) {
                     customContainer.style.display = (radio.value === "custom") ? "block" : "none";
                 }
-                const updated = computeFileSheetsAndPrice(manifest[idx]);
-                manifest[idx] = updated;
+                const updated = computeFileSheetsAndPrice(file);
                 saveFileManifest(manifest);
-                updateCardSummaryStrip(card, updated);
+                if (card) updateCardSummaryStrip(card, updated);
                 updateGlobalOrderSummary(manifest);
-                if (idx === window.activePreviewFileIndex) updatePrintDetailsAndPreview();
+                const cardIdx = parseInt(card.dataset.idx, 10);
+                if (cardIdx === window.activePreviewFileIndex) updatePrintDetailsAndPreview();
             }
         });
     });
@@ -2095,22 +2367,114 @@ function attachCardEventListeners() {
     // Custom pages range input
     container.querySelectorAll(".custom-page-range-input").forEach(input => {
         input.addEventListener("input", () => {
-            const idx = parseInt(input.dataset.idx, 10);
+            const card = input.closest(".file-config-card");
+            const fileId = card ? card.dataset.fileId : null;
             const manifest = getStoredFileManifest();
-            if (manifest[idx]) {
-                manifest[idx].customPagesInput = input.value.trim();
-                const updated = computeFileSheetsAndPrice(manifest[idx]);
-                manifest[idx] = updated;
-                const card = container.querySelector(`.file-config-card[data-idx="${idx}"]`);
+            const file = manifest.find(f => f.id === fileId);
+            if (file) {
+                file.customPagesInput = input.value.trim();
+                const updated = computeFileSheetsAndPrice(file);
                 const errEl = card ? card.querySelector(".custom-range-error") : null;
                 if (errEl) {
                     errEl.textContent = updated.validationError || "";
                     errEl.style.display = updated.validationError ? "block" : "none";
                 }
                 saveFileManifest(manifest);
-                updateCardSummaryStrip(card, updated);
+                if (card) updateCardSummaryStrip(card, updated);
                 updateGlobalOrderSummary(manifest);
-                if (idx === window.activePreviewFileIndex) updatePrintDetailsAndPreview();
+                const cardIdx = parseInt(card.dataset.idx, 10);
+                if (cardIdx === window.activePreviewFileIndex) updatePrintDetailsAndPreview();
+            }
+        });
+    });
+
+    // Print Mode Radios (Standard vs Micro Xerox)
+    container.querySelectorAll(".mode-radio-grid input[type='radio']").forEach(radio => {
+        radio.addEventListener("change", () => {
+            const card = radio.closest(".file-config-card");
+            const fileId = card ? card.dataset.fileId : null;
+            const manifest = getStoredFileManifest();
+            const file = manifest.find(f => f.id === fileId);
+            if (file) {
+                const isMicro = (radio.value === "micro_xerox");
+                file.printMode = isMicro ? "micro_xerox" : "standard";
+                if (isMicro) {
+                    file.pagesPerSheet = Math.max(2, parseInt(file.pagesPerSheet || 2, 10));
+                    file.colorMode = "black_white"; // Micro Xerox is B&W
+                } else {
+                    file.pagesPerSheet = 1;
+                }
+                const updated = computeFileSheetsAndPrice(file);
+                saveFileManifest(manifest);
+
+                if (card) {
+                    card.querySelectorAll(".mode-pill").forEach(p => {
+                        const r = p.querySelector("input[type='radio']");
+                        p.classList.toggle("is-selected", r && r.value === radio.value);
+                    });
+                    const microContainer = card.querySelector(".file-micro-container");
+                    if (microContainer) {
+                        microContainer.style.display = isMicro ? "block" : "none";
+                    }
+                    const modeTag = card.querySelector(".mode-status-tag");
+                    if (modeTag) {
+                        modeTag.textContent = isMicro ? "Micro Xerox Active (₹3/sheet)" : "Standard Print Active";
+                    }
+                    const colorSelect = card.querySelector(".file-color-select");
+                    if (colorSelect && isMicro) {
+                        colorSelect.value = "black_white";
+                    }
+                    updateCardSummaryStrip(card, updated);
+                }
+                updateGlobalOrderSummary(manifest);
+                const cardIdx = parseInt(card.dataset.idx, 10);
+                if (cardIdx === window.activePreviewFileIndex) updatePrintDetailsAndPreview();
+            }
+        });
+    });
+
+    container.querySelectorAll(".mode-pill").forEach(pill => {
+        pill.addEventListener("click", () => {
+            const radio = pill.querySelector("input[type='radio']");
+            if (radio && !radio.checked) {
+                radio.checked = true;
+                radio.dispatchEvent(new Event("change"));
+            }
+        });
+    });
+
+    // Micro Xerox Pages Per Sheet select
+    container.querySelectorAll(".file-nup-select").forEach(select => {
+        select.addEventListener("change", () => {
+            const card = select.closest(".file-config-card");
+            const fileId = card ? card.dataset.fileId : null;
+            const manifest = getStoredFileManifest();
+            const file = manifest.find(f => f.id === fileId);
+            if (file) {
+                file.pagesPerSheet = parseInt(select.value, 10);
+                file.printMode = "micro_xerox";
+                const updated = computeFileSheetsAndPrice(file);
+                saveFileManifest(manifest);
+                if (card) updateCardSummaryStrip(card, updated);
+                updateGlobalOrderSummary(manifest);
+                const cardIdx = parseInt(card.dataset.idx, 10);
+                if (cardIdx === window.activePreviewFileIndex) updatePrintDetailsAndPreview();
+            }
+        });
+    });
+
+    // Micro Xerox Page Order select
+    container.querySelectorAll(".file-pageorder-select").forEach(select => {
+        select.addEventListener("change", () => {
+            const card = select.closest(".file-config-card");
+            const fileId = card ? card.dataset.fileId : null;
+            const manifest = getStoredFileManifest();
+            const file = manifest.find(f => f.id === fileId);
+            if (file) {
+                file.pageOrder = select.value;
+                saveFileManifest(manifest);
+                const cardIdx = parseInt(card.dataset.idx, 10);
+                if (cardIdx === window.activePreviewFileIndex) updatePrintDetailsAndPreview();
             }
         });
     });
@@ -2118,22 +2482,22 @@ function attachCardEventListeners() {
     // Print Side Radios (Single vs Double)
     container.querySelectorAll(".side-radio-grid input[type='radio']").forEach(radio => {
         radio.addEventListener("change", () => {
-            const idx = parseInt(radio.name.split("_")[1], 10);
+            const card = radio.closest(".file-config-card");
+            const fileId = card ? card.dataset.fileId : null;
             const manifest = getStoredFileManifest();
-            if (manifest[idx]) {
+            const file = manifest.find(f => f.id === fileId);
+            if (file) {
                 const isDouble = (radio.value === "double");
-                manifest[idx].printSide = isDouble ? "double" : "single";
+                file.printSide = isDouble ? "double" : "single";
                 if (isDouble) {
-                    manifest[idx].duplexBinding = manifest[idx].duplexBinding || "long_edge";
-                    manifest[idx].duplex = (manifest[idx].duplexBinding === "short_edge") ? "duplex_short" : "duplex_long";
+                    file.duplexBinding = file.duplexBinding || "long_edge";
+                    file.duplex = (file.duplexBinding === "short_edge") ? "duplex_short" : "duplex_long";
                 } else {
-                    manifest[idx].duplex = "single";
+                    file.duplex = "single";
                 }
-                const updated = computeFileSheetsAndPrice(manifest[idx]);
-                manifest[idx] = updated;
+                const updated = computeFileSheetsAndPrice(file);
                 saveFileManifest(manifest);
 
-                const card = container.querySelector(`.file-config-card[data-idx="${idx}"]`);
                 if (card) {
                     card.querySelectorAll(".side-pill").forEach(p => {
                         const r = p.querySelector("input[type='radio']");
@@ -2150,7 +2514,8 @@ function attachCardEventListeners() {
                     updateCardSummaryStrip(card, updated);
                 }
                 updateGlobalOrderSummary(manifest);
-                if (idx === window.activePreviewFileIndex) updatePrintDetailsAndPreview();
+                const cardIdx = parseInt(card.dataset.idx, 10);
+                if (cardIdx === window.activePreviewFileIndex) updatePrintDetailsAndPreview();
             }
         });
     });
@@ -2158,16 +2523,16 @@ function attachCardEventListeners() {
     // Duplex Flip / Binding Radios (Long Edge vs Short Edge)
     container.querySelectorAll(".file-binding-container input[type='radio']").forEach(radio => {
         radio.addEventListener("change", () => {
-            const idx = parseInt(radio.name.split("_")[1], 10);
+            const card = radio.closest(".file-config-card");
+            const fileId = card ? card.dataset.fileId : null;
             const manifest = getStoredFileManifest();
-            if (manifest[idx]) {
-                manifest[idx].duplexBinding = radio.value;
-                manifest[idx].duplex = (radio.value === "short_edge") ? "duplex_short" : "duplex_long";
-                const updated = computeFileSheetsAndPrice(manifest[idx]);
-                manifest[idx] = updated;
+            const file = manifest.find(f => f.id === fileId);
+            if (file) {
+                file.duplexBinding = radio.value;
+                file.duplex = (radio.value === "short_edge") ? "duplex_short" : "duplex_long";
+                const updated = computeFileSheetsAndPrice(file);
                 saveFileManifest(manifest);
 
-                const card = container.querySelector(`.file-config-card[data-idx="${idx}"]`);
                 if (card) {
                     card.querySelectorAll(".binding-pill").forEach(p => {
                         const r = p.querySelector("input[type='radio']");
@@ -2176,7 +2541,8 @@ function attachCardEventListeners() {
                     updateCardSummaryStrip(card, updated);
                 }
                 updateGlobalOrderSummary(manifest);
-                if (idx === window.activePreviewFileIndex) updatePrintDetailsAndPreview();
+                const cardIdx = parseInt(card.dataset.idx, 10);
+                if (cardIdx === window.activePreviewFileIndex) updatePrintDetailsAndPreview();
             }
         });
     });
@@ -2184,8 +2550,8 @@ function attachCardEventListeners() {
     // Copies stepper
     container.querySelectorAll(".btn-step-copy").forEach(btn => {
         btn.addEventListener("click", () => {
-            const idx = parseInt(btn.dataset.idx, 10);
-            const card = container.querySelector(`.file-config-card[data-idx="${idx}"]`);
+            const card = btn.closest(".file-config-card");
+            const fileId = card ? card.dataset.fileId : null;
             const input = card ? card.querySelector(".file-copies-input") : null;
             if (!input) return;
             let val = parseInt(input.value || "1", 10);
@@ -2196,12 +2562,12 @@ function attachCardEventListeners() {
             }
             input.value = val;
             const manifest = getStoredFileManifest();
-            if (manifest[idx]) {
-                manifest[idx].copies = val;
-                const updated = computeFileSheetsAndPrice(manifest[idx]);
-                manifest[idx] = updated;
+            const file = manifest.find(f => f.id === fileId);
+            if (file) {
+                file.copies = val;
+                const updated = computeFileSheetsAndPrice(file);
                 saveFileManifest(manifest);
-                updateCardSummaryStrip(card, updated);
+                if (card) updateCardSummaryStrip(card, updated);
                 updateGlobalOrderSummary(manifest);
             }
         });
@@ -2209,17 +2575,17 @@ function attachCardEventListeners() {
 
     container.querySelectorAll(".file-copies-input").forEach(input => {
         input.addEventListener("input", () => {
-            const idx = parseInt(input.dataset.idx, 10);
+            const card = input.closest(".file-config-card");
+            const fileId = card ? card.dataset.fileId : null;
             let val = parseInt(input.value || "1", 10);
             if (isNaN(val) || val < 1) val = 1;
             const manifest = getStoredFileManifest();
-            if (manifest[idx]) {
-                manifest[idx].copies = val;
-                const updated = computeFileSheetsAndPrice(manifest[idx]);
-                manifest[idx] = updated;
+            const file = manifest.find(f => f.id === fileId);
+            if (file) {
+                file.copies = val;
+                const updated = computeFileSheetsAndPrice(file);
                 saveFileManifest(manifest);
-                const card = container.querySelector(`.file-config-card[data-idx="${idx}"]`);
-                updateCardSummaryStrip(card, updated);
+                if (card) updateCardSummaryStrip(card, updated);
                 updateGlobalOrderSummary(manifest);
             }
         });
@@ -2228,16 +2594,17 @@ function attachCardEventListeners() {
     // Color Mode select
     container.querySelectorAll(".file-color-select").forEach(select => {
         select.addEventListener("change", () => {
-            const idx = parseInt(select.dataset.idx, 10);
+            const card = select.closest(".file-config-card");
+            const fileId = card ? card.dataset.fileId : null;
             const manifest = getStoredFileManifest();
-            if (manifest[idx]) {
-                manifest[idx].colorMode = select.value;
-                const card = container.querySelector(`.file-config-card[data-idx="${idx}"]`);
+            const file = manifest.find(f => f.id === fileId);
+            if (file) {
+                file.colorMode = select.value;
                 if (select.value === "color") {
-                    manifest[idx].printSide = "single";
-                    manifest[idx].duplex = "single";
+                    file.printSide = "single";
+                    file.duplex = "single";
                     if (card) {
-                        const singleRadio = card.querySelector(`input[name="printSide_${idx}"][value="single"]`);
+                        const singleRadio = card.querySelector(`input[name="printSide_${file.id}"][value="single"]`);
                         if (singleRadio) singleRadio.checked = true;
                         card.querySelectorAll(".side-pill").forEach(p => {
                             const r = p.querySelector("input[type='radio']");
@@ -2264,16 +2631,16 @@ function attachCardEventListeners() {
                         }
                         const statusTag = card.querySelector(".side-status-tag");
                         if (statusTag) {
-                            statusTag.textContent = (manifest[idx].printSide === "double") ? "Double Side Active (₹1/pg)" : "Single Side Active (₹2/pg)";
+                            statusTag.textContent = (file.printSide === "double") ? "Double Side Active (₹1/pg)" : "Single Side Active (₹2/pg)";
                         }
                     }
                 }
-                const updated = computeFileSheetsAndPrice(manifest[idx]);
-                manifest[idx] = updated;
+                const updated = computeFileSheetsAndPrice(file);
                 saveFileManifest(manifest);
                 if (card) updateCardSummaryStrip(card, updated);
                 updateGlobalOrderSummary(manifest);
-                if (idx === window.activePreviewFileIndex) updatePrintDetailsAndPreview();
+                const cardIdx = parseInt(card.dataset.idx, 10);
+                if (cardIdx === window.activePreviewFileIndex) updatePrintDetailsAndPreview();
             }
         });
     });
@@ -2281,12 +2648,15 @@ function attachCardEventListeners() {
     // Orientation select
     container.querySelectorAll(".file-orientation-select").forEach(select => {
         select.addEventListener("change", () => {
-            const idx = parseInt(select.dataset.idx, 10);
+            const card = select.closest(".file-config-card");
+            const fileId = card ? card.dataset.fileId : null;
             const manifest = getStoredFileManifest();
-            if (manifest[idx]) {
-                manifest[idx].orientation = select.value;
+            const file = manifest.find(f => f.id === fileId);
+            if (file) {
+                file.orientation = select.value;
                 saveFileManifest(manifest);
-                if (idx === window.activePreviewFileIndex) updatePrintDetailsAndPreview();
+                const cardIdx = parseInt(card.dataset.idx, 10);
+                if (cardIdx === window.activePreviewFileIndex) updatePrintDetailsAndPreview();
             }
         });
     });
@@ -2294,12 +2664,15 @@ function attachCardEventListeners() {
     // Paper Size select
     container.querySelectorAll(".file-papersize-select").forEach(select => {
         select.addEventListener("change", () => {
-            const idx = parseInt(select.dataset.idx, 10);
+            const card = select.closest(".file-config-card");
+            const fileId = card ? card.dataset.fileId : null;
             const manifest = getStoredFileManifest();
-            if (manifest[idx]) {
-                manifest[idx].paperSize = select.value;
+            const file = manifest.find(f => f.id === fileId);
+            if (file) {
+                file.paperSize = select.value;
                 saveFileManifest(manifest);
-                if (idx === window.activePreviewFileIndex) updatePrintDetailsAndPreview();
+                const cardIdx = parseInt(card.dataset.idx, 10);
+                if (cardIdx === window.activePreviewFileIndex) updatePrintDetailsAndPreview();
             }
         });
     });
@@ -2307,12 +2680,15 @@ function attachCardEventListeners() {
     // Scale / Fit select
     container.querySelectorAll(".file-scale-select").forEach(select => {
         select.addEventListener("change", () => {
-            const idx = parseInt(select.dataset.idx, 10);
+            const card = select.closest(".file-config-card");
+            const fileId = card ? card.dataset.fileId : null;
             const manifest = getStoredFileManifest();
-            if (manifest[idx]) {
-                manifest[idx].scaleMode = select.value;
+            const file = manifest.find(f => f.id === fileId);
+            if (file) {
+                file.scaleMode = select.value;
                 saveFileManifest(manifest);
-                if (idx === window.activePreviewFileIndex) updatePrintDetailsAndPreview();
+                const cardIdx = parseInt(card.dataset.idx, 10);
+                if (cardIdx === window.activePreviewFileIndex) updatePrintDetailsAndPreview();
             }
         });
     });
@@ -2407,6 +2783,16 @@ if (paymentBtn) {
     paymentBtn.addEventListener("click", function (e) {
         if (e && e.preventDefault) e.preventDefault();
         const manifest = getStoredFileManifest();
+        if (!manifest || manifest.length === 0) {
+            alert("No uploaded files found. Please upload a document first.");
+            window.location.href = "home.html";
+            return;
+        }
+        const hasInvalid = manifest.find(f => f.isValid === false || f.validationError);
+        if (hasInvalid) {
+            alert(`Please fix page selection for '${hasInvalid.name}': ${hasInvalid.validationError || 'Invalid pages'}`);
+            return;
+        }
         saveFileManifest(manifest);
         // Clear old checkout state
         localStorage.removeItem("lastOrderId");
@@ -2442,17 +2828,36 @@ if (paymentFileList && paymentAmount) {
         fileCard.className = "payment-file-item";
         fileCard.style.cssText = "background: #ffffff; border: 1.5px solid #fed7aa; border-radius: 12px; padding: 12px; margin-bottom: 10px;";
 
-        const isDuplex = (file.duplex !== "single");
-        const sideDesc = isDuplex
-            ? (file.duplexBinding === "short_edge" ? "Double Side • Short Edge (Flip 🗓️)" : "Double Side • Long Edge (Booklet 📖)")
-            : "Single Side (1-sided)";
+        const isMicro = (file.printMode === "micro_xerox");
+        const isDuplex = !isMicro && (file.duplex !== "single");
+        let sideDesc = "";
+        if (isMicro) {
+            const nup = file.pagesPerSheet || 2;
+            const orderDesc = (file.pageOrder === "vertical") ? "Top-Down" : "Left-to-Right";
+            sideDesc = `Micro Xerox (${nup}-Up • ${orderDesc}) • ₹3/sheet`;
+        } else if (isDuplex) {
+            sideDesc = (file.duplexBinding === "short_edge")
+                ? "Double Side • Short Edge (Flip 🗓️)"
+                : "Double Side • Long Edge (Booklet 📖)";
+        } else {
+            sideDesc = "Single Side (1-sided)";
+        }
         const colorDesc = (file.colorMode === "color") ? "Color 🎨" : "Black & White (B&W)";
         const orientDesc = (file.orientation === "landscape") ? "Landscape" : "Portrait";
         const paperDesc = (file.paperSize || "a4").toUpperCase();
 
         // Sheet breakdown chips
         let sheetsHtml = "";
-        if (isDuplex) {
+        if (isMicro) {
+            const nup = Math.max(2, parseInt(file.pagesPerSheet || 2, 10));
+            const numSheets = Math.ceil(file.selectedPagesCount / nup);
+            for (let s = 1; s <= numSheets; s++) {
+                const startIdx = (s - 1) * nup;
+                const endIdx = Math.min(s * nup, file.selectedPagesCount);
+                const pageSlice = file.selectedPages.slice(startIdx, endIdx);
+                sheetsHtml += `<span style="background: #ffedd5; color: #7c2d12; font-size: 11px; font-weight: 700; padding: 2px 7px; border-radius: 6px; border: 1px solid #fed7aa;">Sheet ${s}: P.${pageSlice.join(", P.")}</span>`;
+            }
+        } else if (isDuplex) {
             const numSheets = Math.ceil(file.selectedPagesCount / 2);
             for (let s = 1; s <= numSheets; s++) {
                 const p1 = file.selectedPages[2 * s - 2];
@@ -2646,19 +3051,28 @@ if (payBtn) {
                 totalAmountVal += f.calculatedPrice;
             });
 
-            const uploadedPath = localStorage.getItem("backendFilePath") || (manifest.length > 0 ? manifest[0].path : "");
+            const uploadedPath = localStorage.getItem("backendFilePath") || (manifest.length > 0 ? (manifest[0].path || manifest[0].backendPath || "") : "");
             const effectivePath = (manifest.length > 0 && manifest[0].path) ? manifest[0].path : uploadedPath;
             const effectiveName = manifest.map(f => f.name).join(", ") || "document.pdf";
+            const fileNameVal = effectiveName;
 
             const rawMobile = localStorage.getItem("mobileNumber") || localStorage.getItem("customerMobile") || "9876543210";
             const cleanContact = rawMobile.replace(/\D/g, "").slice(-10) || "9876543210";
 
             // Preflight validation to prevent uncaught runtime errors
-            if (!effectivePath && manifest.length === 0) {
+            if (manifest.length === 0) {
                 isPaymentInFlight = false;
                 payBtn.disabled = false;
                 payBtn.textContent = originalText;
-                showPaymentFailedModal("No Document Found", "Please select and upload a document before proceeding to payment.");
+                showPaymentFailedModal("Print Session Expired", "Print session expired. Please return to Upload Files.");
+                return;
+            }
+
+            if (!effectivePath) {
+                isPaymentInFlight = false;
+                payBtn.disabled = false;
+                payBtn.textContent = originalText;
+                showPaymentFailedModal("Print Session Incomplete", "Document upload has not finished. Please return to Upload Files.");
                 return;
             }
 
@@ -2673,7 +3087,7 @@ if (payBtn) {
             const payloadFiles = manifest.map((f, idx) => ({
                 id: f.id,
                 name: f.name,
-                path: f.path,
+                path: f.path || f.backendPath || effectivePath,
                 pages: f.pages,
                 sequence: idx,
                 selected_pages_count: f.selectedPagesCount,
@@ -2687,6 +3101,7 @@ if (payBtn) {
                 scale_mode: f.scaleMode,
                 print_mode: f.printMode || "standard",
                 pages_per_sheet: f.pagesPerSheet || 1,
+                page_order: f.pageOrder || "horizontal",
                 calculated_sheets: f.calculatedSheets,
                 calculated_price: f.calculatedPrice
             }));
@@ -2706,12 +3121,26 @@ if (payBtn) {
                 margins: "normal",
                 print_mode: primaryFile.printMode || "standard",
                 pages_per_sheet: primaryFile.pagesPerSheet || 1,
-                page_order: "horizontal",
+                page_order: primaryFile.pageOrder || "horizontal",
                 file_name: effectiveName,
                 file_path: effectivePath,
                 files: payloadFiles,
                 customer_mobile: cleanContact
             };
+
+            // Safe non-secret diagnostic log (Requirement 9)
+            console.log("[PAYMENT PREFLIGHT] Safe non-secret order payload:", {
+                file_count: payloadFiles.length,
+                file_ids: payloadFiles.map(f => f.id),
+                file_names: payloadFiles.map(f => f.name),
+                selected_pages: payload.pages,
+                copies: payload.copies,
+                amount: payload.amount,
+                print_mode: payload.print_mode,
+                orientation: payload.orientation,
+                duplex: payload.duplex,
+                paper_size: payload.paper_size
+            });
 
             const tReqStart = performance.now();
 
@@ -2765,7 +3194,7 @@ if (payBtn) {
                 "amount": Math.round(Number(orderData.amount)),
                 "currency": orderData.currency || "INR",
                 "name": "PrintFlow",
-                "description": `Print Order - ${fileNameVal.substring(0, 30)}`,
+                "description": `Print Order - ${(fileNameVal || effectiveName || "Document").substring(0, 30)}`,
                 "order_id": orderData.order_id,
                 "prefill": {
                     "contact": cleanContact,
@@ -3240,19 +3669,22 @@ if (adminOrdersTableBody && adminPortalUnlocked) {
 function clearUserDocumentSession() {
     console.log("[PRIVACY] Purging all temporary user document session state...");
     const keysToRemove = [
+        "printflow_session_files", "printflowFileConfigs", "fileListDetails",
         "fileName", "fileSize", "fileType", "fileLastModified",
-        "uploadedFileName", "backendFilePath", "pdfPageCount", "copies",
+        "uploadedFileName", "backendFilePath", "pdfPageCount", "selectedPagesCount", "copies",
         "amount", "printSide", "duplex", "duplexBinding", "binding", "colorMode", "orientation", "paperSize",
         "scaleMode", "margins", "printMode", "pagesPerSheet", "pageOrder",
         "pdfDataUrl", "selectedPdfFile", "lastOrderId", "razorpayOrderId",
         "currentCheckoutPaid", "newCheckoutPending"
     ];
     keysToRemove.forEach(k => {
-        localStorage.removeItem(k);
-        sessionStorage.removeItem(k);
+        try {
+            localStorage.removeItem(k);
+            sessionStorage.removeItem(k);
+        } catch (e) {}
     });
     if (window.clearSavedPdfFile) {
-        window.clearSavedPdfFile();
+        try { window.clearSavedPdfFile(); } catch (e) {}
     }
 }
 window.clearUserDocumentSession = clearUserDocumentSession;
@@ -3619,6 +4051,7 @@ function initSuccessReceiptPage() {
 
                     if (!hasTriggeredCompletedSequence) {
                         hasTriggeredCompletedSequence = true;
+                        clearUserDocumentSession();
 
                         // 1. Printer success state appears
                         if (ledDot) {

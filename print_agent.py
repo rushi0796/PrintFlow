@@ -1618,11 +1618,20 @@ def run_agent():
                         f0_duplex = f0.get("duplex") or duplex
                         f0_copies = int(f0.get("copies") or copies)
                         f0_color = f0.get("color_mode") or color_mode
+                        f0_pm = (f0.get("print_mode") or "standard").lower()
+                        f0_nup = int(f0.get("pages_per_sheet") or 1)
+                        f0_orient = (f0.get("orientation") or orientation).lower()
+                        f0_paper = (f0.get("paper_size") or paper_size).lower()
                         for f_it in raw_files[1:]:
                             it_duplex = f_it.get("duplex") or duplex
                             it_copies = int(f_it.get("copies") or copies)
                             it_color = f_it.get("color_mode") or color_mode
-                            if it_duplex != f0_duplex or it_copies != f0_copies or it_color != f0_color:
+                            it_pm = (f_it.get("print_mode") or "standard").lower()
+                            it_nup = int(f_it.get("pages_per_sheet") or 1)
+                            it_orient = (f_it.get("orientation") or orientation).lower()
+                            it_paper = (f_it.get("paper_size") or paper_size).lower()
+                            if (it_duplex != f0_duplex or it_copies != f0_copies or it_color != f0_color or
+                                it_pm != f0_pm or it_nup != f0_nup or it_orient != f0_orient or it_paper != f0_paper):
                                 is_heterogeneous = True
                                 break
 
@@ -1636,6 +1645,9 @@ def run_agent():
                             s_paper = f_seg.get("paper_size") or paper_size
                             s_scale = f_seg.get("scale_mode") or scale_mode
                             s_range = f_seg.get("page_range") or "all"
+                            s_print_mode = f_seg.get("print_mode") or "standard"
+                            s_nup = int(f_seg.get("pages_per_sheet") or 1)
+                            s_order = f_seg.get("page_order") or "horizontal"
 
                             seg_claim = dict(claimed_order)
                             seg_claim["files"] = [f_seg]
@@ -1648,8 +1660,11 @@ def run_agent():
                             seg_claim["paper_size"] = s_paper
                             seg_claim["scale_mode"] = s_scale
                             seg_claim["page_range"] = s_range
+                            seg_claim["print_mode"] = s_print_mode
+                            seg_claim["pages_per_sheet"] = s_nup
+                            seg_claim["page_order"] = s_order
 
-                            print(f"[AGENT SEGMENT {s_idx+1}/{len(raw_files)}] Processing '{f_seg.get('name')}' (copies={s_copies}, duplex={s_duplex}, orient={s_orient})...")
+                            print(f"[AGENT SEGMENT {s_idx+1}/{len(raw_files)}] Processing '{f_seg.get('name')}' (copies={s_copies}, duplex={s_duplex}, orient={s_orient}, mode={s_print_mode}, nup={s_nup})...")
                             seg_pdf = compose_manifest_to_pdf(seg_claim, backend_url, agent_token, target_printer)
                             seg_job_id = print_document_silently(
                                 seg_pdf,
@@ -1660,10 +1675,10 @@ def run_agent():
                                 duplex=s_duplex,
                                 paper_size=s_paper,
                                 scale_mode=s_scale,
-                                pages_per_sheet=1,
-                                page_order="horizontal",
+                                pages_per_sheet=s_nup,
+                                page_order=s_order,
                                 page_range=s_range,
-                                print_mode="standard",
+                                print_mode=s_print_mode,
                                 already_composed=True
                             )
                             if seg_job_id > 0:

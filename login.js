@@ -248,14 +248,33 @@ function handleVerifyOtp() {
                 // Step 4: Wait until animation completes (1800ms total visible duration), then navigate to home.html
                 setTimeout(() => {
                     const mobileVal = (mobileNumberInput ? mobileNumberInput.value.trim() : "") || localStorage.getItem("mobileNumber") || "";
+
+                    // Clean session start: purge all temporary files and configs from earlier sessions
+                    const docSessionKeys = [
+                        "printflow_session_files", "printflowFileConfigs", "fileListDetails",
+                        "fileName", "fileSize", "fileType", "fileLastModified",
+                        "uploadedFileName", "backendFilePath", "pdfPageCount", "selectedPagesCount",
+                        "copies", "amount", "printSide", "duplex", "duplexBinding", "binding",
+                        "colorMode", "orientation", "paperSize", "scaleMode", "margins",
+                        "printMode", "pagesPerSheet", "pageOrder", "pdfDataUrl", "selectedPdfFile",
+                        "lastOrderId", "razorpayOrderId", "currentCheckoutPaid", "newCheckoutPending"
+                    ];
+                    docSessionKeys.forEach(k => {
+                        try {
+                            localStorage.removeItem(k);
+                            sessionStorage.removeItem(k);
+                        } catch (e) {}
+                    });
+                    try {
+                        if (typeof indexedDB !== "undefined") {
+                            indexedDB.deleteDatabase("PdfStorageDB");
+                        }
+                    } catch (e) {}
+
                     if (mobileVal) {
                         localStorage.setItem("mobileNumber", mobileVal);
                     }
-                    if (window.clearUserDocumentSession) {
-                        window.clearUserDocumentSession();
-                    } else {
-                        ["fileName", "uploadedFileName", "backendFilePath", "pdfPageCount", "copies", "amount", "pdfDataUrl"].forEach(k => localStorage.removeItem(k));
-                    }
+                    localStorage.setItem("loggedIn", "true");
                     window.location.href = "home.html";
                 }, 1800);
             },
