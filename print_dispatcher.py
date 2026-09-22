@@ -221,19 +221,20 @@ def optimize_pdf_for_full_page(
         writer = pypdf.PdfWriter()
 
         for page in reader.pages:
+            # Flatten intrinsic PDF page rotation into content streams without forced rotation
+            if getattr(page, "rotation", 0) != 0:
+                try:
+                    page.transfer_rotation_to_content()
+                except Exception:
+                    pass
+
             orig_w = float(page.mediabox.width)
             orig_h = float(page.mediabox.height)
 
-            # Single orientation conversion if needed
             if is_landscape and orig_w < orig_h:
                 page.rotate(90)
                 page.transfer_rotation_to_content()
-            elif not is_landscape and orig_w > orig_h:
-                page.rotate(90)
-                page.transfer_rotation_to_content()
-
-            orig_w = float(page.mediabox.width)
-            orig_h = float(page.mediabox.height)
+                orig_w, orig_h = orig_h, orig_w
             llx = float(page.mediabox.lower_left[0])
             lly = float(page.mediabox.lower_left[1])
 
@@ -429,6 +430,8 @@ def dispatch_print_job(order_data: dict) -> dict:
                     print(f"[PRINT DISPATCH DEVMODE WARNING]: {dm_err}")
 
                 settings_parts = []
+                if orientation.lower() != "landscape":
+                    settings_parts.append("disable-auto-rotation")
                 if scale_mode in ("actual", "actual_size") and not is_image:
                     settings_parts.append("shrink")
                 else:
@@ -452,7 +455,8 @@ def dispatch_print_job(order_data: dict) -> dict:
                 paper_map = {"a4": (9, "a4"), "letter": (1, "letter"), "legal": (5, "legal")}
                 pid, pname = paper_map.get(paper_size.lower(), (9, "a4"))
                 settings_parts.append(f"paper={pname}")
-                settings_parts.append(f"paperkind={pid}")
+                if orientation.lower() != "landscape":
+                    settings_parts.append(f"paperkind={pid}")
 
                 settings_parts.append(f"{max(1, copies)}x")
 

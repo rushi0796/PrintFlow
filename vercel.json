@@ -25,6 +25,22 @@
       "destination": "/api/index.py"
     },
     {
+      "source": "/upload-chunk",
+      "destination": "/api/index.py"
+    },
+    {
+      "source": "/api/upload-chunk",
+      "destination": "/api/index.py"
+    },
+    {
+      "source": "/upload-complete",
+      "destination": "/api/index.py"
+    },
+    {
+      "source": "/api/upload-complete",
+      "destination": "/api/index.py"
+    },
+    {
       "source": "/api/documents/(.*)",
       "destination": "/api/index.py"
     },
@@ -38,7 +54,7 @@
     },
     {
       "source": "/customer",
-      "destination": "/login.html"
+      "destination": "/home.html"
     },
     {
       "source": "/admin",

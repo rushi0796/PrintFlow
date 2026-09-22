@@ -14,7 +14,7 @@ from typing import Optional, List, Dict, Any
 from pathlib import Path
 from uuid import uuid4
 from datetime import datetime
-from fastapi import FastAPI, UploadFile, File, HTTPException, Header
+from fastapi import FastAPI, UploadFile, File, HTTPException, Header, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import Response
@@ -25,12 +25,16 @@ from storage import (
     complete_order as durable_complete_order,
     delete_document,
     get_document,
+    get_document_meta,
     get_order,
     get_queued_orders,
     get_active_queue_orders,
     list_orders as durable_list_orders,
     queue_paid_order,
     save_document,
+    save_upload_chunk,
+    assemble_upload_chunks,
+    cleanup_expired_upload_chunks,
     save_order,
     save_agent_state,
     get_agent_state,
@@ -295,7 +299,7 @@ def schedule_secure_document_cleanup(order_id: str, delay_seconds: float = 2.5):
 
 def verify_agent_token(header_token: Optional[str]):
     expected_token = (os.environ.get("PRINT_AGENT_TOKEN") or "PF_AGENT_SECRET_TOKEN_2026").strip()
-    if not header_token or header_token.strip() != expected_token:
+    if not header_token or not isinstance(header_token, str) or header_token.strip() != expected_token:
         raise HTTPException(status_code=401, detail="Unauthorized PrintAgent Token")
 
 def queue_order_for_printing(payload: dict):
@@ -1026,7 +1030,7 @@ async def upload_pdf(file: UploadFile = File(...)):
 
         # Calculate exact rendered page count
         page_count = calculate_document_page_count(original_name, content)
-        print(f"[UPLOAD FILE] {original_name} -> {page_count} page(s)")
+        print(f"[UPLOAD FILE] {original_name} ({len(content)} bytes) -> {page_count} page(s)")
 
         return {
             "status": "success",
@@ -1041,9 +1045,96 @@ async def upload_pdf(file: UploadFile = File(...)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.post("/upload-chunk")
+@app.post("/api/upload-chunk")
+async def upload_chunk_endpoint(
+    upload_id: str = Form(...),
+    chunk_index: int = Form(...),
+    total_chunks: int = Form(...),
+    file_name: str = Form(...),
+    file_size: Optional[int] = Form(None),
+    chunk: UploadFile = File(...)
+):
+    try:
+        allowed_extensions = {".pdf", ".png", ".jpg", ".jpeg", ".webp", ".doc", ".docx", ".txt"}
+        file_ext = Path(file_name).suffix.lower()
+        if file_ext not in allowed_extensions:
+            raise HTTPException(status_code=400, detail=f"Unsupported file format '{file_ext}'")
+
+        chunk_bytes = await chunk.read()
+        save_upload_chunk(upload_id, chunk_index, total_chunks, chunk_bytes)
+        return {
+            "status": "success",
+            "upload_id": upload_id,
+            "chunk_index": chunk_index,
+            "total_chunks": total_chunks,
+            "bytes_received": len(chunk_bytes)
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/upload-complete")
+@app.post("/api/upload-complete")
+async def upload_complete_endpoint(
+    upload_id: str = Form(...),
+    file_name: str = Form(...),
+    total_chunks: int = Form(...),
+    mime_type: Optional[str] = Form(None)
+):
+    try:
+        allowed_extensions = {".pdf", ".png", ".jpg", ".jpeg", ".webp", ".doc", ".docx", ".txt"}
+        file_ext = Path(file_name).suffix.lower()
+        if file_ext not in allowed_extensions:
+            raise HTTPException(status_code=400, detail=f"Unsupported file format '{file_ext}'")
+
+        original_name = Path(file_name).name
+        clean_mime = mime_type if isinstance(mime_type, str) and mime_type.strip() else "application/octet-stream"
+        assembled_content = assemble_upload_chunks(upload_id, total_chunks)
+        document_id = save_document(original_name, clean_mime, assembled_content)
+        returned_path = f"/api/documents/{document_id}"
+
+        # Calculate exact rendered page count without page limits
+        page_count = calculate_document_page_count(original_name, assembled_content)
+        print(f"[CHUNKED UPLOAD COMPLETE] {original_name} ({len(assembled_content)} bytes, {total_chunks} chunks) -> {page_count} page(s)")
+
+        return {
+            "status": "success",
+            "message": "File uploaded successfully",
+            "file_name": original_name,
+            "file_path": returned_path,
+            "page_count": page_count,
+            "pages": page_count
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/documents/{document_id}/meta")
+def get_document_meta_endpoint(document_id: str, x_print_agent_token: Optional[str] = Header(None)):
+    if x_print_agent_token and isinstance(x_print_agent_token, str):
+        verify_agent_token(x_print_agent_token)
+    meta = get_document_meta(document_id)
+    if not meta:
+        raise HTTPException(status_code=404, detail="Document not found")
+    return {
+        "document_id": meta["document_id"],
+        "file_name": meta.get("file_name", "document.pdf"),
+        "file_size": meta.get("file_size", 0),
+        "mime_type": meta.get("mime_type", "application/octet-stream")
+    }
+
 @app.get("/api/documents/{document_id}")
-def download_document(document_id: str, x_print_agent_token: Optional[str] = Header(None)):
-    if x_print_agent_token:
+def download_document(
+    document_id: str,
+    range: Optional[str] = Header(None, alias="Range"),
+    chunk_index: Optional[int] = None,
+    chunk_size: Optional[int] = None,
+    x_print_agent_token: Optional[str] = Header(None)
+):
+    if x_print_agent_token and isinstance(x_print_agent_token, str):
         verify_agent_token(x_print_agent_token)
     document = get_document(document_id)
     if not document:
@@ -1056,11 +1147,67 @@ def download_document(document_id: str, x_print_agent_token: Optional[str] = Hea
         ascii_name = f"document{Path(raw_name).suffix or '.pdf'}"
     encoded_name = urllib.parse.quote(raw_name)
     content_disposition = f'inline; filename="{ascii_name}"; filename*=UTF-8\'\'{encoded_name}'
+    full_content = bytes(document["content"])
+    total_size = len(full_content)
+    mime_type = document.get("mime_type", "application/octet-stream")
+
+    # Range header handling: e.g. "bytes=0-2097151"
+    if range and isinstance(range, str) and range.strip().lower().startswith("bytes="):
+        range_val = range.strip()[6:].strip()
+        parts = range_val.split("-")
+        try:
+            start = int(parts[0]) if parts[0] else 0
+            end = int(parts[1]) if len(parts) > 1 and parts[1] else total_size - 1
+            start = max(0, min(start, total_size - 1))
+            end = max(start, min(end, total_size - 1))
+            chunk_data = full_content[start:end + 1]
+            return Response(
+                content=chunk_data,
+                status_code=206,
+                media_type=mime_type,
+                headers={
+                    "Content-Range": f"bytes {start}-{end}/{total_size}",
+                    "Accept-Ranges": "bytes",
+                    "Content-Length": str(len(chunk_data)),
+                    "Content-Disposition": content_disposition
+                }
+            )
+        except Exception:
+            pass
+
+    # Query param chunk handling: ?chunk_index=0&chunk_size=2097152
+    if chunk_index is not None:
+        c_size = chunk_size or (2 * 1024 * 1024)
+        start = chunk_index * c_size
+        end = min(total_size, start + c_size)
+        if start >= total_size:
+            chunk_data = b""
+        else:
+            chunk_data = full_content[start:end]
+        total_chunks = max(1, (total_size + c_size - 1) // c_size)
+        return Response(
+            content=chunk_data,
+            status_code=206 if (start > 0 or end < total_size) else 200,
+            media_type=mime_type,
+            headers={
+                "X-Total-Size": str(total_size),
+                "X-Chunk-Index": str(chunk_index),
+                "X-Total-Chunks": str(total_chunks),
+                "Content-Range": f"bytes {start}-{max(start, end - 1)}/{total_size}",
+                "Accept-Ranges": "bytes",
+                "Content-Length": str(len(chunk_data)),
+                "Content-Disposition": content_disposition
+            }
+        )
 
     return Response(
-        content=document["content"],
-        media_type=document.get("mime_type", "application/octet-stream"),
-        headers={"Content-Disposition": content_disposition}
+        content=full_content,
+        media_type=mime_type,
+        headers={
+            "Content-Length": str(total_size),
+            "Accept-Ranges": "bytes",
+            "Content-Disposition": content_disposition
+        }
     )
 
 @app.post("/api/orders/{order_id}/retry")

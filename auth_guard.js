@@ -14,7 +14,8 @@
             sessionStorage.removeItem('printflowAdminUnlocked');
         }
 
-        const publicPages = ['login.html', 'index.html', '', 'privacy-policy.html', 'terms.html', 'refund-policy.html'];
+        const publicPages = ['login.html', 'index.html', '', 'privacy-policy.html', 'terms.html', 'refund-policy.html',
+                             'home.html', 'print-details.html', 'payment.html', 'success.html'];
         const isPublicPage = publicPages.includes(currentPage);
 
         const storedMobile = (localStorage.getItem('mobileNumber') || '').trim();

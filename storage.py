@@ -6,20 +6,25 @@ from pathlib import Path
 from typing import Any, Optional
 from uuid import uuid4
 
-DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
+DATABASE_URL = os.environ.get("DATABASE_URL_UNPOOLED", "").strip() or os.environ.get("DATABASE_URL", "").strip()
 if not DATABASE_URL:
     for env_file in [Path(__file__).resolve().parent / ".env.local", Path(__file__).resolve().parent / ".env"]:
         if env_file.exists():
+            env_dict = {}
             for line in env_file.read_text(encoding="utf-8").splitlines():
                 line = line.strip()
                 if line and not line.startswith("#") and "=" in line:
                     k, v = line.split("=", 1)
-                    if k.strip() == "DATABASE_URL":
-                        DATABASE_URL = v.strip().strip('"').strip("'")
-                        os.environ["DATABASE_URL"] = DATABASE_URL
-                        break
-        if DATABASE_URL:
-            break
+                    env_dict[k.strip()] = v.strip().strip('"').strip("'")
+            if env_dict.get("DATABASE_URL_UNPOOLED"):
+                DATABASE_URL = env_dict["DATABASE_URL_UNPOOLED"]
+                break
+            elif env_dict.get("DATABASE_URL"):
+                DATABASE_URL = env_dict["DATABASE_URL"]
+                break
+
+if DATABASE_URL:
+    os.environ["DATABASE_URL"] = DATABASE_URL
 
 from contextlib import contextmanager
 
@@ -45,9 +50,16 @@ def _postgres():
         return None
     try:
         import psycopg2
-        return psycopg2.connect(DATABASE_URL, connect_timeout=5)
     except ImportError as exc:
         raise RuntimeError("DATABASE_URL is configured but psycopg2-binary is not installed") from exc
+
+    for attempt in range(3):
+        try:
+            return psycopg2.connect(DATABASE_URL, connect_timeout=5)
+        except Exception:
+            if attempt == 2:
+                raise
+            time.sleep(0.5)
 
 
 def _sqlite():
@@ -62,6 +74,7 @@ def get_connection():
     pool = _get_pg_pool()
     conn = None
     is_pooled = False
+    is_broken = False
     if pool:
         try:
             conn = pool.getconn()
@@ -77,17 +90,25 @@ def get_connection():
 
     try:
         yield conn
+    except Exception:
+        is_broken = True
+        raise
     finally:
         if is_pooled and pool and conn:
-            try:
-                if not conn.closed:
+            if is_broken or conn.closed:
+                try:
+                    pool.putconn(conn, close=True)
+                except Exception:
+                    pass
+            else:
+                try:
                     conn.rollback()
-            except Exception:
-                pass
-            try:
-                pool.putconn(conn)
-            except Exception:
-                pass
+                    pool.putconn(conn)
+                except Exception:
+                    try:
+                        pool.putconn(conn, close=True)
+                    except Exception:
+                        pass
         elif conn and not is_pooled:
             try:
                 conn.close()
@@ -157,6 +178,16 @@ def init_storage():
                         last_seen DOUBLE PRECISION DEFAULT 0.0
                     )
                 """)
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS printflow_upload_chunks (
+                        upload_id TEXT NOT NULL,
+                        chunk_index INTEGER NOT NULL,
+                        total_chunks INTEGER NOT NULL,
+                        chunk_data BYTEA NOT NULL,
+                        created_at TEXT NOT NULL,
+                        PRIMARY KEY (upload_id, chunk_index)
+                    )
+                """)
                 migration_cols = {
                     "file_size": "BIGINT DEFAULT 0",
                     "paper_size": "TEXT DEFAULT 'A4'",
@@ -204,6 +235,14 @@ def init_storage():
                     printers TEXT DEFAULT '[]',
                     status TEXT DEFAULT 'OFFLINE',
                     last_seen REAL DEFAULT 0.0
+                );
+                CREATE TABLE IF NOT EXISTS printflow_upload_chunks (
+                    upload_id TEXT NOT NULL,
+                    chunk_index INTEGER NOT NULL,
+                    total_chunks INTEGER NOT NULL,
+                    chunk_data BLOB NOT NULL,
+                    created_at TEXT NOT NULL,
+                    PRIMARY KEY (upload_id, chunk_index)
                 );
             """)
             existing_columns = {
@@ -262,30 +301,37 @@ def _row_to_dict(row: Any) -> Optional[dict]:
     return item
 
 
-def _execute(sql: str, params=(), fetch: str = "none"):
-    with get_connection() as connection:
-        if DATABASE_URL:
-            from psycopg2.extras import RealDictCursor
-            cursor = connection.cursor(cursor_factory=RealDictCursor)
-        else:
-            cursor = connection.cursor()
-        try:
-            cursor.execute(sql, params)
-            result = None
-            if fetch == "one":
-                result = _row_to_dict(cursor.fetchone())
-            elif fetch == "all":
-                result = [_row_to_dict(row) for row in cursor.fetchall()]
-            connection.commit()
-            return result
-        except Exception:
+def _execute(sql: str, params=(), fetch: str = "none", _retries: int = 1):
+    try:
+        with get_connection() as connection:
+            if DATABASE_URL:
+                from psycopg2.extras import RealDictCursor
+                cursor = connection.cursor(cursor_factory=RealDictCursor)
+            else:
+                cursor = connection.cursor()
             try:
-                connection.rollback()
+                cursor.execute(sql, params)
+                result = None
+                if fetch == "one":
+                    result = _row_to_dict(cursor.fetchone())
+                elif fetch == "all":
+                    result = [_row_to_dict(row) for row in cursor.fetchall()]
+                connection.commit()
+                return result
             except Exception:
-                pass
-            raise
-        finally:
-            cursor.close()
+                try:
+                    connection.rollback()
+                except Exception:
+                    pass
+                raise
+            finally:
+                cursor.close()
+    except Exception as e:
+        if DATABASE_URL and _retries > 0:
+            import psycopg2
+            if isinstance(e, (psycopg2.OperationalError, psycopg2.InterfaceError)):
+                return _execute(sql, params, fetch=fetch, _retries=_retries - 1)
+        raise
 
 
 def save_order(order: dict) -> dict:
@@ -449,22 +495,95 @@ def complete_order(order_id: str, status: str, error: str = "", printer: str = "
 def save_document(file_name: str, mime_type: str, content: bytes) -> str:
     init_storage()
     document_id = uuid4().hex
+    safe_mime = mime_type if isinstance(mime_type, str) and mime_type.strip() else "application/octet-stream"
     columns = "document_id, file_name, mime_type, content, created_at"
-    placeholders = "%s, %s, %s, %s, %s" if DATABASE_URL else "?, ?, ?, ?, ?"
-    _execute(f"INSERT INTO printflow_documents ({columns}) VALUES ({placeholders})", (document_id, file_name, mime_type or "application/octet-stream", content, datetime.now(timezone.utc).isoformat()))
+    if DATABASE_URL:
+        import psycopg2
+        _execute(
+            f"INSERT INTO printflow_documents ({columns}) VALUES (%s, %s, %s, %s, %s)",
+            (document_id, str(file_name), safe_mime, psycopg2.Binary(content), datetime.now(timezone.utc).isoformat())
+        )
+    else:
+        _execute(
+            f"INSERT INTO printflow_documents ({columns}) VALUES (?, ?, ?, ?, ?)",
+            (document_id, str(file_name), safe_mime, bytes(content), datetime.now(timezone.utc).isoformat())
+        )
     return document_id
 
 
 def get_document(document_id: str) -> Optional[dict]:
     init_storage()
     placeholder = "%s" if DATABASE_URL else "?"
-    return _execute(f"SELECT document_id, file_name, mime_type, content FROM printflow_documents WHERE document_id={placeholder}", (document_id,), "one")
+    row = _execute(f"SELECT document_id, file_name, mime_type, content FROM printflow_documents WHERE document_id={placeholder}", (document_id,), "one")
+    if row and "content" in row and row["content"] is not None:
+        row["content"] = bytes(row["content"])
+    return row
+
+
+def get_document_meta(document_id: str) -> Optional[dict]:
+    init_storage()
+    placeholder = "%s" if DATABASE_URL else "?"
+    if DATABASE_URL:
+        sql = f"SELECT document_id, file_name, mime_type, OCTET_LENGTH(content) AS file_size, created_at FROM printflow_documents WHERE document_id={placeholder}"
+    else:
+        sql = f"SELECT document_id, file_name, mime_type, length(content) AS file_size, created_at FROM printflow_documents WHERE document_id={placeholder}"
+    return _execute(sql, (document_id,), "one")
 
 
 def delete_document(document_id: str):
     init_storage()
     placeholder = "%s" if DATABASE_URL else "?"
     _execute(f"DELETE FROM printflow_documents WHERE document_id={placeholder}", (document_id,))
+
+
+def save_upload_chunk(upload_id: str, chunk_index: int, total_chunks: int, chunk_data: bytes) -> None:
+    init_storage()
+    now_iso = datetime.now(timezone.utc).isoformat()
+    if DATABASE_URL:
+        import psycopg2
+        sql = """
+            INSERT INTO printflow_upload_chunks (upload_id, chunk_index, total_chunks, chunk_data, created_at)
+            VALUES (%s, %s, %s, %s, %s)
+            ON CONFLICT (upload_id, chunk_index) DO UPDATE SET chunk_data = EXCLUDED.chunk_data, created_at = EXCLUDED.created_at
+        """
+        _execute(sql, (upload_id, chunk_index, total_chunks, psycopg2.Binary(chunk_data), now_iso), fetch="none")
+    else:
+        sql = """
+            INSERT INTO printflow_upload_chunks (upload_id, chunk_index, total_chunks, chunk_data, created_at)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(upload_id, chunk_index) DO UPDATE SET chunk_data = excluded.chunk_data, created_at = excluded.created_at
+        """
+        _execute(sql, (upload_id, chunk_index, total_chunks, bytes(chunk_data), now_iso), fetch="none")
+
+
+def assemble_upload_chunks(upload_id: str, total_chunks: int) -> bytes:
+    init_storage()
+    placeholder = "%s" if DATABASE_URL else "?"
+    rows = _execute(
+        f"SELECT chunk_index, chunk_data FROM printflow_upload_chunks WHERE upload_id={placeholder} ORDER BY chunk_index ASC",
+        (upload_id,),
+        fetch="all"
+    )
+    if not rows or len(rows) < total_chunks:
+        count = len(rows) if rows else 0
+        raise ValueError(f"Incomplete upload for {upload_id}: expected {total_chunks} chunks, found {count}")
+
+    assembled = bytearray()
+    for row in rows:
+        data = row["chunk_data"] if isinstance(row, dict) else row[1]
+        assembled.extend(bytes(data))
+
+    # Clean up upload chunks after successful assembly
+    _execute(f"DELETE FROM printflow_upload_chunks WHERE upload_id={placeholder}", (upload_id,), fetch="none")
+    return bytes(assembled)
+
+
+def cleanup_expired_upload_chunks(max_age_hours: int = 2) -> int:
+    init_storage()
+    placeholder = "%s" if DATABASE_URL else "?"
+    cutoff = datetime.now(timezone.utc).timestamp() - (max_age_hours * 3600)
+    cutoff_iso = datetime.fromtimestamp(cutoff, tz=timezone.utc).isoformat()
+    return _execute(f"DELETE FROM printflow_upload_chunks WHERE created_at < {placeholder}", (cutoff_iso,), fetch="none") or 0
 
 
 def delete_order(order_id: str):

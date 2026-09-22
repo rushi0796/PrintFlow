@@ -3,8 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta http-equiv="refresh" content="0; url=login.html">
-    <title>PrintFlow - Login</title>
+    <meta http-equiv="refresh" content="0; url=home.html">
+    <title>PrintFlow - Smart Xerox Printing</title>
 
     <link rel="stylesheet" href="style.css">
 </head>
@@ -12,9 +12,8 @@
 <body>
 
 <script>
-    localStorage.removeItem("mobileNumber");
-    sessionStorage.removeItem("printflowAdminUnlocked");
-    window.location.replace("login.html");
+    // Public entry point — go directly to upload page, no login required
+    window.location.replace("home.html");
 </script>
 
     <div class="container">
@@ -26,36 +25,12 @@
         </div>
 
         <p class="subtitle">
-            Smart & Fast Xerox Printing
+            Smart &amp; Fast Xerox Printing
         </p>
 
         <p class="description">
-            Login with your mobile number to continue.
+            Loading...
         </p>
-
-        <input
-            type="tel"
-            id="phone"
-            placeholder="Enter Mobile Number"
-            maxlength="10"
-        >
-
-        <button id="sendOtpBtn">
-            Send OTP
-        </button>
-
-        <div id="otpSection" style="display:none;">
-
-            <input
-                type="text"
-                id="otp"
-                placeholder="Enter OTP"
-                maxlength="6"
-            >
-
-            <button id="verifyOtpBtn">
-                Verify OTP
-            </button>
 
         <footer class="app-footer">
             <div class="footer-links">
@@ -73,8 +48,6 @@
         </footer>
 
     </div>
-
-    <script src="script.js?v=20260909-stabilization-v4"></script>
 
 </body>
 </html>

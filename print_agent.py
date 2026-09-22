@@ -209,6 +209,9 @@ def select_target_printer(color_mode: str, config: dict, installed_printers: lis
             target = default_printer
         return target
 
+from functools import lru_cache
+
+@lru_cache(maxsize=64)
 def get_printer_hardware_caps(printer_name: str = "", orientation: str = "portrait", paper_size: str = "a4") -> dict:
     """
     Queries the REAL Windows printer device context / driver for:
@@ -332,6 +335,9 @@ def download_file(backend_url: str, file_rel_path: str, agent_token: str = "", o
     clean_name = sanitize_filename(original_file_name or Path(file_rel_path).name)
     target_path = TEMP_DOWNLOAD_DIR / clean_name
 
+    if target_path.is_file() and target_path.stat().st_size > 0:
+        return target_path
+
     # Fast-path: Check if file exists locally in uploads directory
     rel_clean = str(file_rel_path).replace("\\", "/").lstrip("/")
     local_candidates = [
@@ -346,11 +352,50 @@ def download_file(backend_url: str, file_rel_path: str, agent_token: str = "", o
 
     full_url = f"{backend_url.rstrip('/')}{file_rel_path if file_rel_path.startswith('/') else '/' + file_rel_path}"
 
+    # Streaming / chunked download for files > 3.5 MB to respect Vercel 4.5 MB response payload limits
+    if "/api/documents/" in file_rel_path:
+        doc_id = Path(file_rel_path.split("?")[0]).name
+        meta_url = f"{backend_url.rstrip('/')}/api/documents/{doc_id}/meta"
+        try:
+            m_req = urllib.request.Request(meta_url, headers={"User-Agent": "PrintFlowAgent/1.0", "X-Print-Agent-Token": agent_token})
+            with urllib.request.urlopen(m_req, timeout=10) as m_resp:
+                meta_data = json.loads(m_resp.read().decode("utf-8"))
+                total_size = meta_data.get("file_size", 0)
+                if total_size > 3.5 * 1024 * 1024:
+                    chunk_sz = 2 * 1024 * 1024
+                    total_chunks = max(1, (total_size + chunk_sz - 1) // chunk_sz)
+                    with target_path.open("wb") as out_file:
+                        for c_idx in range(total_chunks):
+                            c_url = f"{full_url}?chunk_index={c_idx}&chunk_size={chunk_sz}"
+                            c_req = urllib.request.Request(c_url, headers={"User-Agent": "PrintFlowAgent/1.0", "X-Print-Agent-Token": agent_token})
+                            with urllib.request.urlopen(c_req, timeout=30) as c_resp:
+                                shutil.copyfileobj(c_resp, out_file)
+                    if target_path.stat().st_size == total_size:
+                        print(f"[AGENT CHUNKED DOWNLOAD SUCCESS] Downloaded {total_size} bytes in {total_chunks} chunk(s) for '{clean_name}'")
+                        return target_path
+                    else:
+                        print(f"[AGENT CHUNKED SIZE MISMATCH] Expected {total_size} bytes, got {target_path.stat().st_size} bytes. Retrying standard...")
+        except Exception as meta_err:
+            print(f"[AGENT META DOWNLOAD FALLBACK]: {meta_err}")
+
     req = urllib.request.Request(full_url, headers={"User-Agent": "PrintFlowAgent/1.0", "X-Print-Agent-Token": agent_token})
     try:
         with urllib.request.urlopen(req, timeout=30) as response, target_path.open("wb") as out_file:
             shutil.copyfileobj(response, out_file)
     except Exception:
+        # Graceful in-process / direct storage fallback for local execution & tests
+        try:
+            if "/api/documents/" in file_rel_path:
+                import storage
+                d_id = Path(file_rel_path.split("?")[0]).name
+                d_row = storage.get_document(d_id)
+                if d_row and d_row.get("content"):
+                    with target_path.open("wb") as out_file:
+                        out_file.write(bytes(d_row["content"]))
+                    return target_path
+        except Exception:
+            pass
+
         if target_path.exists():
             try:
                 target_path.unlink()
@@ -568,10 +613,17 @@ def optimize_pdf_for_full_page(
         if num_pages == 0:
             raise RuntimeError(f"FULL_PAGE_EMPTY_INPUT: Input PDF '{input_pdf_path.name}' has 0 pages")
 
-        target_orient = str(orientation).strip().lower()
+        target_orient = str(orientation or "portrait").strip().lower()
         writer = pypdf.PdfWriter()
 
         for page in reader.pages:
+            # Flatten intrinsic PDF page rotation into content streams without forced rotation
+            if getattr(page, "rotation", 0) != 0:
+                try:
+                    page.transfer_rotation_to_content()
+                except Exception:
+                    pass
+
             orig_w = float(page.mediabox.width)
             orig_h = float(page.mediabox.height)
 
@@ -583,12 +635,8 @@ def optimize_pdf_for_full_page(
                     orig_w, orig_h = orig_h, orig_w
             elif target_orient == "portrait":
                 page_is_landscape = False
-                if orig_w > orig_h:
-                    page.rotate(90)
-                    page.transfer_rotation_to_content()
-                    orig_w, orig_h = orig_h, orig_w
             else:
-                page_is_landscape = (orig_w >= orig_h)
+                page_is_landscape = (orig_w > orig_h)
 
             page_caps = get_printer_hardware_caps(printer_name, "landscape" if page_is_landscape else "portrait", paper_size)
             p_sheet_w = page_caps["paper_w_pt"]
@@ -747,8 +795,6 @@ def convert_image_to_pdf_page(
     # Rotate image content to align with requested orientation
     if is_landscape and img.height > img.width:
         img = img.rotate(270, expand=True)
-    elif not is_landscape and img.width > img.height:
-        img = img.rotate(270, expand=True)
 
     img_w, img_h = img.size
     is_fill = (str(scale_mode).lower() in ("fill", "cover"))
@@ -869,9 +915,28 @@ def compose_manifest_to_pdf(
 
     order_id = claimed_order.get("order_id", "order")
     files_list = claimed_order.get("files") or []
+    if isinstance(files_list, str):
+        try:
+            files_list = json.loads(files_list)
+        except Exception:
+            files_list = []
+    if isinstance(files_list, list):
+        cleaned_files = []
+        for item in files_list:
+            if isinstance(item, str):
+                try:
+                    item = json.loads(item)
+                except Exception:
+                    continue
+            if isinstance(item, dict):
+                cleaned_files.append(item)
+        files_list = cleaned_files
+
     default_path = claimed_order.get("file_path", "")
     default_name = claimed_order.get("file_name", "document.pdf")
-    orientation = claimed_order.get("orientation") or "mixed"
+    orientation = claimed_order.get("orientation")
+    if orientation:
+        orientation = str(orientation).strip().lower()
     paper_size = claimed_order.get("paper_size", "a4")
     scale_mode = claimed_order.get("scale_mode", "fit")
     print_mode = claimed_order.get("print_mode", "standard")
@@ -935,7 +1000,7 @@ def compose_manifest_to_pdf(
                     except Exception:
                         pass
 
-        f_orientation = item.get("orientation") or orientation
+        f_orientation = (item.get("orientation") or orientation or "mixed").strip().lower()
         f_paper_size = item.get("paper_size") or paper_size
         f_scale_mode = item.get("scale_mode") or scale_mode
         f_page_range = item.get("page_range") or (page_range if len(files_list) == 1 else "all")
@@ -1301,7 +1366,10 @@ def print_document_silently(
             except Exception as dm_err:
                 print(f"[PRINTER DEVMODE CONFIG WARNING]: {dm_err}")
 
-        settings_parts = ["noscale"]
+        if orientation.lower() == "landscape":
+            settings_parts = ["noscale"]
+        else:
+            settings_parts = ["noscale", "disable-auto-rotation"]
 
         # Duplex (Sumatra keyword is "simplex", "duplexshort", or "duplexlong")
         if is_color or duplex == "single":
@@ -1319,10 +1387,12 @@ def print_document_silently(
         else:
             settings_parts.append("portrait")
 
-        # Paper size
-        paper_map = {"a4": "a4", "letter": "letter", "legal": "legal"}
-        pname = paper_map.get(paper_size.lower(), "a4")
+        # Paper size & Paper Kind
+        paper_map = {"a4": (9, "a4"), "letter": (1, "letter"), "legal": (5, "legal")}
+        pid, pname = paper_map.get(paper_size.lower(), (9, "a4"))
         settings_parts.append(f"paper={pname}")
+        if orientation.lower() != "landscape":
+            settings_parts.append(f"paperkind={pid}")
         settings_parts.append(f"{max(1, copies)}x")
 
         # Color mode:
@@ -1559,7 +1629,7 @@ def run_agent():
                 file_name = job.get("file_name", "") or (Path(file_rel_path).name if file_rel_path else "document.pdf")
                 is_color = str(color_mode).lower() in ("color", "colour")
 
-                if not order_id:
+                if not order_id or str(order_id).startswith(("PF_TEST_", "TEST_", "PF-TEST-")):
                     continue
 
                 files_manifest = job.get("files") or []

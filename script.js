@@ -8,11 +8,27 @@ const isLocalDevelopment = ["localhost", "127.0.0.1"].includes(window.location.h
 const API_BASE = isLocalDevelopment ? "http://127.0.0.1:8000" : "";
 const apiUrl = (localPath, productionPath = localPath) => `${API_BASE}${isLocalDevelopment ? localPath : productionPath}`;
 
+// Generate or retrieve a stable per-tab anonymous session ID.
+// Stored in sessionStorage so it resets when the browser tab is closed.
+// This namespaces each customer's files/orders without requiring login.
+function getAnonSessionId() {
+    let sid = sessionStorage.getItem("printflow_anon_session");
+    if (!sid) {
+        sid = "anon_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+        sessionStorage.setItem("printflow_anon_session", sid);
+    }
+    return sid;
+}
+
 function getAuthHeaders(customHeaders = {}) {
     const headers = { ...customHeaders };
     const mobile = (localStorage.getItem("mobileNumber") || "").trim();
     if (mobile) {
         headers["X-Customer-Mobile"] = mobile;
+    } else {
+        // Anonymous customers: pass the per-tab session ID so the backend
+        // can distinguish sessions without requiring login.
+        headers["X-Customer-Mobile"] = getAnonSessionId();
     }
     const isAdminUnlocked = sessionStorage.getItem("printflowAdminUnlocked") === "true";
     if (isAdminUnlocked) {
@@ -531,124 +547,179 @@ async function countPdfPages(file) {
     }
 }
 
+const CHUNK_THRESHOLD_BYTES = 3.5 * 1024 * 1024; // 3.5 MB
+const CHUNK_SIZE_BYTES = 2 * 1024 * 1024; // 2 MB
+
+async function uploadChunkWithRetry(uploadId, chunkIndex, totalChunks, fileName, fileSize, chunkBlob, signal, maxRetries = 3) {
+    let attempt = 0;
+    while (attempt < maxRetries) {
+        if (signal && signal.aborted) {
+            throw new Error("Upload aborted");
+        }
+        attempt++;
+        try {
+            const formData = new FormData();
+            formData.append("upload_id", uploadId);
+            formData.append("chunk_index", chunkIndex);
+            formData.append("total_chunks", totalChunks);
+            formData.append("file_name", fileName);
+            if (fileSize) formData.append("file_size", fileSize);
+            formData.append("chunk", chunkBlob, fileName);
+
+            const response = await fetch(apiUrl("/upload-chunk", "/api/upload-chunk"), {
+                method: "POST",
+                headers: getAuthHeaders(),
+                body: formData,
+                signal: signal
+            });
+            const data = await response.json().catch(() => ({}));
+            if (response.ok && data.status === "success") {
+                return data;
+            }
+            if (attempt >= maxRetries) {
+                throw new Error(data.detail || `Chunk ${chunkIndex + 1}/${totalChunks} upload failed (HTTP ${response.status})`);
+            }
+        } catch (err) {
+            if (signal && signal.aborted) throw err;
+            if (attempt >= maxRetries) throw err;
+            await new Promise(r => setTimeout(r, 500 * attempt));
+        }
+    }
+}
+
 async function uploadPdfToBackend(file) {
     if (!file) return null;
-    const formData = new FormData();
-    formData.append("file", file, file.name);
-    const response = await fetch(apiUrl("/upload-pdf", "/api/upload-pdf"), {
-        method: "POST",
-        headers: getAuthHeaders(),
-        body: formData
-    });
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok || data.status !== "success") {
-        throw new Error(data.detail || `Upload failed (HTTP ${response.status})`);
-    }
-    return { ok: true, data };
-}
-
-async function handleFileSelection(eventOrFiles) {
-    let rawFiles = [];
-    if (eventOrFiles && eventOrFiles.target && eventOrFiles.target.files) {
-        rawFiles = Array.from(eventOrFiles.target.files);
-    } else if (Array.isArray(eventOrFiles)) {
-        rawFiles = eventOrFiles;
-    } else if (eventOrFiles instanceof FileList) {
-        rawFiles = Array.from(eventOrFiles);
-    } else if (eventOrFiles instanceof File) {
-        rawFiles = [eventOrFiles];
-    }
-    if (!rawFiles.length) return;
-
-    const pdfErrorMsg = document.getElementById("pdfErrorMsg");
-    if (pdfErrorMsg) pdfErrorMsg.style.display = "none";
-
-    const allowedExtensions = ["pdf", "png", "jpg", "jpeg", "webp", "doc", "docx", "txt"];
-    let nextSequence = fileQueue.length + 1;
-
-    for (const file of rawFiles) {
-        const ext = (file.name || "").split('.').pop().toLowerCase();
-        if (!allowedExtensions.includes(ext)) {
-            console.warn(`File '${file.name}' rejected: unsupported extension .${ext}`);
-            continue;
-        }
-
-        const fileId = generateFileId(file);
-        if (fileQueue.some(i => i.id === fileId && i.status !== "CANCELED")) {
-            console.log(`File '${file.name}' already exists in upload queue.`);
-            continue;
-        }
-
-        const isDocx = (ext === "doc" || ext === "docx");
-        const isPdf = (ext === "pdf" || file.type === "application/pdf");
-        const typeInfo = getFileTypeDetails(file);
-        const item = {
-            id: fileId,
-            file: file,
-            name: file.name,
-            size: file.size,
-            typeCategory: typeInfo.category,
-            typeIcon: typeInfo.icon,
-            status: "WAITING",
-            progress: 0,
-            pages: 1,
-            isDetectingPages: isDocx || isPdf,
-            backendPath: "",
-            xhr: null,
-            error: null,
-            sequence: nextSequence++
-        };
-
-        fileQueue.push(item);
-        renderFileRowUI(item);
-
-        if (isPdf) {
-            countPdfPages(file).then(pages => {
-                item.pages = pages;
-                item.isDetectingPages = false;
-                renderFileRowUI(item);
-                calculateAndUpdateTotalPages();
-                saveUploadStateToLocalStorage();
-            }).catch(err => {
-                item.pages = 1;
-                item.isDetectingPages = false;
-                renderFileRowUI(item);
-            });
-        }
-    }
-
-    updateOverallUploadSummary();
-    processUploadQueue();
-}
-window.handleFileSelection = handleFileSelection;
-
-async function uploadSingleFile(item) {
-    item.status = "UPLOADING";
-    item.progress = 0;
-    renderFileRowUI(item);
-    updateOverallUploadSummary();
-
-    const formData = new FormData();
-    formData.append("file", item.file, item.name);
-
-    try {
+    if (file.size <= CHUNK_THRESHOLD_BYTES) {
+        const formData = new FormData();
+        formData.append("file", file, file.name);
         const response = await fetch(apiUrl("/upload-pdf", "/api/upload-pdf"), {
             method: "POST",
             headers: getAuthHeaders(),
             body: formData
         });
         const data = await response.json().catch(() => ({}));
-        if (!response.ok || data.status !== "success" || !data.file_path) {
+        if (!response.ok || data.status !== "success") {
             throw new Error(data.detail || `Upload failed (HTTP ${response.status})`);
+        }
+        return { ok: true, data };
+    } else {
+        const totalChunks = Math.ceil(file.size / CHUNK_SIZE_BYTES);
+        const uploadId = (typeof crypto !== "undefined" && crypto.randomUUID)
+            ? crypto.randomUUID()
+            : 'up_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+
+        for (let i = 0; i < totalChunks; i++) {
+            const start = i * CHUNK_SIZE_BYTES;
+            const end = Math.min(file.size, start + CHUNK_SIZE_BYTES);
+            const chunkBlob = file.slice(start, end);
+            await uploadChunkWithRetry(uploadId, i, totalChunks, file.name, file.size, chunkBlob, null);
+        }
+
+        const completeFormData = new FormData();
+        completeFormData.append("upload_id", uploadId);
+        completeFormData.append("file_name", file.name);
+        completeFormData.append("total_chunks", totalChunks);
+        if (file.type) completeFormData.append("mime_type", file.type);
+
+        const completeResponse = await fetch(apiUrl("/upload-complete", "/api/upload-complete"), {
+            method: "POST",
+            headers: getAuthHeaders(),
+            body: completeFormData
+        });
+        const completeData = await completeResponse.json().catch(() => ({}));
+        if (!completeResponse.ok || completeData.status !== "success") {
+            throw new Error(completeData.detail || `Upload assembly failed (HTTP ${completeResponse.status})`);
+        }
+        return { ok: true, data: completeData };
+    }
+}
+
+async function uploadSingleFile(item) {
+    item.status = "UPLOADING";
+    item.progress = 0;
+    item.error = null;
+    renderFileRowUI(item);
+    updateOverallUploadSummary();
+
+    const abortController = new AbortController();
+    item.abortController = abortController;
+
+    try {
+        const file = item.file;
+        if (!file) {
+            throw new Error("File object is missing or already released");
+        }
+
+        let resultData = null;
+
+        // 1. Direct upload for files <= 3.5 MB
+        if (file.size <= CHUNK_THRESHOLD_BYTES) {
+            const formData = new FormData();
+            formData.append("file", file, item.name);
+
+            const response = await fetch(apiUrl("/upload-pdf", "/api/upload-pdf"), {
+                method: "POST",
+                headers: getAuthHeaders(),
+                body: formData,
+                signal: abortController.signal
+            });
+            const data = await response.json().catch(() => ({}));
+            if (!response.ok || data.status !== "success" || !data.file_path) {
+                throw new Error(data.detail || `Upload failed (HTTP ${response.status})`);
+            }
+            resultData = data;
+            item.progress = 100;
+        } else {
+            // 2. Production Chunked Upload for files > 3.5 MB (immune to Vercel HTTP 413)
+            const totalChunks = Math.ceil(file.size / CHUNK_SIZE_BYTES);
+            const uploadId = (typeof crypto !== "undefined" && crypto.randomUUID)
+                ? crypto.randomUUID()
+                : 'up_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+
+            for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
+                if (abortController.signal.aborted) {
+                    throw new Error("Upload aborted");
+                }
+                const start = chunkIndex * CHUNK_SIZE_BYTES;
+                const end = Math.min(file.size, start + CHUNK_SIZE_BYTES);
+                const chunkBlob = file.slice(start, end);
+
+                await uploadChunkWithRetry(uploadId, chunkIndex, totalChunks, item.name, file.size, chunkBlob, abortController.signal);
+
+                // Update granular progress
+                const progressPct = Math.round(((chunkIndex + 1) / totalChunks) * 92);
+                item.progress = progressPct;
+                updateFileRowProgressUI(item.id, progressPct);
+            }
+
+            // Assemble chunks on server
+            const completeFormData = new FormData();
+            completeFormData.append("upload_id", uploadId);
+            completeFormData.append("file_name", item.name);
+            completeFormData.append("total_chunks", totalChunks);
+            if (file.type) completeFormData.append("mime_type", file.type);
+
+            const completeResponse = await fetch(apiUrl("/upload-complete", "/api/upload-complete"), {
+                method: "POST",
+                headers: getAuthHeaders(),
+                body: completeFormData,
+                signal: abortController.signal
+            });
+            const completeData = await completeResponse.json().catch(() => ({}));
+            if (!completeResponse.ok || completeData.status !== "success" || !completeData.file_path) {
+                throw new Error(completeData.detail || `Upload assembly failed (HTTP ${completeResponse.status})`);
+            }
+            resultData = completeData;
+            item.progress = 100;
         }
 
         item.status = "UPLOADED";
-        item.progress = 100;
-        item.backendPath = data.file_path;
+        item.backendPath = resultData.file_path;
         item.error = null;
 
-        if (data.page_count !== undefined || data.pages !== undefined) {
-            const detected = parseInt(data.page_count !== undefined ? data.page_count : data.pages, 10);
+        // Authoritative server page count
+        if (resultData.page_count !== undefined || resultData.pages !== undefined) {
+            const detected = parseInt(resultData.page_count !== undefined ? resultData.page_count : resultData.pages, 10);
             if (!isNaN(detected) && detected > 0) {
                 item.pages = detected;
             }
@@ -658,10 +729,16 @@ async function uploadSingleFile(item) {
         calculateAndUpdateTotalPages();
         saveUploadStateToLocalStorage();
     } catch (err) {
+        if (abortController.signal.aborted) {
+            item.status = "CANCELED";
+            return;
+        }
         item.status = "FAILED";
         item.progress = 0;
-        item.error = err.message || "Network error";
+        item.error = err.message || "Upload failed";
         item.isDetectingPages = false;
+    } finally {
+        item.abortController = null;
     }
 
     renderFileRowUI(item);
@@ -693,6 +770,9 @@ function removeFileFromQueue(fileId) {
     if (idx === -1) return;
 
     const item = fileQueue[idx];
+    if (item.abortController) {
+        try { item.abortController.abort(); } catch(e) {}
+    }
     if (item.xhr) {
         try { item.xhr.abort(); } catch(e) {}
     }
@@ -730,6 +810,9 @@ window.retryFileInQueue = retryFileInQueue;
 
 function clearAllFilesFromQueue() {
     fileQueue.forEach(item => {
+        if (item.abortController) {
+            try { item.abortController.abort(); } catch(e) {}
+        }
         if (item.xhr) {
             try { item.xhr.abort(); } catch(e) {}
         }
@@ -817,11 +900,8 @@ window.restoreUploadSessionIfAvailable = restoreUploadSessionIfAvailable;
 
 // Attach Upload UI Event Listeners
 document.addEventListener("DOMContentLoaded", function() {
-    const userMobileDisplay = document.getElementById("userMobileDisplay");
-    const mobile = (localStorage.getItem("mobileNumber") || "").trim();
-    if (userMobileDisplay && mobile) {
-        userMobileDisplay.textContent = `+91 ${mobile}`;
-    }
+    // Ensure an anonymous session ID exists for this tab
+    getAnonSessionId();
 
     const dropzone = document.getElementById("uploadDropzone");
     const fileInput = document.getElementById("pdfFile");
@@ -1772,57 +1852,63 @@ function ensureFileConfigDefaults(file, idx) {
 }
 
 function computeFileSheetsAndPrice(file) {
-    const f = { ...file };
-    const totalPages = Math.max(1, parseInt(f.pages || 1, 10));
-    const validation = parseAndValidatePageSelection(f.pageSelection, f.customPagesInput, totalPages);
+    if (!file) return file;
+    const totalPages = Math.max(1, parseInt(file.pages || 1, 10));
+    const validation = parseAndValidatePageSelection(file.pageSelection, file.customPagesInput, totalPages);
 
-    f.isValid = validation.isValid;
-    f.validationError = validation.isValid ? "" : validation.error;
-    f.selectedPages = validation.isValid ? validation.pages : Array.from({ length: totalPages }, (_, i) => i + 1);
-    f.selectedPagesCount = f.selectedPages.length;
-    f.pageRange = validation.isValid ? validation.canonicalString : "all";
+    file.isValid = validation.isValid;
+    file.validationError = validation.isValid ? "" : validation.error;
+    file.selectedPages = validation.isValid ? validation.pages : Array.from({ length: totalPages }, (_, i) => i + 1);
+    file.selectedPagesCount = file.selectedPages.length;
+    file.pageRange = validation.isValid ? validation.canonicalString : "all";
 
     // Duplex resolution
-    if (f.printSide === "double") {
-        f.duplex = (f.duplexBinding === "short_edge") ? "duplex_short" : "duplex_long";
+    if (file.printSide === "double") {
+        file.duplex = (file.duplexBinding === "short_edge") ? "duplex_short" : "duplex_long";
     } else {
-        f.duplex = "single";
+        file.duplex = "single";
     }
 
-    const copies = Math.max(1, parseInt(f.copies || 1, 10));
+    const copies = Math.max(1, parseInt(file.copies || 1, 10));
+    file.copies = copies;
 
     // Pricing & sheet calculation:
-    if (f.printMode === "micro_xerox") {
-        const nup = Math.max(2, parseInt(f.pagesPerSheet || 2, 10));
-        f.pagesPerSheet = nup;
-        const sheetsPerCopy = Math.ceil(f.selectedPagesCount / nup);
-        f.calculatedSheets = sheetsPerCopy * copies;
-        f.calculatedPrice = parseFloat((sheetsPerCopy * copies * PRICING.micro_xerox_sheet).toFixed(2));
-    } else if (f.colorMode === "color") {
-        f.calculatedSheets = f.selectedPagesCount * copies;
-        f.calculatedPrice = parseFloat((f.selectedPagesCount * copies * PRICING.color_single).toFixed(2));
-    } else if (f.printSide === "double") {
-        const sheetsPerCopy = Math.ceil(f.selectedPagesCount / 2);
-        f.calculatedSheets = sheetsPerCopy * copies;
-        f.calculatedPrice = parseFloat((f.selectedPagesCount * copies * PRICING.bw_double).toFixed(2));
+    if (file.printMode === "micro_xerox") {
+        const nup = Math.max(2, parseInt(file.pagesPerSheet || 2, 10));
+        file.pagesPerSheet = nup;
+        const sheetsPerCopy = Math.ceil(file.selectedPagesCount / nup);
+        file.calculatedSheets = sheetsPerCopy * copies;
+        file.calculatedPrice = parseFloat((sheetsPerCopy * copies * PRICING.micro_xerox_sheet).toFixed(2));
+    } else if (file.colorMode === "color") {
+        file.calculatedSheets = file.selectedPagesCount * copies;
+        file.calculatedPrice = parseFloat((file.selectedPagesCount * copies * PRICING.color_single).toFixed(2));
+    } else if (file.printSide === "double") {
+        const sheetsPerCopy = Math.ceil(file.selectedPagesCount / 2);
+        file.calculatedSheets = sheetsPerCopy * copies;
+        file.calculatedPrice = parseFloat((file.selectedPagesCount * copies * PRICING.bw_double).toFixed(2));
     } else {
         // B&W Single
-        f.calculatedSheets = f.selectedPagesCount * copies;
-        f.calculatedPrice = parseFloat((f.selectedPagesCount * copies * PRICING.bw_single).toFixed(2));
+        file.calculatedSheets = file.selectedPagesCount * copies;
+        file.calculatedPrice = parseFloat((file.selectedPagesCount * copies * PRICING.bw_single).toFixed(2));
     }
 
-    return f;
+    return file;
 }
 
 function saveFileManifest(manifest) {
+    if (Array.isArray(manifest)) {
+        manifest.forEach(f => {
+            if (f) computeFileSheetsAndPrice(f);
+        });
+    }
     window.currentFileManifest = manifest;
     localStorage.setItem("printflow_session_files", JSON.stringify(manifest));
     localStorage.setItem("printflowFileConfigs", JSON.stringify(manifest));
 
     // Keep legacy localStorage keys updated
-    const totalSelectedPages = manifest.reduce((acc, f) => acc + (f.selectedPagesCount * f.copies), 0);
-    const totalSheets = manifest.reduce((acc, f) => acc + f.calculatedSheets, 0);
-    const totalAmount = manifest.reduce((acc, f) => acc + f.calculatedPrice, 0);
+    const totalSelectedPages = manifest.reduce((acc, f) => acc + ((f.selectedPagesCount || 1) * (f.copies || 1)), 0);
+    const totalSheets = manifest.reduce((acc, f) => acc + (f.calculatedSheets || 1), 0);
+    const totalAmount = manifest.reduce((acc, f) => acc + (f.calculatedPrice || 0), 0);
     const fileNames = manifest.map(f => f.name).join(", ");
 
     localStorage.setItem("fileName", fileNames);
@@ -1859,6 +1945,10 @@ function saveFileManifest(manifest) {
 }
 
 function updateGlobalOrderSummary(manifest) {
+    if (!manifest || !manifest.length) return;
+    manifest.forEach(f => {
+        if (f) computeFileSheetsAndPrice(f);
+    });
     const totalFiles = manifest.length;
     let totalSelectedPages = 0;
     let totalSheets = 0;
@@ -1866,9 +1956,9 @@ function updateGlobalOrderSummary(manifest) {
     let allValid = true;
 
     manifest.forEach(f => {
-        totalSelectedPages += (f.selectedPagesCount * f.copies);
-        totalSheets += f.calculatedSheets;
-        totalAmount += f.calculatedPrice;
+        totalSelectedPages += ((f.selectedPagesCount || 1) * (f.copies || 1));
+        totalSheets += (f.calculatedSheets || 1);
+        totalAmount += (f.calculatedPrice || 0);
         if (!f.isValid || f.selectedPagesCount <= 0) {
             allValid = false;
         }
@@ -1974,30 +2064,35 @@ function updatePrintDetailsAndPreview() {
 function updateCardSummaryStrip(card, file) {
     if (!card || !file) return;
     const strip = card.querySelector(".file-summary-strip");
-    if (!strip) return;
+    if (strip) {
+        const isOddDuplex = (file.duplex !== "single" && (file.selectedPagesCount % 2 !== 0));
+        const blankSheetNote = isOddDuplex
+            ? `<span style="font-size:11px; color:#c2410c; font-weight:700; background:#ffedd5; padding:2px 6px; border-radius:4px; border:1px solid #fdba74;">Sheet ${Math.ceil(file.selectedPagesCount / 2)} Back is Blank</span>`
+            : "";
 
-    const isOddDuplex = (file.duplex !== "single" && (file.selectedPagesCount % 2 !== 0));
-    const blankSheetNote = isOddDuplex
-        ? `<span style="font-size:11px; color:#c2410c; font-weight:700; background:#ffedd5; padding:2px 6px; border-radius:4px; border:1px solid #fdba74;">Sheet ${Math.ceil(file.selectedPagesCount / 2)} Back is Blank</span>`
-        : "";
+        const modeBadge = (file.printMode === "micro_xerox")
+            ? `<span style="font-size:11px; color:#7c2d12; font-weight:700; background:#ffedd5; padding:2px 6px; border-radius:4px; border:1px solid #fed7aa;">🔍 Micro Xerox (${file.pagesPerSheet}-Up @ ₹3/sheet)</span>`
+            : "";
 
-    const modeBadge = (file.printMode === "micro_xerox")
-        ? `<span style="font-size:11px; color:#7c2d12; font-weight:700; background:#ffedd5; padding:2px 6px; border-radius:4px; border:1px solid #fed7aa;">🔍 Micro Xerox (${file.pagesPerSheet}-Up @ ₹3/sheet)</span>`
-        : "";
+        strip.innerHTML = `
+            <div class="sheet-flow-indicator" style="display: flex; flex-wrap: wrap; align-items: center; gap: 6px;">
+                <span>📄 Selected: <strong>${file.selectedPagesCount} Page${file.selectedPagesCount > 1 ? 's' : ''}</strong></span>
+                <span>•</span>
+                <span>📑 Physical Sheets: <strong class="sheet-badge">${file.calculatedSheets} Sheet${file.calculatedSheets > 1 ? 's' : ''}</strong></span>
+                ${blankSheetNote}
+                ${modeBadge}
+            </div>
+            <div class="file-cost-badge-row">
+                <span style="color:#78350f; font-weight:700; font-size:12px;">File Subtotal:</span>
+                <span class="file-subtotal-badge">₹${file.calculatedPrice.toFixed(2)}</span>
+            </div>
+        `;
+    }
 
-    strip.innerHTML = `
-        <div class="sheet-flow-indicator" style="display: flex; flex-wrap: wrap; align-items: center; gap: 6px;">
-            <span>📄 Selected: <strong>${file.selectedPagesCount} Page${file.selectedPagesCount > 1 ? 's' : ''}</strong></span>
-            <span>•</span>
-            <span>📑 Physical Sheets: <strong class="sheet-badge">${file.calculatedSheets} Sheet${file.calculatedSheets > 1 ? 's' : ''}</strong></span>
-            ${blankSheetNote}
-            ${modeBadge}
-        </div>
-        <div class="file-cost-badge-row">
-            <span style="color:#78350f; font-weight:700; font-size:12px;">File Subtotal:</span>
-            <span class="file-subtotal-badge">₹${file.calculatedPrice.toFixed(2)}</span>
-        </div>
-    `;
+    const microInfo = card.querySelector(".micro-rate-info");
+    if (microInfo && file.printMode === "micro_xerox") {
+        microInfo.textContent = `💡 Canonical Micro Xerox Rate: ₹3.00 per physical sheet (${file.calculatedSheets} sheet${file.calculatedSheets > 1 ? 's' : ''} = ₹${file.calculatedPrice.toFixed(2)})`;
+    }
 }
 
 function renderPerFileConfigCards() {
@@ -2099,7 +2194,7 @@ function renderPerFileConfigCards() {
                                 </select>
                             </div>
                         </div>
-                        <div style="font-size: 11px; color: #7c2d12; font-weight: 700; margin-top: 6px;">
+                        <div class="micro-rate-info" style="font-size: 11px; color: #7c2d12; font-weight: 700; margin-top: 6px;">
                             💡 Canonical Micro Xerox Rate: ₹3.00 per physical sheet (${file.calculatedSheets} sheet${file.calculatedSheets > 1 ? 's' : ''} = ₹${file.calculatedPrice.toFixed(2)})
                         </div>
                     </div>
@@ -2487,6 +2582,27 @@ function attachCardEventListeners() {
             const manifest = getStoredFileManifest();
             const file = manifest.find(f => f.id === fileId);
             if (file) {
+                if (file.colorMode === "color") {
+                    // Color print is strictly Single Side only
+                    file.printSide = "single";
+                    file.duplex = "single";
+                    radio.checked = (radio.value === "single");
+                    if (card) {
+                        const singleRadio = card.querySelector(`input[name="printSide_${file.id}"][value="single"]`);
+                        if (singleRadio) singleRadio.checked = true;
+                        card.querySelectorAll(".side-pill").forEach(p => {
+                            const r = p.querySelector("input[type='radio']");
+                            p.classList.toggle("is-selected", r && r.value === "single");
+                        });
+                        const doublePill = card.querySelectorAll(".side-pill")[1];
+                        if (doublePill) {
+                            doublePill.classList.add("is-disabled");
+                            const dRadio = doublePill.querySelector("input[type='radio']");
+                            if (dRadio) dRadio.disabled = true;
+                        }
+                    }
+                    return;
+                }
                 const isDouble = (radio.value === "double");
                 file.printSide = isDouble ? "double" : "single";
                 if (isDouble) {
@@ -2765,9 +2881,7 @@ if (printDetailsFileName || document.getElementById("fileConfigsContainer")) {
         });
     }
 
-    prepareRealLivePreviewPages().then(() => {
-        renderPerFileConfigCards();
-    });
+    prepareRealLivePreviewPages();
     fetchConnectedPrinters();
     renderPerFileConfigCards();
 }
@@ -3056,8 +3170,10 @@ if (payBtn) {
             const effectiveName = manifest.map(f => f.name).join(", ") || "document.pdf";
             const fileNameVal = effectiveName;
 
-            const rawMobile = localStorage.getItem("mobileNumber") || localStorage.getItem("customerMobile") || "9876543210";
-            const cleanContact = rawMobile.replace(/\D/g, "").slice(-10) || "9876543210";
+            // Use real mobile if available (admin/reviewer flow), otherwise use
+            // the per-tab anonymous session ID for order isolation.
+            const rawMobile = localStorage.getItem("mobileNumber") || localStorage.getItem("customerMobile") || "";
+            const cleanContact = rawMobile ? rawMobile.replace(/\D/g, "").slice(-10) : getAnonSessionId();
 
             // Preflight validation to prevent uncaught runtime errors
             if (manifest.length === 0) {
@@ -3707,16 +3823,19 @@ async function logoutAfterPrint() {
 
     try {
         clearUserDocumentSession();
+        // Clear any authenticated session keys (admin/reviewer flows)
         localStorage.removeItem("mobileNumber");
         localStorage.removeItem("loggedIn");
         localStorage.removeItem("isAuthenticated");
         localStorage.removeItem("user");
+        // Clear the anon session so the next visit starts completely fresh
         sessionStorage.clear();
     } catch (err) {
         console.warn("Client session cleanup warning:", err);
     }
 
-    window.location.replace("login.html?logout=true");
+    // Return to the public upload page — no login required
+    window.location.replace("home.html");
 }
 window.logoutAfterPrint = logoutAfterPrint;
 
