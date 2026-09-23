@@ -97,6 +97,7 @@ def home():
     }
 
 @app.get("/health")
+@app.get("/api/health")
 def health():
     return {
         "status": "online"
