@@ -196,9 +196,10 @@
         </span>
     </div>
 
-    <button type="button" id="continueBtn" style="margin-top: 18px;">
+    <button type="button" id="continueBtn" disabled style="margin-top: 18px; opacity: 0.5; cursor: not-allowed;">
         Continue to Print Settings →
     </button>
+    <p id="pdfErrorMsg" role="alert" aria-live="polite" style="display:none; color:#dc2626; font-size:0.9rem; margin-top:8px; text-align:center;"></p>
 
     <footer class="app-footer">
         <div class="footer-links">
@@ -218,7 +219,7 @@
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
-<script src="script.js?v=20260909-stabilization-v4"></script>
+<script src="script.js?v=20260925-upload-fix-v1"></script>
 
 </body>
 </html>

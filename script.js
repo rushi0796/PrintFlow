@@ -898,6 +898,109 @@ function restoreUploadSessionIfAvailable() {
 }
 window.restoreUploadSessionIfAvailable = restoreUploadSessionIfAvailable;
 
+// ======================================================
+// handleFileSelection — THE MISSING BRIDGE
+// Called by: file input onChange, drag-and-drop drop event
+// Accepts: a DOM event OR a FileList
+// ======================================================
+const ALLOWED_EXTENSIONS = ["pdf","png","jpg","jpeg","webp","doc","docx","txt"];
+const MAX_FILE_MB = 50; // 50 MB per file
+
+function handleFileSelection(eventOrFileList) {
+    // Accept either a DOM change event or a raw FileList
+    var fileList;
+    if (eventOrFileList && eventOrFileList.target && eventOrFileList.target.files) {
+        fileList = eventOrFileList.target.files;
+    } else if (eventOrFileList && eventOrFileList.length !== undefined) {
+        fileList = eventOrFileList;
+    } else {
+        console.warn("[PrintFlow] handleFileSelection: no files received");
+        return;
+    }
+
+    if (!fileList || fileList.length === 0) return;
+
+    var pdfErrorMsg = document.getElementById("pdfErrorMsg");
+    var addedCount = 0;
+
+    Array.from(fileList).forEach(function(file) {
+        // Validate extension
+        var ext = (file.name || "").split(".").pop().toLowerCase();
+        if (!ALLOWED_EXTENSIONS.includes(ext)) {
+            console.warn("[PrintFlow] Unsupported file type:", file.name);
+            if (pdfErrorMsg) {
+                pdfErrorMsg.textContent = '"' + file.name + '" is not supported. Please use PDF, image, DOC, DOCX or TXT files.';
+                pdfErrorMsg.style.display = "block";
+                setTimeout(function() { if (pdfErrorMsg) pdfErrorMsg.style.display = "none"; }, 4000);
+            }
+            return;
+        }
+
+        // Validate size
+        var maxBytes = MAX_FILE_MB * 1024 * 1024;
+        if (file.size > maxBytes) {
+            console.warn("[PrintFlow] File too large:", file.name, file.size);
+            if (pdfErrorMsg) {
+                pdfErrorMsg.textContent = '"' + file.name + '" is too large. Maximum allowed size is ' + MAX_FILE_MB + ' MB.';
+                pdfErrorMsg.style.display = "block";
+                setTimeout(function() { if (pdfErrorMsg) pdfErrorMsg.style.display = "none"; }, 4000);
+            }
+            return;
+        }
+
+        // Deduplicate by file id (name+size+lastModified)
+        var fileId = generateFileId(file);
+        if (fileQueue.find(function(i) { return i.id === fileId; })) {
+            console.info("[PrintFlow] Skipping duplicate:", file.name);
+            return;
+        }
+
+        var typeDetails = getFileTypeDetails(file);
+        var item = {
+            id: fileId,
+            file: file,
+            name: file.name,
+            size: file.size,
+            status: "WAITING",
+            progress: 0,
+            pages: 1,
+            isDetectingPages: (typeDetails.category === "pdf"),
+            backendPath: null,
+            error: null,
+            abortController: null,
+            xhr: null,
+            typeCategory: typeDetails.category,
+            typeIcon: typeDetails.icon,
+            sequence: fileQueue.length
+        };
+
+        fileQueue.push(item);
+        renderFileRowUI(item);
+        addedCount++;
+
+        // Count PDF pages in background (for pre-upload page estimate)
+        if (typeDetails.category === "pdf") {
+            countPdfPages(file).then(function(count) {
+                item.pages = count;
+                item.isDetectingPages = false;
+                renderFileRowUI(item);
+                calculateAndUpdateTotalPages();
+                updateContinueButtonState();
+            }).catch(function() {
+                item.isDetectingPages = false;
+                renderFileRowUI(item);
+            });
+        }
+    });
+
+    if (addedCount > 0) {
+        if (pdfErrorMsg) pdfErrorMsg.style.display = "none";
+        updateOverallUploadSummary();
+        processUploadQueue();
+    }
+}
+window.handleFileSelection = handleFileSelection;
+
 // Attach Upload UI Event Listeners
 document.addEventListener("DOMContentLoaded", function() {
     // Ensure an anonymous session ID exists for this tab
