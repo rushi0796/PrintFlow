@@ -35,6 +35,8 @@ from storage import (
     save_upload_chunk,
     assemble_upload_chunks,
     cleanup_expired_upload_chunks,
+    cleanup_old_documents,
+    purge_all_documents,
     save_order,
     save_agent_state,
     get_agent_state,
@@ -102,6 +104,29 @@ def health():
     return {
         "status": "online"
     }
+
+@app.post("/api/admin/storage-cleanup")
+def admin_storage_cleanup(x_admin_token: Optional[str] = Header(None)):
+    """Admin: delete documents older than 24h to free Neon DB space."""
+    if x_admin_token != "Admin@123":
+        raise HTTPException(status_code=403, detail="Forbidden")
+    try:
+        deleted_docs = cleanup_old_documents(max_age_hours=24)
+        deleted_chunks = cleanup_expired_upload_chunks(max_age_hours=2)
+        return {"status": "ok", "documents_deleted": deleted_docs, "chunks_deleted": deleted_chunks}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/admin/storage-purge")
+def admin_storage_purge(x_admin_token: Optional[str] = Header(None)):
+    """Admin: emergency purge ALL document blobs from Neon DB (use when DB is full)."""
+    if x_admin_token != "Admin@123":
+        raise HTTPException(status_code=403, detail="Forbidden")
+    try:
+        deleted = purge_all_documents()
+        return {"status": "ok", "documents_purged": deleted}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 # Centralized Canonical Pricing Rules
 CANONICAL_PRICING = {
@@ -1024,8 +1049,22 @@ async def upload_pdf(file: UploadFile = File(...)):
         if file_ext not in allowed_extensions:
             raise HTTPException(status_code=400, detail=f"Unsupported file format '{file_ext}'")
 
+        # Proactively free Neon DB space before saving a new document.
+        # Deletes documents older than 24 hours to stay under the 512 MB free-tier limit.
+        try:
+            cleanup_old_documents(max_age_hours=24)
+            cleanup_expired_upload_chunks(max_age_hours=2)
+        except Exception as cleanup_err:
+            print(f"[UPLOAD PRE-CLEANUP WARNING] {cleanup_err}")
+
         original_name = Path(file.filename).name
         content = await file.read()
+
+        # Reject files larger than 50 MB to prevent DB bloat
+        MAX_UPLOAD_BYTES = 50 * 1024 * 1024
+        if len(content) > MAX_UPLOAD_BYTES:
+            raise HTTPException(status_code=413, detail=f"File too large. Maximum allowed size is 50 MB.")
+
         document_id = save_document(original_name, file.content_type or "application/octet-stream", content)
         returned_path = f"/api/documents/{document_id}"
 
@@ -1044,7 +1083,15 @@ async def upload_pdf(file: UploadFile = File(...)):
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        err_str = str(e)
+        # Surface Neon storage-full error clearly to the client
+        if "512 MB" in err_str or "NEON.MAX_CLUSTER_SIZE" in err_str or "project size limit" in err_str.lower():
+            raise HTTPException(
+                status_code=507,
+                detail="Storage temporarily full. Please try again in a few seconds — old files are being cleared automatically."
+            )
+        raise HTTPException(status_code=500, detail=err_str)
+
 
 @app.post("/upload-chunk")
 @app.post("/api/upload-chunk")
@@ -1074,7 +1121,10 @@ async def upload_chunk_endpoint(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        err_str = str(e)
+        if "512 MB" in err_str or "NEON.MAX_CLUSTER_SIZE" in err_str or "project size limit" in err_str.lower():
+            raise HTTPException(status_code=507, detail="Storage temporarily full. Please try again in a few seconds.")
+        raise HTTPException(status_code=500, detail=err_str)
 
 @app.post("/upload-complete")
 @app.post("/api/upload-complete")
@@ -1090,13 +1140,24 @@ async def upload_complete_endpoint(
         if file_ext not in allowed_extensions:
             raise HTTPException(status_code=400, detail=f"Unsupported file format '{file_ext}'")
 
+        # Proactively free Neon DB space before saving assembled file
+        try:
+            cleanup_old_documents(max_age_hours=24)
+        except Exception as cleanup_err:
+            print(f"[UPLOAD PRE-CLEANUP WARNING] {cleanup_err}")
+
         original_name = Path(file_name).name
         clean_mime = mime_type if isinstance(mime_type, str) and mime_type.strip() else "application/octet-stream"
         assembled_content = assemble_upload_chunks(upload_id, total_chunks)
+
+        # Reject files larger than 50 MB
+        MAX_UPLOAD_BYTES = 50 * 1024 * 1024
+        if len(assembled_content) > MAX_UPLOAD_BYTES:
+            raise HTTPException(status_code=413, detail="File too large. Maximum allowed size is 50 MB.")
+
         document_id = save_document(original_name, clean_mime, assembled_content)
         returned_path = f"/api/documents/{document_id}"
 
-        # Calculate exact rendered page count without page limits
         page_count = calculate_document_page_count(original_name, assembled_content)
         print(f"[CHUNKED UPLOAD COMPLETE] {original_name} ({len(assembled_content)} bytes, {total_chunks} chunks) -> {page_count} page(s)")
 
@@ -1111,7 +1172,10 @@ async def upload_complete_endpoint(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        err_str = str(e)
+        if "512 MB" in err_str or "NEON.MAX_CLUSTER_SIZE" in err_str or "project size limit" in err_str.lower():
+            raise HTTPException(status_code=507, detail="Storage temporarily full. Please try again in a few seconds.")
+        raise HTTPException(status_code=500, detail=err_str)
 
 @app.get("/api/documents/{document_id}/meta")
 def get_document_meta_endpoint(document_id: str, x_print_agent_token: Optional[str] = Header(None)):

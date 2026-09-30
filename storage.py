@@ -586,6 +586,38 @@ def cleanup_expired_upload_chunks(max_age_hours: int = 2) -> int:
     return _execute(f"DELETE FROM printflow_upload_chunks WHERE created_at < {placeholder}", (cutoff_iso,), fetch="none") or 0
 
 
+def cleanup_old_documents(max_age_hours: int = 24) -> int:
+    """
+    Delete document binary blobs older than max_age_hours from Neon PostgreSQL.
+    Called before every upload to proactively free space and stay under the
+    512 MB Neon free-tier storage limit.
+    Returns the number of documents deleted.
+    """
+    init_storage()
+    placeholder = "%s" if DATABASE_URL else "?"
+    cutoff = datetime.now(timezone.utc).timestamp() - (max_age_hours * 3600)
+    cutoff_iso = datetime.fromtimestamp(cutoff, tz=timezone.utc).isoformat()
+    deleted = _execute(
+        f"DELETE FROM printflow_documents WHERE created_at < {placeholder}",
+        (cutoff_iso,),
+        fetch="none"
+    ) or 0
+    if deleted:
+        print(f"[STORAGE CLEANUP] Deleted {deleted} document(s) older than {max_age_hours}h to free Neon DB space.")
+    return deleted
+
+
+def purge_all_documents() -> int:
+    """
+    Emergency: delete ALL document blobs from Neon PostgreSQL.
+    Use only when DB is full and needs to be completely cleared.
+    """
+    init_storage()
+    deleted = _execute("DELETE FROM printflow_documents", fetch="none") or 0
+    print(f"[STORAGE PURGE] Deleted ALL {deleted} document(s) from Neon DB.")
+    return deleted
+
+
 def delete_order(order_id: str):
     init_storage()
     placeholder = "%s" if DATABASE_URL else "?"

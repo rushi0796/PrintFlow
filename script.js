@@ -664,11 +664,28 @@ async function uploadSingleFile(item) {
                 signal: abortController.signal
             });
             const data = await response.json().catch(() => ({}));
-            if (!response.ok || data.status !== "success" || !data.file_path) {
+            if (response.status === 507) {
+                // Neon DB storage full — backend auto-cleaned old docs; retry once after 3s
+                console.warn("[PrintFlow] Storage full (507) — retrying in 3s after cleanup...");
+                await new Promise(res => setTimeout(res, 3000));
+                const retryResponse = await fetch(apiUrl("/upload-pdf", "/api/upload-pdf"), {
+                    method: "POST",
+                    headers: getAuthHeaders(),
+                    body: formData,
+                    signal: abortController.signal
+                });
+                const retryData = await retryResponse.json().catch(() => ({}));
+                if (!retryResponse.ok || retryData.status !== "success" || !retryData.file_path) {
+                    throw new Error("Upload failed: server storage is full. Please try again in a moment.");
+                }
+                resultData = retryData;
+                item.progress = 100;
+            } else if (!response.ok || data.status !== "success" || !data.file_path) {
                 throw new Error(data.detail || `Upload failed (HTTP ${response.status})`);
+            } else {
+                resultData = data;
+                item.progress = 100;
             }
-            resultData = data;
-            item.progress = 100;
         } else {
             // 2. Production Chunked Upload for files > 3.5 MB (immune to Vercel HTTP 413)
             const totalChunks = Math.ceil(file.size / CHUNK_SIZE_BYTES);
@@ -706,6 +723,9 @@ async function uploadSingleFile(item) {
                 signal: abortController.signal
             });
             const completeData = await completeResponse.json().catch(() => ({}));
+            if (completeResponse.status === 507) {
+                throw new Error("Upload failed: server storage is full. Please try again in a moment.");
+            }
             if (!completeResponse.ok || completeData.status !== "success" || !completeData.file_path) {
                 throw new Error(completeData.detail || `Upload assembly failed (HTTP ${completeResponse.status})`);
             }
