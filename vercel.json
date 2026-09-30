@@ -131,6 +131,14 @@
     {
       "source": "/api/agent/test-print",
       "destination": "/api/index.py"
+    },
+    {
+      "source": "/api/admin/storage-cleanup",
+      "destination": "/api/index.py"
+    },
+    {
+      "source": "/api/admin/storage-purge",
+      "destination": "/api/index.py"
     }
   ],
   "functions": {
