@@ -14,7 +14,7 @@ from typing import Optional, List, Dict, Any
 from pathlib import Path
 from uuid import uuid4
 from datetime import datetime
-from fastapi import FastAPI, UploadFile, File, HTTPException, Header, Form
+from fastapi import FastAPI, UploadFile, File, HTTPException, Header, Form, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import Response
@@ -23,6 +23,7 @@ from requests.auth import HTTPBasicAuth
 from storage import (
     claim_order as durable_claim_order,
     complete_order as durable_complete_order,
+    release_order as durable_release_order,
     delete_document,
     get_document,
     get_document_meta,
@@ -389,6 +390,60 @@ def queue_order_for_printing(payload: dict):
 
     return order
 
+_last_pending_reconcile_time = 0.0
+
+def reconcile_pending_orders_background():
+    global _last_pending_reconcile_time
+    now = time.time()
+    if now - _last_pending_reconcile_time < 8.0:
+        return
+    _last_pending_reconcile_time = now
+
+    key_id = (os.environ.get("RAZORPAY_KEY_ID") or "").strip().strip('"').strip("'")
+    key_secret = (os.environ.get("RAZORPAY_KEY_SECRET") or "").strip().strip('"').strip("'")
+    if not key_id or not key_secret:
+        return
+
+    def _worker():
+        try:
+            orders = durable_list_orders()
+            pending_orders = [
+                o for o in orders[:25]
+                if not o.get("paid") and o.get("status") == "Pending" and o.get("razorpay_order_id")
+            ]
+            for o in pending_orders:
+                rzp_id = o.get("razorpay_order_id")
+                pf_id = o.get("order_id")
+                if not rzp_id:
+                    continue
+                try:
+                    url = f"https://api.razorpay.com/v1/orders/{rzp_id}"
+                    headers = {"User-Agent": "Razorpay/v1 PythonSDK/1.4.0", "Accept": "application/json"}
+                    resp = requests.get(url, auth=HTTPBasicAuth(key_id, key_secret), headers=headers, timeout=5)
+                    if resp.status_code == 200:
+                        ord_data = resp.json()
+                        if ord_data.get("status") == "paid" or (ord_data.get("amount_paid", 0) >= ord_data.get("amount", 1) and ord_data.get("amount", 1) > 0):
+                            pay_resp = requests.get(f"https://api.razorpay.com/v1/orders/{rzp_id}/payments", auth=HTTPBasicAuth(key_id, key_secret), headers=headers, timeout=5)
+                            pay_id = f"pay_auto_{rzp_id[-8:]}"
+                            if pay_resp.status_code == 200:
+                                p_items = pay_resp.json().get("items", [])
+                                for p in p_items:
+                                    if p.get("status") == "captured" or p.get("captured") is True:
+                                        pay_id = p.get("id")
+                                        break
+                            print(f"[AUTO-RECONCILE SUCCESS] Discovered paid order {pf_id} ({rzp_id}) -> queueing for print")
+                            queue_order_for_printing({
+                                "print_order_id": pf_id,
+                                "razorpay_payment_id": pay_id,
+                                "razorpay_order_id": rzp_id
+                            })
+                except Exception as rzp_err:
+                    print(f"[AUTO-RECONCILE ERROR] {pf_id}: {rzp_err}")
+        except Exception as e:
+            print(f"[AUTO-RECONCILE WORKER ERROR] {e}")
+
+    threading.Thread(target=_worker, daemon=True).start()
+
 @app.post("/api/agent/poll")
 def agent_poll_endpoint(req: dict, x_print_agent_token: Optional[str] = Header(None)):
     verify_agent_token(x_print_agent_token)
@@ -403,6 +458,11 @@ def agent_poll_endpoint(req: dict, x_print_agent_token: Optional[str] = Header(N
         save_agent_state(printers_list, status="ONLINE", last_seen=now_ts)
     except Exception as exc:
         print(f"[AGENT STATE SAVE ERROR] {exc}")
+
+    try:
+        reconcile_pending_orders_background()
+    except Exception:
+        pass
 
     try:
         queued_jobs = get_queued_orders()
@@ -439,6 +499,26 @@ def agent_claim_job_endpoint(order_id: str, x_print_agent_token: Optional[str] =
         raise HTTPException(status_code=409, detail=f"Order {order_id} has already been completed.")
 
     raise HTTPException(status_code=400, detail=f"Order {order_id} cannot be claimed in status {order.get('status')}.")
+
+@app.post("/api/agent/release/{order_id}")
+def agent_release_job_endpoint(order_id: str, x_print_agent_token: Optional[str] = Header(None)):
+    verify_agent_token(x_print_agent_token)
+    released_order = durable_release_order(order_id)
+    if not released_order:
+        existing = get_order(order_id)
+        if not existing:
+            raise HTTPException(status_code=404, detail="Order not found")
+        return {
+            "status": "success",
+            "message": f"Order {order_id} is in status {existing.get('status')}",
+            "order": existing
+        }
+    print(f"[AGENT RELEASED] Order {order_id} released back to PRINT_QUEUED")
+    return {
+        "status": "success",
+        "message": f"Order {order_id} released back to PRINT_QUEUED",
+        "order": released_order
+    }
 
 @app.post("/api/agent/complete/{order_id}")
 def agent_complete_job_endpoint(order_id: str, req: dict, x_print_agent_token: Optional[str] = Header(None)):
@@ -788,6 +868,48 @@ def verify_razorpay_payment(payload: dict):
         "order": queued_order,
         "payload": payload
     }
+
+@app.post("/api/razorpay-webhook")
+@app.post("/api/webhook")
+@app.post("/razorpay-webhook")
+async def razorpay_webhook_endpoint(request: Request):
+    webhook_secret = (os.environ.get("RAZORPAY_WEBHOOK_SECRET") or "").strip().strip('"').strip("'")
+    body_bytes = await request.body()
+    signature = request.headers.get("X-Razorpay-Signature", "")
+
+    if webhook_secret and signature:
+        expected_sig = hmac.new(webhook_secret.encode("utf-8"), body_bytes, hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(expected_sig, signature):
+            alt_secret = (os.environ.get("RAZORPAY_KEY_SECRET") or "").strip().strip('"').strip("'")
+            alt_sig = hmac.new(alt_secret.encode("utf-8"), body_bytes, hashlib.sha256).hexdigest() if alt_secret else ""
+            if not alt_sig or not hmac.compare_digest(alt_sig, signature):
+                print(f"[WEBHOOK SIGNATURE MISMATCH] Invalid Razorpay webhook signature")
+                raise HTTPException(status_code=400, detail="Invalid webhook signature")
+
+    try:
+        data = json.loads(body_bytes.decode("utf-8"))
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON payload")
+
+    event = data.get("event")
+    print(f"[WEBHOOK EVENT RECEIVED] {event}")
+
+    if event in ("order.paid", "payment.captured"):
+        payload_entity = data.get("payload", {}).get("payment", {}).get("entity", {}) or data.get("payload", {}).get("order", {}).get("entity", {})
+        rzp_order_id = payload_entity.get("order_id")
+        rzp_payment_id = payload_entity.get("id")
+
+        if rzp_order_id:
+            matching_order = get_order(rzp_order_id)
+            if matching_order:
+                print(f"[WEBHOOK MATCHED ORDER] {matching_order.get('order_id')} for Razorpay order {rzp_order_id}")
+                queue_order_for_printing({
+                    "print_order_id": matching_order.get("order_id"),
+                    "razorpay_payment_id": rzp_payment_id or f"pay_wh_{rzp_order_id[-8:]}",
+                    "razorpay_order_id": rzp_order_id
+                })
+
+    return {"status": "ok"}
 
 @app.get("/api/payment-status/{print_order_id}")
 @app.get("/payment-status/{print_order_id}")

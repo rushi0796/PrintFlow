@@ -331,9 +331,12 @@ def sanitize_filename(name: str, fallback_ext: str = ".pdf") -> str:
         clean_stem = f"doc_{uuid4().hex[:8]}"
     return f"{clean_stem}{suffix}"
 
-def download_file(backend_url: str, file_rel_path: str, agent_token: str = "", original_file_name: str = "") -> Path:
+def download_file(backend_url: str, file_rel_path: str, agent_token: str = "", original_file_name: str = "", order_id: str = "") -> Path:
     clean_name = sanitize_filename(original_file_name or Path(file_rel_path).name)
-    target_path = TEMP_DOWNLOAD_DIR / clean_name
+    base_stem = re.sub(r'[^a-zA-Z0-9_\-]+', '_', order_id).strip('_') if order_id else "global"
+    order_dir = TEMP_DOWNLOAD_DIR / f"order_{base_stem}"
+    order_dir.mkdir(parents=True, exist_ok=True)
+    target_path = order_dir / clean_name
 
     if target_path.is_file() and target_path.stat().st_size > 0:
         return target_path
@@ -371,7 +374,7 @@ def download_file(backend_url: str, file_rel_path: str, agent_token: str = "", o
                             with urllib.request.urlopen(c_req, timeout=30) as c_resp:
                                 shutil.copyfileobj(c_resp, out_file)
                     if target_path.stat().st_size == total_size:
-                        print(f"[AGENT CHUNKED DOWNLOAD SUCCESS] Downloaded {total_size} bytes in {total_chunks} chunk(s) for '{clean_name}'")
+                        print(f"[AGENT CHUNKED DOWNLOAD SUCCESS] Downloaded {total_size} bytes in {total_chunks} chunk(s) for '{clean_name}' (Order: {base_stem})")
                         return target_path
                     else:
                         print(f"[AGENT CHUNKED SIZE MISMATCH] Expected {total_size} bytes, got {target_path.stat().st_size} bytes. Retrying standard...")
@@ -707,6 +710,23 @@ def update_order_agent_status(
         print(f"[AGENT STATUS UPDATE ERROR] Failed to send status '{status}' for order '{order_id}':", e)
         return None
 
+def release_order_agent(backend_url: str, agent_token: str, order_id: str):
+    url = f"{backend_url.rstrip('/')}/api/agent/release/{order_id}"
+    req = urllib.request.Request(
+        url,
+        headers={
+            "X-Print-Agent-Token": agent_token,
+            "User-Agent": "PrintFlowAgent/1.0"
+        },
+        method="POST"
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except Exception as e:
+        print(f"[AGENT RELEASE ERROR] Failed to release order '{order_id}':", e)
+        return None
+
 def monitor_spooler_job(backend_url: str, agent_token: str, order_id: str, printer_name: str, spooler_job_id: int):
     print(f"[SPOOLER MONITOR] Monitoring Job #{spooler_job_id} on '{printer_name}'...")
     if sys.platform != "win32":
@@ -969,7 +989,7 @@ def compose_manifest_to_pdf(
             continue
 
         print(f"[COMPOSITOR] [{f_idx+1}/{len(files_list)}] Downloading '{f_name}' ({f_path_rel})...")
-        local_file = download_file(backend_url, f_path_rel, agent_token, f_name)
+        local_file = download_file(backend_url, f_path_rel, agent_token, f_name, order_id=order_id)
         ext = local_file.suffix.lower()
 
         clean_item_stem = f"{f_idx:02d}_" + re.sub(r'[^a-zA-Z0-9_\-]+', '_', local_file.stem).strip('_')
@@ -1704,8 +1724,9 @@ def run_agent():
                 # Preflight Check 1: Target printer online
                 if p_info and not p_info.get("online", True):
                     err_msg = f"Target printer '{target_printer}' is offline. Job will remain queued."
-                    print(f"[PREFLIGHT FAILED] {err_msg}")
-                    update_order_agent_status(backend_url, agent_token, order_id, "FAILED", error=err_msg, printed_by_printer=target_printer)
+                    print(f"[PREFLIGHT OFFLINE] {err_msg}")
+                    release_order_agent(backend_url, agent_token, order_id)
+                    time.sleep(3.0)
                     continue
 
                 # Preflight Check 2: Hardware duplex support (REJECT, NO SILENT FALLBACK)
@@ -1894,8 +1915,12 @@ def run_agent():
                             )
                             print(f"[PRINT COMPLETED] {order_id}")
 
-                    # Privacy cleanup
+                    # Privacy and order isolation cleanup
                     try:
+                        base_stem = re.sub(r'[^a-zA-Z0-9_\-]+', '_', order_id).strip('_')
+                        for cleanup_dir in [TEMP_DOWNLOAD_DIR / f"order_{base_stem}", TEMP_DOWNLOAD_DIR / f"work_{base_stem}"]:
+                            if cleanup_dir.exists():
+                                shutil.rmtree(cleanup_dir, ignore_errors=True)
                         now_ts = time.time()
                         for tmp_f in TEMP_DOWNLOAD_DIR.glob("*"):
                             if tmp_f.is_file() and (now_ts - tmp_f.stat().st_mtime > 180):
@@ -1919,6 +1944,13 @@ def run_agent():
                         error=str(print_err),
                         printed_by_printer=target_printer
                     )
+                    try:
+                        base_stem = re.sub(r'[^a-zA-Z0-9_\-]+', '_', order_id).strip('_')
+                        for cleanup_dir in [TEMP_DOWNLOAD_DIR / f"order_{base_stem}", TEMP_DOWNLOAD_DIR / f"work_{base_stem}"]:
+                            if cleanup_dir.exists():
+                                shutil.rmtree(cleanup_dir, ignore_errors=True)
+                    except Exception:
+                        pass
 
         except Exception:
             pass

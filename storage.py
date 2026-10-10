@@ -422,14 +422,51 @@ def list_orders() -> list[dict]:
     return _execute("SELECT * FROM printflow_orders ORDER BY created_at DESC", fetch="all") or []
 
 
+def recover_stale_printing_orders(timeout_seconds: float = 120.0) -> int:
+    init_storage()
+    placeholder = "%s" if DATABASE_URL else "?"
+    if DATABASE_URL:
+        sql = f"""
+            UPDATE printflow_orders
+            SET status='PRINT_QUEUED', document_status='UPLOADED', claimed_at=NULL
+            WHERE status='PRINTING' AND (claimed_at IS NULL OR claimed_at < (EXTRACT(EPOCH FROM NOW()) - {float(timeout_seconds)}))
+        """
+        try:
+            return _execute(sql) or 0
+        except Exception:
+            return 0
+    else:
+        sql = f"""
+            UPDATE printflow_orders
+            SET status='PRINT_QUEUED', document_status='UPLOADED', claimed_at=NULL
+            WHERE status='PRINTING' AND (claimed_at IS NULL OR claimed_at < (strftime('%s', 'now') - {float(timeout_seconds)}))
+        """
+        try:
+            return _execute(sql) or 0
+        except Exception:
+            return 0
+
+
+def release_order(order_id: str) -> Optional[dict]:
+    init_storage()
+    placeholder = "%s" if DATABASE_URL else "?"
+    sql = f"UPDATE printflow_orders SET status='PRINT_QUEUED', document_status='UPLOADED', claimed_at=NULL WHERE (order_id={placeholder} OR razorpay_order_id={placeholder}) AND status='PRINTING'"
+    _execute(sql, (order_id, order_id))
+    return get_order(order_id)
+
+
 def get_queued_orders() -> list[dict]:
     init_storage()
-    return _execute("SELECT * FROM printflow_orders WHERE status='PRINT_QUEUED' ORDER BY created_at ASC", fetch="all") or []
+    try:
+        recover_stale_printing_orders(120.0)
+    except Exception:
+        pass
+    return _execute("SELECT * FROM printflow_orders WHERE status='PRINT_QUEUED' ORDER BY COALESCE(created_at, timestamp, '1970-01-01') ASC", fetch="all") or []
 
 
 def get_active_queue_orders() -> list[dict]:
     init_storage()
-    return _execute("SELECT * FROM printflow_orders WHERE status IN ('PRINTING', 'PRINT_QUEUED') ORDER BY CASE WHEN status='PRINTING' THEN 0 ELSE 1 END, created_at ASC", fetch="all") or []
+    return _execute("SELECT * FROM printflow_orders WHERE status IN ('PRINTING', 'PRINT_QUEUED') ORDER BY CASE WHEN status='PRINTING' THEN 0 ELSE 1 END, COALESCE(created_at, timestamp, '1970-01-01') ASC", fetch="all") or []
 
 
 def queue_paid_order(order_id: str, razorpay_order_id: str, payment_id: str) -> Optional[dict]:
@@ -442,6 +479,8 @@ def queue_paid_order(order_id: str, razorpay_order_id: str, payment_id: str) -> 
                 row = cursor.fetchone()
                 if not row:
                     return None
+                if row["paid"] and row.get("status") in ("PRINT_QUEUED", "PRINTING", "COMPLETED"):
+                    return dict(row)
                 if row["paid"] and row["razorpay_payment_id"] != payment_id:
                     raise ValueError("Order is already paid")
                 cursor.execute("UPDATE printflow_orders SET paid=TRUE, razorpay_order_id=%s, razorpay_payment_id=%s, status='PRINT_QUEUED', document_status='UPLOADED' WHERE order_id=%s RETURNING *", (razorpay_order_id, payment_id, order_id))
@@ -451,6 +490,8 @@ def queue_paid_order(order_id: str, razorpay_order_id: str, payment_id: str) -> 
     order = get_order(order_id)
     if not order:
         return None
+    if order.get("paid") and order.get("status") in ("PRINT_QUEUED", "PRINTING", "COMPLETED"):
+        return order
     if order["paid"] and order.get("razorpay_payment_id") != payment_id:
         raise ValueError("Order is already paid")
     order.update({"paid": True, "razorpay_order_id": razorpay_order_id, "razorpay_payment_id": payment_id, "status": "PRINT_QUEUED", "document_status": "UPLOADED"})

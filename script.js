@@ -852,6 +852,9 @@ function clearAllFilesFromQueue() {
 window.clearAllFilesFromQueue = clearAllFilesFromQueue;
 
 function restoreUploadSessionIfAvailable() {
+    if (localStorage.getItem("currentCheckoutPaid") === "true") {
+        return;
+    }
     const listContainer = document.getElementById("fileQueueList");
     if (!listContainer) return;
 
@@ -1025,6 +1028,13 @@ window.handleFileSelection = handleFileSelection;
 document.addEventListener("DOMContentLoaded", function() {
     // Ensure an anonymous session ID exists for this tab
     getAnonSessionId();
+
+    // Isolation guarantee: If a previous checkout was marked paid, clear the old session state immediately!
+    const wasCheckoutPaid = (localStorage.getItem("currentCheckoutPaid") === "true");
+    if (wasCheckoutPaid) {
+        console.log("[ISOLATION] Previous checkout was marked paid. Clearing stale document session for fresh customer.");
+        clearUserDocumentSession();
+    }
 
     const dropzone = document.getElementById("uploadDropzone");
     const fileInput = document.getElementById("pdfFile");
@@ -1864,6 +1874,9 @@ window.currentFileManifest = [];
 window.activePreviewFileIndex = 0;
 
 function getStoredFileManifest() {
+    if (localStorage.getItem("currentCheckoutPaid") === "true") {
+        return [];
+    }
     let manifest = [];
     try {
         const storedSession = localStorage.getItem("printflow_session_files");
